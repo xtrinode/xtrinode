@@ -1,0 +1,40 @@
+replicaCount: 1
+
+image:
+  pullPolicy: Always
+
+gateway:
+  apiServerURL: "http://xtrinode-api-server.xtrinode-system.svc.cluster.local:8081/api/v1"
+  logLevel: "info"
+  apiServerAuth:
+    enabled: true
+    token: "local-dev-api-server-resume-token"
+  redis:
+    enabled: true
+    stickyTTL: "30m"
+    timeout: "1s"
+  rateLimit:
+    enabled: true
+    capacity: 500
+    refillRate: "100ms"
+
+redis:
+  enabled: true
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+serviceMonitor:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi

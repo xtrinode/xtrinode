@@ -1,0 +1,31 @@
+XTrinode has been deployed successfully!
+
+Components deployed:
+{{- if index .Values "xtrinode-operator" "enabled" }}
+  - Operator:   {{ .Release.Namespace }}/xtrinode-operator
+{{- end }}
+{{- if index .Values "xtrinode-api-server" "enabled" }}
+  - API Server: {{ .Release.Namespace }}/xtrinode-api-server (port {{ index .Values "xtrinode-api-server" "apiServer" "port" }})
+{{- end }}
+{{- if index .Values "xtrinode-gateway" "enabled" }}
+  - Gateway:    {{ default "xtrinode-gateway" (index .Values "xtrinode-gateway" "namespaceOverride") }}/xtrinode-gateway (port {{ index .Values "xtrinode-gateway" "gateway" "port" }})
+{{- end }}
+
+Configure kubectl access:
+  kubectl get xtrinodes --all-namespaces
+
+{{- if and (index .Values "xtrinode-api-server" "enabled") (index .Values "xtrinode-api-server" "ingress" "enabled") }}
+
+API Server Ingress:
+{{- range (index .Values "xtrinode-api-server" "ingress" "hosts") }}
+  https://{{ .host }}
+{{- end }}
+{{- end }}
+
+{{- if and (index .Values "xtrinode-gateway" "enabled") (index .Values "xtrinode-gateway" "ingress" "enabled") }}
+
+Gateway Ingress:
+{{- range (index .Values "xtrinode-gateway" "ingress" "hosts") }}
+  https://{{ .host }}
+{{- end }}
+{{- end }}

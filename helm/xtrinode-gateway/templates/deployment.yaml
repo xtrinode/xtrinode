@@ -1,0 +1,179 @@
+{{- $gatewayRedisEnabled := or .Values.gateway.redis.enabled .Values.redis.enabled }}
+{{- $gatewayHTTP := .Values.gateway.http | default dict }}
+{{- $kedaHasAnyTrigger := or .Values.keda.cpu.enabled .Values.keda.memory.enabled .Values.keda.prometheus.enabled .Values.keda.http.enabled (gt (len .Values.keda.triggers) 0) }}
+{{- $staticMultipleReplicas := and (not (or .Values.autoscaling.enabled .Values.keda.enabled)) (gt (int .Values.replicaCount) 1) }}
+{{- $hpaMultipleReplicas := and .Values.autoscaling.enabled (not .Values.keda.enabled) (gt (int .Values.autoscaling.maxReplicas) 1) }}
+{{- $kedaMultipleReplicas := and .Values.keda.enabled $kedaHasAnyTrigger (gt (int .Values.keda.maxReplicas) 1) }}
+{{- if and (or $staticMultipleReplicas $hpaMultipleReplicas $kedaMultipleReplicas) (not $gatewayRedisEnabled) }}
+{{- fail "xtrinode-gateway multiple replicas require gateway.redis.enabled=true or redis.enabled=true for cross-replica sticky routing and rate limiting" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "xtrinode-gateway.fullname" . }}
+  namespace: {{ include "xtrinode-gateway.namespace" . }}
+  labels:
+    {{- include "xtrinode-gateway.labels" . | nindent 4 }}
+spec:
+  {{- if not (or .Values.autoscaling.enabled .Values.keda.enabled) }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "xtrinode-gateway.gatewaySelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "xtrinode-gateway.gatewaySelectorLabels" . | nindent 8 }}
+    spec:
+      {{- $global := .Values.global | default dict }}
+      {{- $pullSecrets := concat (.Values.imagePullSecrets | default list) ($global.imagePullSecrets | default list) | uniq }}
+      {{- with $pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "xtrinode-gateway.serviceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if $gatewayRedisEnabled }}
+      initContainers:
+      - name: wait-for-redis
+        image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+        imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+        command:
+        - /bin/sh
+        - -ec
+        args:
+        - |
+          until redis-cli -u "${GATEWAY_REDIS_URL}"{{- if or .Values.gateway.redis.password .Values.gateway.redis.existingSecret .Values.redis.auth.enabled }} -a "${GATEWAY_REDIS_PASSWORD}" --no-auth-warning{{- end }} ping | grep -q PONG; do
+            sleep 2
+          done
+        env:
+        - name: GATEWAY_REDIS_URL
+          value: {{ include "xtrinode-gateway.redisURL" . | quote }}
+        {{- if or .Values.gateway.redis.password .Values.gateway.redis.existingSecret .Values.redis.auth.enabled }}
+        - name: GATEWAY_REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ coalesce .Values.gateway.redis.existingSecret .Values.redis.auth.existingSecret (include "xtrinode-gateway.redisSecretName" .) }}
+              key: {{ coalesce .Values.gateway.redis.existingSecretKey .Values.redis.auth.existingSecretKey "redis-password" }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.redis.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.redis.securityContext | nindent 10 }}
+      {{- end }}
+      containers:
+      - name: gateway
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ include "xtrinode-gateway.image" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /xtrinode
+        args:
+        - --api-server-url={{ .Values.gateway.apiServerURL }}
+        - --gateway-port={{ .Values.gateway.port }}
+        - --read-header-timeout={{ default "5s" $gatewayHTTP.readHeaderTimeout }}
+        - --read-timeout={{ default "0s" $gatewayHTTP.readTimeout }}
+        - --write-timeout={{ default "0s" $gatewayHTTP.writeTimeout }}
+        - --idle-timeout={{ default "60s" $gatewayHTTP.idleTimeout }}
+        {{- if .Values.gateway.apiServerAuth.enabled }}
+        - --api-server-auth-token-file=/var/run/xtrinode-api-server-auth/{{ .Values.gateway.apiServerAuth.secretKey | default "token" }}
+        {{- end }}
+        {{- if .Values.gateway.auth.enabled }}
+        - --auth-enabled=true
+        - --auth-type={{ .Values.gateway.auth.type }}
+        {{- if eq .Values.gateway.auth.type "api-key" }}
+        - --auth-secret-name={{ .Values.gateway.auth.apiKey.secretName }}
+        - --auth-secret-key={{ .Values.gateway.auth.apiKey.secretKey }}
+        - --auth-namespace={{ .Values.gateway.auth.apiKey.namespace }}
+        {{- end }}
+        {{- if or (eq .Values.gateway.auth.type "oauth") (eq .Values.gateway.auth.type "oidc") (eq .Values.gateway.auth.type "bearer-token") (eq .Values.gateway.auth.type "jwt") }}
+        {{- if .Values.gateway.auth.oauth.issuer }}
+        - --auth-oauth-issuer={{ .Values.gateway.auth.oauth.issuer }}
+        {{- end }}
+        - --auth-oauth-audience={{ required "gateway.auth.oauth.audience is required when OAuth/OIDC gateway auth is enabled" .Values.gateway.auth.oauth.audience }}
+        {{- if .Values.gateway.auth.oauth.jwksURL }}
+        - --auth-oauth-jwks-url={{ .Values.gateway.auth.oauth.jwksURL }}
+        {{- end }}
+        - --auth-oauth-refresh-interval={{ .Values.gateway.auth.oauth.refreshInterval }}
+        {{- end }}
+        {{- end }}
+        {{- if $gatewayRedisEnabled }}
+        - --redis-enabled=true
+        - --redis-url={{ include "xtrinode-gateway.redisURL" . }}
+        - --redis-db={{ .Values.gateway.redis.db }}
+        - --redis-sticky-ttl={{ .Values.gateway.redis.stickyTTL }}
+        - --redis-timeout={{ .Values.gateway.redis.timeout }}
+        {{- if or .Values.gateway.redis.password .Values.gateway.redis.existingSecret .Values.redis.auth.enabled }}
+        - --redis-password=$(GATEWAY_REDIS_PASSWORD)
+        {{- end }}
+        {{- end }}
+        - --rate-limit-enabled={{ .Values.gateway.rateLimit.enabled }}
+        - --rate-limit-capacity={{ .Values.gateway.rateLimit.capacity }}
+        - --rate-limit-refill-rate={{ .Values.gateway.rateLimit.refillRate }}
+        {{- if .Values.gateway.logLevel }}
+        - --log-level={{ .Values.gateway.logLevel }}
+        {{- end }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.gateway.port }}
+          protocol: TCP
+        {{- if and $gatewayRedisEnabled (or .Values.gateway.redis.password .Values.gateway.redis.existingSecret .Values.redis.auth.enabled) }}
+        env:
+        - name: GATEWAY_REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ coalesce .Values.gateway.redis.existingSecret .Values.redis.auth.existingSecret (include "xtrinode-gateway.redisSecretName" .) }}
+              key: {{ coalesce .Values.gateway.redis.existingSecretKey .Values.redis.auth.existingSecretKey "redis-password" }}
+        {{- end }}
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.livenessProbe.httpGet.path | default "/health" }}
+            port: {{ .Values.livenessProbe.httpGet.port | default .Values.gateway.port }}
+          initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds | default 30 }}
+          periodSeconds: {{ .Values.livenessProbe.periodSeconds | default 10 }}
+          timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds | default 5 }}
+          failureThreshold: {{ .Values.livenessProbe.failureThreshold | default 3 }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.readinessProbe.httpGet.path | default "/health" }}
+            port: {{ .Values.readinessProbe.httpGet.port | default .Values.gateway.port }}
+          initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds | default 10 }}
+          periodSeconds: {{ .Values.readinessProbe.periodSeconds | default 5 }}
+          timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds | default 3 }}
+          failureThreshold: {{ .Values.readinessProbe.failureThreshold | default 3 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.gateway.apiServerAuth.enabled }}
+        volumeMounts:
+        - name: api-server-auth-token
+          mountPath: /var/run/xtrinode-api-server-auth
+          readOnly: true
+        {{- end }}
+      {{- if .Values.gateway.apiServerAuth.enabled }}
+      volumes:
+      - name: api-server-auth-token
+        secret:
+          secretName: {{ include "xtrinode-gateway.apiServerAuthSecretName" . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

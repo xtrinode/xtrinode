@@ -1,0 +1,41 @@
+misconfigurations:
+  - id: KSV-0041
+    paths:
+      - "charts/keda/templates/manager/clusterrole.yaml"
+      - "charts/xtrinode-operator/charts/keda/templates/manager/clusterrole.yaml"
+      - "charts/prometheus-stack/templates/prometheus-operator/clusterrole.yaml"
+    expired_at: 2026-08-16
+    statement: >-
+      KEDA needs to watch tenant namespace Secrets referenced by dynamic
+      TriggerAuthentication resources, and kube-prometheus-stack grants the
+      Prometheus Operator access to managed Secret resources for generated
+      Prometheus configuration and TLS material. These exceptions are scoped to
+      vendored upstream chart paths only.
+  - id: KSV-0045
+    paths:
+      - "charts/prometheus-stack/templates/prometheus-operator/clusterrole.yaml"
+    expired_at: 2026-08-16
+    statement: >-
+      kube-prometheus-stack 58.0.0 hard-codes wildcard verbs in the Prometheus
+      Operator ClusterRole and does not expose a values override for enumerating
+      verbs. This exception is scoped to the vendored upstream chart path only;
+      XTrinode-owned charts must not rely on this suppression.
+  - id: KSV-0056
+    paths:
+      - "charts/prometheus-stack/templates/prometheus-operator/clusterrole.yaml"
+    expired_at: 2026-08-16
+    statement: >-
+      kube-prometheus-stack 58.0.0 lets the Prometheus Operator manage Services
+      and Endpoints for Prometheus-managed workloads. The chart does not expose a
+      least-privilege values override, so this exception is scoped to the
+      vendored upstream chart path only.
+  - id: KSV-0114
+    paths:
+      - "charts/keda/templates/manager/minimal-rbac.yaml"
+      - "charts/xtrinode-operator/charts/keda/templates/manager/minimal-rbac.yaml"
+    expired_at: 2026-08-16
+    statement: >-
+      KEDA 2.18.0 uses patch/update access on admissionregistration resources for
+      self-managed webhook certificate rotation. XTrinode keeps KEDA secret and
+      scale-target RBAC restricted through chart values; this exception is
+      limited to the vendored upstream certificate-rotation RBAC path.

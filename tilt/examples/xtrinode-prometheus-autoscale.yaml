@@ -1,0 +1,126 @@
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinodeCatalog
+metadata:
+  name: local-prometheus-tpch
+  namespace: team-local
+  labels:
+    team: team-local
+    catalog-set: local-trino-prometheus
+    catalog-type: tpch
+spec:
+  labels:
+    team: team-local
+    catalog-set: local-trino-prometheus
+    catalog-type: tpch
+  connector:
+    tpch:
+      properties:
+        tpch.splits-per-node: "2"
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: local-trino-prometheus
+  namespace: team-local
+  labels:
+    team: team-local
+    environment: local
+spec:
+  size: xs
+  minWorkers: 1
+  maxWorkers: 2
+  suspended: false
+  autoSuspendAfter: "30m"
+  wakeMinWorkers: 1
+  wakeTTL: "2m"
+
+  catalogSelector:
+    matchLabels:
+      team: team-local
+      catalog-set: local-trino-prometheus
+
+  routing:
+    header: "X-Trino-XTrinode=local-trino-prometheus"
+    routingGroup: local-trino-prometheus
+
+  keda:
+    enabled: true
+    scalerType: prometheus
+    scalingMetric: memory
+    threshold: "1"
+    scaleDownCooldown: "30s"
+    prometheusServer: http://xtrinode-observability-pro-prometheus.monitoring.svc.cluster.local:9090
+    prometheusQuery: |
+      (
+        (min(jvm_memory_bytes_used{namespace="{namespace}",pod=~"{releaseName}-worker-.*"}) > bool 0) * 2
+      )
+      or
+      (
+        min(up{namespace="{namespace}",service="{releaseName}-worker-metrics"}) * 2
+      )
+      or vector(0)
+    jmxExporter:
+      enabled: true
+
+  helmChartConfig:
+    serviceMonitor:
+      enabled: true
+      interval: 5s
+      scrapeTimeout: 3s
+
+  valuesOverlay:
+    image:
+      repository: trinodb/trino
+      tag: "480"
+      pullPolicy: IfNotPresent
+    jmx:
+      coordinator:
+        exporter:
+          pullPolicy: IfNotPresent
+      worker:
+        exporter:
+          pullPolicy: IfNotPresent
+    server:
+      workers: 1
+    coordinator:
+      additionalJVMConfig:
+        - -Xmx768M
+        - -XX:ReservedCodeCacheSize=128M
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 1536Mi
+      startupProbe:
+        exec:
+          command:
+            - /usr/lib/trino/bin/health-check
+        initialDelaySeconds: 10
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 90
+    worker:
+      additionalJVMConfig:
+        - -Xmx768M
+        - -XX:ReservedCodeCacheSize=128M
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 1536Mi
+      startupProbe:
+        exec:
+          command:
+            - /usr/lib/trino/bin/health-check
+        initialDelaySeconds: 10
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 90
+    additionalConfigProperties:
+      - query.max-memory=512MB
+      - query.max-memory-per-node=384MB
+      - memory.heap-headroom-per-node=256MB

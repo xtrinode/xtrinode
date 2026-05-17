@@ -1,0 +1,2343 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: xtrinodecatalogs.analytics.xtrinode.io
+spec:
+  group: analytics.xtrinode.io
+  names:
+    kind: XTrinodeCatalog
+    listKind: XTrinodeCatalogList
+    plural: xtrinodecatalogs
+    singular: xtrinodecatalog
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Connector type
+      jsonPath: .spec.connector.*
+      name: Connector
+      type: string
+    - description: Catalog phase
+      jsonPath: .status.phase
+      name: Phase
+      type: string
+    - description: Generated ConfigMap name
+      jsonPath: .status.configMapName
+      name: ConfigMap
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: XTrinodeCatalog is the Schema for the xtrinodecatalogs API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: XTrinodeCatalogSpec defines the desired state of a XTrinodeCatalog
+            properties:
+              connector:
+                description: Connector defines the connector type and configuration
+                maxProperties: 1
+                minProperties: 1
+                properties:
+                  bigQuery:
+                    description: BigQuery connector configuration
+                    properties:
+                      credentialsFile:
+                        description: |-
+                          CredentialsFile is the path to a mounted service account credentials file (optional).
+                          Use propertySecretRefs["bigquery.credentials-key"] for raw service account key material.
+                        type: string
+                      parentProjectID:
+                        description: ParentProjectID is the parent project ID (optional)
+                        type: string
+                      projectID:
+                        description: ProjectID is the GCP project ID
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - projectID
+                    type: object
+                  blackHole:
+                    description: BlackHole connector configuration
+                    properties:
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    type: object
+                  cassandra:
+                    description: Cassandra connector configuration
+                    properties:
+                      contactPoints:
+                        description: ContactPoints is the comma-separated list of
+                          Cassandra contact points
+                        type: string
+                      port:
+                        description: 'Port is the Cassandra port (default: 9042)'
+                        type: integer
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - contactPoints
+                    type: object
+                  clickHouse:
+                    description: ClickHouse connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the ClickHouse connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the ClickHouse user (optional
+                          if in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  custom:
+                    description: |-
+                      Custom connector (raw properties)
+                      Allows teams to provide custom connector configuration
+                    properties:
+                      connectorName:
+                        description: ConnectorName is the connector name (e.g., "postgresql",
+                          "mysql", etc.)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Properties are the raw connector properties
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectorName
+                    - properties
+                    type: object
+                  deltaLake:
+                    description: DeltaLake connector configuration
+                    properties:
+                      catalogType:
+                        description: CatalogType is the Delta Lake metastore type
+                          (hive_metastore or glue)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                      warehouseURI:
+                        description: |-
+                          WarehouseURI is the Hive Metastore URI when catalogType is hive/hive_metastore.
+                          This field name is kept for API compatibility.
+                        type: string
+                    required:
+                    - catalogType
+                    - warehouseURI
+                    type: object
+                  druid:
+                    description: Druid connector configuration
+                    properties:
+                      brokerURL:
+                        description: BrokerURL is the Druid broker URL
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - brokerURL
+                    type: object
+                  duckDB:
+                    description: DuckDB connector configuration
+                    properties:
+                      databasePath:
+                        description: DatabasePath is the path to the DuckDB database
+                          file
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    type: object
+                  elasticsearch:
+                    description: Elasticsearch connector configuration
+                    properties:
+                      defaultSchema:
+                        description: DefaultSchema is the default schema name
+                        type: string
+                      host:
+                        description: Host is the Elasticsearch host
+                        type: string
+                      port:
+                        description: 'Port is the Elasticsearch port (default: 9200)'
+                        type: integer
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - host
+                    type: object
+                  exasol:
+                    description: Exasol connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the Exasol connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the Exasol user (optional if
+                          in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  faker:
+                    description: Faker connector configuration (generates fake data
+                      for testing)
+                    properties:
+                      defaultLimit:
+                        description: DefaultLimit is the default row limit (optional)
+                        format: int64
+                        type: integer
+                      nullProbability:
+                        description: NullProbability is the probability of generating
+                          null values (0.0-1.0)
+                        type: number
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    type: object
+                  googleSheets:
+                    description: GoogleSheets connector configuration
+                    properties:
+                      credentialsFilePath:
+                        description: CredentialsFilePath is the path to the service
+                          account credentials file
+                        type: string
+                      metadataSheetID:
+                        description: MetadataSheetID is the Google Sheet ID containing
+                          metadata
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - credentialsFilePath
+                    type: object
+                  hive:
+                    description: Hive connector configuration
+                    properties:
+                      metastoreURI:
+                        description: MetastoreURI is the Hive Metastore URI
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                      s3AccessKeySecret:
+                        description: |-
+                          S3AccessKeySecret references a Secret containing the S3 access key.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      s3Endpoint:
+                        description: S3Endpoint is the S3 endpoint for native S3 file
+                          system access (optional)
+                        type: string
+                      s3SecretKeySecret:
+                        description: |-
+                          S3SecretKeySecret references a Secret containing the S3 secret key.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - metastoreURI
+                    type: object
+                  hudi:
+                    description: Hudi connector configuration
+                    properties:
+                      metastoreURI:
+                        description: MetastoreURI is the Hive Metastore URI
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - metastoreURI
+                    type: object
+                  iceberg:
+                    description: Iceberg connector configuration
+                    properties:
+                      catalogType:
+                        description: CatalogType is the Iceberg catalog type (hive_metastore,
+                          jdbc, rest, etc.)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                      warehouseURI:
+                        description: WarehouseURI is the warehouse URI
+                        type: string
+                    required:
+                    - catalogType
+                    - warehouseURI
+                    type: object
+                  ignite:
+                    description: Ignite connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the Ignite connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the Ignite user (optional)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  jmx:
+                    description: JMX connector configuration
+                    properties:
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    type: object
+                  kafka:
+                    description: Kafka connector configuration
+                    properties:
+                      kafkaNodes:
+                        description: KafkaNodes is the list of Kafka broker addresses
+                        items:
+                          type: string
+                        type: array
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - kafkaNodes
+                    type: object
+                  lakehouse:
+                    description: Lakehouse connector configuration
+                    properties:
+                      catalogType:
+                        description: CatalogType is the lakehouse catalog type
+                        type: string
+                      metastoreURI:
+                        description: MetastoreURI is the metastore URI
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - catalogType
+                    type: object
+                  loki:
+                    description: Loki connector configuration
+                    properties:
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                      uri:
+                        description: URI is the Loki server URI
+                        type: string
+                    required:
+                    - uri
+                    type: object
+                  mariaDB:
+                    description: MariaDB connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the MariaDB connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the MariaDB user (optional
+                          if in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  memory:
+                    description: Memory connector configuration
+                    properties:
+                      maxDataPerNode:
+                        description: MaxDataPerNode is the maximum amount of memory
+                          per node
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    type: object
+                  mongodb:
+                    description: MongoDB connector configuration
+                    properties:
+                      connectionURI:
+                        description: ConnectionURI is the MongoDB connection URI
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURI
+                    type: object
+                  mysql:
+                    description: MySQL connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: |-
+                          ConnectionPasswordSecret references a Secret containing the password
+                          The Secret must exist in the same namespace as the XTrinodeCatalog
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the MySQL connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the MySQL user (optional if
+                          in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  openSearch:
+                    description: OpenSearch connector configuration
+                    properties:
+                      defaultSchema:
+                        description: DefaultSchema is the default schema name
+                        type: string
+                      host:
+                        description: Host is the OpenSearch host
+                        type: string
+                      port:
+                        description: 'Port is the OpenSearch port (default: 9200)'
+                        type: integer
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - host
+                    type: object
+                  oracle:
+                    description: Oracle connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the Oracle connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the Oracle user (optional if
+                          in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  pinot:
+                    description: Pinot connector configuration
+                    properties:
+                      controllerURLs:
+                        description: ControllerURLs is the comma-separated list of
+                          Pinot controller URLs
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - controllerURLs
+                    type: object
+                  postgres:
+                    description: Postgres connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: |-
+                          ConnectionPasswordSecret references a Secret containing the password
+                          The Secret must exist in the same namespace as the XTrinodeCatalog
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the PostgreSQL connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the PostgreSQL user (optional
+                          if in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  prometheus:
+                    description: Prometheus connector configuration
+                    properties:
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                      uri:
+                        description: URI is the Prometheus server URI
+                        type: string
+                    required:
+                    - uri
+                    type: object
+                  redis:
+                    description: Redis connector configuration
+                    properties:
+                      database:
+                        description: 'Database is the Redis database number (default:
+                          0)'
+                        type: integer
+                      nodes:
+                        description: Nodes is the comma-separated list of Redis nodes
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - nodes
+                    type: object
+                  redshift:
+                    description: Redshift connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the Redshift connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the Redshift user (optional
+                          if in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  singleStore:
+                    description: SingleStore connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the SingleStore connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the SingleStore user (optional
+                          if in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  snowflake:
+                    description: Snowflake connector configuration
+                    properties:
+                      accountURL:
+                        description: AccountURL is the Snowflake account URL
+                        type: string
+                      database:
+                        description: Database is the Snowflake database
+                        type: string
+                      passwordSecret:
+                        description: PasswordSecret references a Secret containing
+                          the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                      role:
+                        description: Role is the Snowflake role
+                        type: string
+                      user:
+                        description: User is the Snowflake user
+                        type: string
+                      warehouse:
+                        description: Warehouse is the Snowflake warehouse
+                        type: string
+                    required:
+                    - accountURL
+                    - user
+                    type: object
+                  sqlServer:
+                    description: SQLServer connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the SQL Server connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the SQL Server user (optional
+                          if in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                  system:
+                    description: System connector configuration
+                    properties:
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    type: object
+                  thrift:
+                    description: Thrift connector configuration
+                    properties:
+                      host:
+                        description: Host is the Thrift server host
+                        type: string
+                      port:
+                        description: Port is the Thrift server port
+                        type: integer
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - host
+                    - port
+                    type: object
+                  tpcds:
+                    description: TPCDS connector configuration (TPC-DS benchmark)
+                    properties:
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    type: object
+                  tpch:
+                    description: TPCH connector configuration (TPC-H benchmark)
+                    properties:
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    type: object
+                  vertica:
+                    description: Vertica connector configuration
+                    properties:
+                      connectionPasswordSecret:
+                        description: ConnectionPasswordSecret references a Secret
+                          containing the password
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      connectionURL:
+                        description: ConnectionURL is the Vertica connection URL
+                        type: string
+                      connectionUser:
+                        description: ConnectionUser is the Vertica user (optional
+                          if in URL)
+                        type: string
+                      properties:
+                        additionalProperties:
+                          type: string
+                        description: Additional properties as key-value pairs
+                        type: object
+                      propertySecretRefs:
+                        additionalProperties:
+                          description: SecretKeySelector selects a key of a Secret.
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        description: |-
+                          PropertySecretRefs maps catalog property names to Secret keys.
+                          Each entry renders the property as ${ENV:CATALOG_<CATALOG>_<PROPERTY>}
+                          in the generated catalog ConfigMap and injects the Secret key into
+                          selected Trino pods as that environment variable.
+                          The Secret must exist in the same namespace as the XTrinodeCatalog.
+                        type: object
+                    required:
+                    - connectionURL
+                    type: object
+                type: object
+              labels:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Labels for selecting this catalog in XTrinodes
+                  XTrinodes use label selectors to find catalogs
+                  Example: xtrinode.Spec.CatalogSelector: {matchLabels: {team: "data-eng"}}
+                type: object
+            required:
+            - connector
+            type: object
+          status:
+            description: XTrinodeCatalogStatus defines the observed state of XTrinodeCatalog
+            properties:
+              configMapName:
+                description: ConfigMapName is the name of the generated ConfigMap
+                type: string
+              lastUpdated:
+                description: LastUpdated is the timestamp of the last update
+                format: date-time
+                type: string
+              message:
+                description: Message provides additional information about the catalog
+                  status
+                type: string
+              phase:
+                description: |-
+                  Phase indicates the catalog phase
+                  Values: Pending, Ready, Error
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

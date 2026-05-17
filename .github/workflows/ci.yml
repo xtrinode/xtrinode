@@ -1,0 +1,174 @@
+name: CI
+
+# Pull requests run this workflow directly. Pushes to main run it through
+# release.yml so release gating and CI stay in one main-branch path.
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Read CI tool versions
+        id: tool-versions
+        run: make ci-tool-versions-output
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ steps.tool-versions.outputs.go }}
+          cache-dependency-path: xtrinode/go.sum
+
+      - name: Install Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        with:
+          version: ${{ steps.tool-versions.outputs.helm }}
+
+      - name: Run Go and Helm lint checks
+        run: make ci-lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Read CI tool versions
+        id: tool-versions
+        run: make ci-tool-versions-output
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ steps.tool-versions.outputs.go }}
+          cache-dependency-path: xtrinode/go.sum
+
+      - name: Run tests with coverage
+        run: make ci-test
+        env:
+          CI_COVERAGE_THRESHOLD: 65
+
+      - name: Upload coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          file: ./xtrinode/coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          token: ${{ env.CODECOV_TOKEN }}
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-report
+          path: xtrinode/coverage.out
+          retention-days: 7
+
+  verify-manifests:
+    name: Verify Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Read CI tool versions
+        id: tool-versions
+        run: make ci-tool-versions-output
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ steps.tool-versions.outputs.go }}
+          cache-dependency-path: xtrinode/go.sum
+
+      - name: Verify generated manifests
+        run: make ci-verify-manifests
+
+  release-pr-policy:
+    name: Release PR Policy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release PR author
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REPO_OWNER: ${{ github.event.pull_request.head.repo.owner.login }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: make ci-release-pr-policy
+
+  terraform-validate:
+    name: Terraform Validate (gcp)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Read CI tool versions
+        id: tool-versions
+        run: make ci-tool-versions-output
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ steps.tool-versions.outputs.terraform }}
+
+      - name: Validate Terraform
+        run: make ci-terraform-validate CLOUD=gcp
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Read CI tool versions
+        id: tool-versions
+        run: make ci-tool-versions-output
+
+      - name: Install Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        with:
+          version: ${{ steps.tool-versions.outputs.helm }}
+
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+
+      - name: Run security checks
+        run: make ci-security
+
+      - name: Upload Trivy SARIF
+        if: always() && github.event_name == 'push' && hashFiles('trivy-fs-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@53e96ec3b35fce51c141c0d6f0e31028a448722d # v3
+        with:
+          sarif_file: trivy-fs-results.sarif

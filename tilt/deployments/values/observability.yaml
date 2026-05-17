@@ -1,0 +1,51 @@
+prometheus-stack:
+  enabled: true
+  alertmanager:
+    enabled: false
+  defaultRules:
+    create: false
+  grafana:
+    enabled: false
+  kubeApiServer:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeDns:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeStateMetrics:
+    enabled: false
+  kubelet:
+    enabled: false
+  nodeExporter:
+    enabled: false
+  prometheus:
+    enabled: true
+    prometheusSpec:
+      evaluationInterval: 5s
+      podMonitorNamespaceSelector: {}
+      podMonitorSelector: {}
+      probeNamespaceSelector: {}
+      probeSelector: {}
+      retention: 2h
+      ruleNamespaceSelector: {}
+      ruleSelector: {}
+      scrapeInterval: 5s
+      serviceMonitorNamespaceSelector: {}
+      serviceMonitorSelector: {}
+      storageSpec: null
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+
+vector:
+  enabled: false

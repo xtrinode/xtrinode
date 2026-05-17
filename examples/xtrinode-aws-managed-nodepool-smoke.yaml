@@ -1,0 +1,68 @@
+# AWS managed nodepool smoke skeleton.
+#
+# Prereqs:
+# - XTrinode control plane installed into an EKS management/workload cluster.
+# - CAPA installed with AWSManagedMachinePool support.
+# - spec.nodePool.clusterName set to a real CAPI Cluster name.
+#
+# Apply:
+#   kubectl apply -f examples/xtrinode-aws-managed-nodepool-smoke.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xtrinode-aws-smoke
+  labels:
+    purpose: aws-nodepool-smoke
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: aws-s
+  namespace: xtrinode-aws-smoke
+  labels:
+    xtrinode: aws-s
+    team: xtrinode
+    environment: smoke
+spec:
+  size: xs
+  maxWorkers: 1
+  minWorkers: 0
+  suspended: true
+  autoSuspendAfter: "1h"
+
+  nodePool:
+    name: np-aws-s
+    provider: aws
+    providerMode: managed
+    # Replace with the real CAPI Cluster name before running against CAPA.
+    clusterName: xtrinode-eks-workload
+    kubernetesVersion: v1.35.0
+    minNodes: 0
+    maxNodes: 1
+    zones:
+      - us-east-1a
+    aws:
+      instanceType: m5.large
+      volumeType: gp3
+    nodeLabels:
+      xtrinode.io/runtime: aws-s
+      xtrinode.io/node-pool: np-aws-s
+    nodeTaints:
+      - key: xtrinode.io/runtime
+        value: aws-s
+        effect: NoSchedule
+    resourceTags:
+      xtrinode-runtime: aws-s
+      xtrinode-smoke: "true"
+
+  routing:
+    header: "X-Trino-XTrinode=aws-s"
+    hostname: "aws-s.trino.local"
+
+  keda:
+    enabled: false
+
+  valuesOverlay:
+    server:
+      workers: 1

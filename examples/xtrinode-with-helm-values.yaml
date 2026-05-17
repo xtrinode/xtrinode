@@ -1,0 +1,48 @@
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: values-overlay
+  namespace: team-a
+spec:
+  size: s
+  minWorkers: 1
+  maxWorkers: 3
+  suspended: false
+  routing:
+    header: X-Trino-XTrinode=values-overlay
+    routingGroup: values-overlay
+  catalogSelector:
+    matchLabels:
+      team: team-a
+  valuesOverlay:
+    image:
+      repository: trinodb/trino
+      tag: "480"
+      pullPolicy: IfNotPresent
+    coordinator:
+      additionalJVMConfig:
+        - -Xmx1536M
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 2Gi
+      config:
+        memory:
+          heapHeadroomPerNode: 512MB
+    worker:
+      additionalJVMConfig:
+        - -Xmx1536M
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 2Gi
+    additionalConfigProperties:
+      - query.max-memory=1GB
+      - query.max-memory-per-node=512MB
+      - query.max-execution-time=1h

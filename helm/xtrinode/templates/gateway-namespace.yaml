@@ -1,0 +1,11 @@
+{{- $gateway := index .Values "xtrinode-gateway" -}}
+{{- $namespace := default "xtrinode-gateway" $gateway.namespaceOverride -}}
+{{- if and $gateway.enabled $namespace (ne $namespace .Release.Namespace) (not (lookup "v1" "Namespace" "" $namespace)) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $namespace }}
+  labels:
+    app.kubernetes.io/name: xtrinode-gateway
+    app.kubernetes.io/part-of: xtrinode
+{{- end }}

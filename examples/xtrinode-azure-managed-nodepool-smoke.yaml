@@ -1,0 +1,68 @@
+# Azure managed nodepool smoke skeleton.
+#
+# Prereqs:
+# - XTrinode control plane installed into an AKS management/workload cluster.
+# - CAPZ installed with AzureManagedMachinePool support.
+# - spec.nodePool.clusterName set to a real CAPI Cluster name.
+#
+# Apply:
+#   kubectl apply -f examples/xtrinode-azure-managed-nodepool-smoke.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xtrinode-azure-smoke
+  labels:
+    purpose: azure-nodepool-smoke
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: azure-s
+  namespace: xtrinode-azure-smoke
+  labels:
+    xtrinode: azure-s
+    team: xtrinode
+    environment: smoke
+spec:
+  size: xs
+  maxWorkers: 1
+  minWorkers: 0
+  suspended: true
+  autoSuspendAfter: "1h"
+
+  nodePool:
+    name: np-azure-s
+    provider: azure
+    providerMode: managed
+    # Replace with the real CAPI Cluster name before running against CAPZ.
+    clusterName: xtrinode-aks-workload
+    kubernetesVersion: v1.34.0
+    minNodes: 0
+    maxNodes: 1
+    zones:
+      - "1"
+    azure:
+      vmSize: Standard_D4s_v5
+      osDiskType: Premium_LRS
+    nodeLabels:
+      xtrinode.io/runtime: azure-s
+      xtrinode.io/node-pool: np-azure-s
+    nodeTaints:
+      - key: xtrinode.io/runtime
+        value: azure-s
+        effect: NoSchedule
+    resourceTags:
+      xtrinode-runtime: azure-s
+      xtrinode-smoke: "true"
+
+  routing:
+    header: "X-Trino-XTrinode=azure-s"
+    hostname: "azure-s.trino.local"
+
+  keda:
+    enabled: false
+
+  valuesOverlay:
+    server:
+      workers: 1

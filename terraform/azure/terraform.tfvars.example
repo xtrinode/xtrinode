@@ -1,0 +1,38 @@
+# XTrinode Azure Terraform - Example Variables
+# Copy to terraform.tfvars and fill in values.
+# NEVER commit terraform.tfvars (contains secrets).
+
+# Azure
+azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+azure_region          = "eastus"
+resource_group_name   = "xtrinode-rg"
+environment           = "testing"
+cluster_name          = "xtrinode-aks-test"
+
+# AKS default node pool. The default pool must keep at least one node.
+node_desired_size = 1
+node_min_size     = 1
+node_max_size     = 10
+node_vm_size      = "Standard_B2s"
+
+# Networking. Keep these non-overlapping.
+vnet_cidr            = "10.0.0.0/16"
+subnet_cidr          = "10.0.1.0/24"
+postgres_subnet_cidr = "10.0.2.0/24"
+service_cidr         = "10.1.0.0/16"
+dns_service_ip       = "10.1.0.10"
+
+# PostgreSQL - disabled by default for dev and parity with the GCP path.
+# postgres_enabled = false
+# postgres_admin_password = "CHANGE_ME_STRONG_PASSWORD" # Required when postgres_enabled = true
+
+# Helm - leave empty to deploy XTrinode manually after Terraform.
+# Set to chart path for Terraform to install: "file://../../helm/xtrinode-operator"
+helm_repository           = ""
+xtrinode_operator_version = "0.1.0"
+
+# Optional observability stack. Terraform only installs the Helm chart;
+# Prometheus and Vector resources are rendered by xtrinode-observability.
+prometheus_enabled = false
+grafana_enabled    = false
+vector_enabled     = false

@@ -1,0 +1,12 @@
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: minimal
+  namespace: team-a
+spec:
+  size: s
+  minWorkers: 0
+  maxWorkers: 2
+  suspended: false
+  routing:
+    header: X-Trino-XTrinode=minimal

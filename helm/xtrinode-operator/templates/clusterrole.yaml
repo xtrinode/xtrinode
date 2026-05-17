@@ -1,0 +1,167 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "xtrinode-operator.fullname" . }}
+  labels:
+    {{- include "xtrinode-operator.labels" . | nindent 4 }}
+rules:
+# XTrinode CRD permissions
+- apiGroups: ["analytics.xtrinode.io"]
+  resources: ["xtrinodes", "xtrinodes/status", "xtrinodes/finalizers"]
+  verbs: ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+
+# Namespace permissions (patch/update for guardrail labels)
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["create", "get", "list", "watch", "patch", "update"]
+
+# Pod permissions (for monitoring)
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+
+# Service permissions
+# trivy:ignore:KSV-0056 The operator owns Services for managed XTrinode control-plane and data-plane resources.
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# ConfigMap permissions
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Secret permissions
+# trivy:ignore:KSV-0041 The operator creates generated auth/catalog/KEDA Secrets and reads user-referenced Secret digests for rollout safety.
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Deployment permissions
+- apiGroups: ["apps"]
+  resources: ["deployments", "deployments/status"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments/scale"]
+  verbs: ["get", "patch", "update"]
+
+# HorizontalPodAutoscaler permissions
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# StatefulSet permissions
+- apiGroups: ["apps"]
+  resources: ["statefulsets", "statefulsets/status"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Events permissions
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+
+# Admission authorization checks for privileged valuesOverlay usage
+- apiGroups: ["authorization.k8s.io"]
+  resources: ["subjectaccessreviews"]
+  verbs: ["create"]
+
+# Runtime readiness permissions
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get", "list", "watch"]
+
+# ServiceAccount permissions (for creating ServiceAccounts for XTrinode instances)
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# ResourceQuota and LimitRange permissions (for namespace guardrails)
+- apiGroups: [""]
+  resources: ["resourcequotas", "limitranges"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# XTrinodeCatalog CRD permissions
+- apiGroups: ["analytics.xtrinode.io"]
+  resources: ["xtrinodecatalogs", "xtrinodecatalogs/status"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Leader election permissions (ConfigMap-based fallback)
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["xtrinode-operator-leader-election-lock"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create"]
+
+# Leader election permissions (Lease-based - required by controller-runtime >= 0.14)
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# PodDisruptionBudget permissions
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Prometheus Operator permissions
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "podmonitors"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Ingress permissions
+# trivy:ignore:KSV-0056 The operator owns Ingress and NetworkPolicy resources declared in XTrinode specs.
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# KEDA ScaledObject permissions (Phase 2)
+- apiGroups: ["keda.sh"]
+  resources: ["scaledobjects", "scaledobjects/finalizers", "triggerauthentications"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Cluster API permissions for XTrinode node pool reconciliation
+- apiGroups: ["cluster.x-k8s.io"]
+  resources:
+    - clusters
+    - machines
+    - machines/status
+    - machinesets
+    - machinesets/status
+    - machinedeployments
+    - machinedeployments/status
+    - machinedeployments/finalizers
+    - machinepools
+    - machinepools/status
+    - machinepools/finalizers
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Infrastructure provider permissions used by the node pool adapter
+- apiGroups: ["infrastructure.cluster.x-k8s.io"]
+  resources:
+    - awsmachinetemplates
+    - awsmachinetemplates/status
+    - awsmanagedmachinepools
+    - awsmanagedmachinepools/status
+    - awsmanagedmachinepools/finalizers
+    - azuremachinetemplates
+    - azuremachinetemplates/status
+    - azuremachinepools
+    - azuremachinepools/status
+    - azuremachinepools/finalizers
+    - azuremanagedmachinepools
+    - azuremanagedmachinepools/status
+    - azuremanagedmachinepools/finalizers
+    - gcpmachinetemplates
+    - gcpmachinetemplates/status
+    - gcpmanagedmachinepools
+    - gcpmanagedmachinepools/status
+    - gcpmanagedmachinepools/finalizers
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Gateway permissions (Phase 2)
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["gateways", "httproutes"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+{{- end }}

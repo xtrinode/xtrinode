@@ -1,0 +1,33 @@
+{{- if and .Values.metrics.serviceMonitor.enabled (or .Values.metrics.serviceMonitor.forceRender (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor")) }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "xtrinode-api-server.fullname" . }}
+  namespace: {{ .Values.metrics.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "xtrinode-api-server.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.metrics.serviceMonitor.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "xtrinode-api-server.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: http
+    path: {{ .Values.apiServer.metricsPath | default "/metrics" }}
+    interval: {{ .Values.metrics.serviceMonitor.interval | default "30s" }}
+    scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout | default "10s" }}
+    {{- with .Values.metrics.serviceMonitor.relabelings }}
+    relabelings:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.metrics.serviceMonitor.metricRelabelings }}
+    metricRelabelings:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+{{- end }}

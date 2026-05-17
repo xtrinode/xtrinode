@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-gateway-routes
+  namespace: {{ include "xtrinode-gateway.namespace" . }}
+  labels:
+    {{- include "xtrinode-gateway.labels" . | nindent 4 }}
+data:
+  routes.yaml: |
+    routes: []

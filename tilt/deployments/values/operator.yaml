@@ -1,0 +1,53 @@
+replicaCount: 1
+
+image:
+  pullPolicy: Always
+
+serviceMonitor:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+operator:
+  workers: 2
+  prometheus:
+    address: "http://prometheus.monitoring.svc.cluster.local:9090"
+  gateway:
+    baseURL: "http://xtrinode-gateway.xtrinode-gateway.svc.cluster.local:8080"
+  capiProvider: "gcp"
+
+webhook:
+  enabled: true
+
+keda:
+  enabled: true
+  image:
+    pullPolicy: IfNotPresent
+  resources:
+    operator:
+      requests:
+        cpu: 50m
+        memory: 96Mi
+      limits:
+        cpu: 300m
+        memory: 256Mi
+    metricServer:
+      requests:
+        cpu: 50m
+        memory: 96Mi
+      limits:
+        cpu: 300m
+        memory: 256Mi
+    webhooks:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 192Mi

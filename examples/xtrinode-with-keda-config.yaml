@@ -1,0 +1,40 @@
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: memory-keda
+  namespace: team-a
+spec:
+  size: s
+  minWorkers: 0
+  maxWorkers: 4
+  suspended: false
+  routing:
+    header: X-Trino-XTrinode=memory-keda
+    routingGroup: memory-keda
+  keda:
+    enabled: true
+    scalerType: http
+    scalingMetric: memory
+    threshold: "70"
+    scaleDownCooldown: 10m
+    scaleUpCooldown: 1m
+    httpEndpoint: coordinator
+    jmxExporter:
+      enabled: true
+  valuesOverlay:
+    coordinator:
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 2Gi
+    worker:
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: "2"
+          memory: 2Gi

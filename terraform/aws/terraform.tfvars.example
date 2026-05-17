@@ -1,0 +1,41 @@
+# XTrinode AWS Terraform - Example Variables
+# Copy to terraform.tfvars and fill in values.
+# NEVER commit terraform.tfvars (contains secrets).
+
+# AWS
+aws_region   = "us-east-1"
+aws_profile  = "default"
+environment = "testing"
+cluster_name = "xtrinode-eks-test"
+
+# EKS API access - keep false for private cluster (access via bastion/SSM/CloudShell)
+# Public endpoint: set true only when you need laptop kubectl access.
+# `make deploy-aws` overrides these with true + your current /32 IP for the
+# script run, then prints the command to disable public access again.
+eks_public_access       = false
+eks_public_access_cidrs = ["0.0.0.0/0"] # Restrict to your IP: ["1.2.3.4/32"] or run: make eks-restrict-to-my-ip
+
+# Baseline node group for the XTrinode control plane
+node_desired_size = 1
+node_min_size     = 1
+node_max_size     = 10
+# Diversify for better spot capacity (4+ types from different families)
+node_instance_types = ["t3.small", "t3.medium", "t3a.small", "t3a.medium", "m6i.large", "m5.large"]
+
+# PostgreSQL - disabled by default for dev and parity with the GCP path.
+# postgres_enabled = false
+# postgres_admin_password = "CHANGE_ME_STRONG_PASSWORD" # Required when postgres_enabled = true
+
+# Helm - leave empty to deploy operator manually after Terraform
+# Set to chart path for Terraform to install: "file://../../helm/xtrinode-operator"
+helm_repository           = ""
+xtrinode_operator_version = "0.1.0"
+
+# Optional observability stack. Terraform only installs the Helm chart;
+# Prometheus and Vector resources are rendered by xtrinode-observability.
+prometheus_enabled = false
+grafana_enabled    = false
+vector_enabled     = false
+
+# Cluster Autoscaler (enabled by default)
+cluster_autoscaler_enabled = true

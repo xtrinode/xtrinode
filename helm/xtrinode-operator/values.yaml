@@ -1,0 +1,143 @@
+# XTrinode Operator Helm Chart Values
+#
+# NAMESPACE STRATEGY:
+# This operator should be deployed to the 'xtrinode-system' namespace.
+# It manages XTrinode instances across all namespaces in the cluster.
+# See docs/ARCHITECTURE.md#namespace-and-isolation-model for complete architecture details.
+#
+# Architecture:
+# - xtrinode-system: Operator + API Server (control plane)
+# - xtrinode-gateway: Gateway (data plane)
+# - User namespaces: Each XTrinode instance runs in its own namespace
+
+replicaCount: 1
+
+image:
+  repository: xtrinode-operator
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+
+# Global values (subcharts may reference these)
+global:
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# RBAC configuration
+rbac:
+  create: true
+
+# Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Service configuration
+service:
+  create: true
+  type: ClusterIP
+  port: 8080
+
+# Admission webhooks for XTrinode defaulting and validation.
+webhook:
+  enabled: true
+  servicePort: 443
+  port: 9443
+  certDir: /tmp/k8s-webhook-server/serving-certs
+  certSecretName: ""
+  failurePolicy: Fail
+  timeoutSeconds: 10
+
+serviceMonitor:
+  enabled: true
+  forceRender: false
+  apiVersion: monitoring.coreos.com/v1
+  interval: "30s"
+  scrapeTimeout: "10s"
+  labels: {}
+  annotations: {}
+
+# Watch namespace (empty = all namespaces)
+watchNamespace: ""
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+priorityClassName: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 0  # 0 for testing - allows drain/eviction
+
+# KEDA subchart - installs KEDA for XTrinode worker autoscaling (ScaledObjects)
+# Set to false if KEDA is already installed in the cluster
+# Use these placement knobs to keep KEDA control components on the same
+# always-on system node pool as the XTrinode control plane.
+keda:
+  enabled: true
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  permissions:
+    operator:
+      restrict:
+        # XTrinode creates per-runtime TriggerAuthentication resources that may
+        # reference Secrets in tenant namespaces, so KEDA needs cluster-wide
+        # Secret watch access to resolve dynamic scaler credentials.
+        secret: false
+  rbac:
+    # XTrinode scales Deployments and StatefulSets, which KEDA grants explicitly.
+    # Avoid the upstream default wildcard custom scale target RBAC.
+    enabledCustomScaledRefKinds: false
+
+# Operator configuration
+operator:
+  # Watch namespace (empty = all namespaces)
+  watchNamespace: ""
+
+  # Number of concurrent XTrinode reconciliations
+  workers: 3
+
+  # Prometheus address for KEDA integration
+  prometheus:
+    address: "http://prometheus.monitoring.svc.cluster.local:9090"
+
+  # Gateway configuration
+  gateway:
+    baseURL: "http://xtrinode-gateway.xtrinode-gateway.svc.cluster.local:8080"
+
+  # CAPI provider (azure, aws, gcp)
+  capiProvider: "azure"

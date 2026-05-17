@@ -1,0 +1,94 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  go: "1.26.2"
+
+linters:
+  default: none
+  enable:
+    # Error checking
+    - errcheck
+    - ineffassign
+    - unconvert
+    - unused
+
+    # Code quality
+    - bodyclose
+    - dogsled
+    - gocritic
+    - gocyclo
+    - goprintffuncname
+    - govet
+    - noctx
+    - staticcheck
+
+    # Security
+    - gosec
+
+    # Style
+    - misspell
+    - nolintlint
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - ifElseChain
+
+    gocyclo:
+      min-complexity: 30
+
+    govet:
+      enable:
+        - shadow
+
+    misspell:
+      locale: US
+
+    nolintlint:
+      allow-unused: false
+      require-explanation: false
+      require-specific: false
+
+  exclusions:
+    paths:
+      - "(^|/)vendor/"
+      - "(^|/)bin/"
+      - "(^|/)dist/"
+      - '\.pb\.go$'
+      - '_generated\.go$'
+      - 'mock_.*\.go$'
+
+    presets:
+      - common-false-positives
+      - std-error-handling
+
+    rules:
+      # Test files - relax checks
+      - path: '_test\.go'
+        linters:
+          - errcheck
+          - gocyclo
+
+      # Resource builders - allow high complexity
+      - path: 'internal/trino/resources/.*\.go'
+        linters:
+          - gocyclo
+
+      # Exclude G115 (integer overflow) globally - too many false positives in Kubernetes contexts
+      - linters:
+          - gosec
+        text: "G115: integer overflow conversion"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

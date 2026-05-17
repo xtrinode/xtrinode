@@ -1,0 +1,64 @@
+# XTrinode Observability Helm Chart Values
+
+prometheus-stack:
+  enabled: true
+  defaultRules:
+    create: false
+  alertmanager:
+    enabled: false
+  nodeExporter:
+    enabled: false
+  kubeStateMetrics:
+    enabled: false
+  kubeApiServer:
+    enabled: false
+  kubelet:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  coreDns:
+    enabled: false
+  kubeDns:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  grafana:
+    enabled: false
+  prometheus:
+    enabled: true
+    prometheusSpec:
+      retention: 30d
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      probeSelectorNilUsesHelmValues: false
+      ruleSelectorNilUsesHelmValues: false
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: standard
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 50Gi
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2Gi
+        limits:
+          cpu: "2"
+          memory: 4Gi
+
+vector:
+  enabled: true
+  namespaceOverride: observability
+  createNamespace: true
+  clusterName: xtrinode
+  environment: testing
+  region: unknown
+  serviceMonitor:
+    enabled: true

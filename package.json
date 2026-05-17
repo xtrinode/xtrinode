@@ -1,0 +1,10 @@
+{
+  "name": "xtrinode-ci-tools",
+  "private": true,
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "devDependencies": {
+    "markdownlint-cli": "0.47.0"
+  }
+}

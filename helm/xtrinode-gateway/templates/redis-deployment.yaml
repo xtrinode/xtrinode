@@ -1,0 +1,77 @@
+{{- if .Values.redis.enabled }}
+{{- if and .Values.redis.auth.enabled (not .Values.redis.auth.existingSecret) (not .Values.redis.auth.password) (not .Values.gateway.redis.password) }}
+{{- fail "redis.auth.enabled requires redis.auth.password, redis.auth.existingSecret, or gateway.redis.password" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "xtrinode-gateway.redisName" . }}
+  namespace: {{ include "xtrinode-gateway.namespace" . }}
+  labels:
+    {{- include "xtrinode-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "xtrinode-gateway.redisSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "xtrinode-gateway.redisSelectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.redis.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.redis.podSecurityContext | nindent 8 }}
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          {{- if .Values.redis.auth.enabled }}
+          command:
+            - redis-server
+          args:
+            - --appendonly
+            - "no"
+            - --save
+            - ""
+            - --requirepass
+            - $(REDIS_PASSWORD)
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "xtrinode-gateway.redisSecretName" . }}
+                  key: {{ .Values.redis.auth.existingSecretKey | default "redis-password" }}
+          {{- else }}
+          command:
+            - redis-server
+          args:
+            - --appendonly
+            - "no"
+            - --save
+            - ""
+          {{- end }}
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.service.port | default 6379 }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.redis.securityContext | nindent 12 }}
+      {{- with .Values.redis.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.redis.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.redis.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

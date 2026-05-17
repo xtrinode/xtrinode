@@ -1,0 +1,52 @@
+# XTrinode GCP Terraform - Example Variables
+# Copy to terraform.tfvars and fill in values.
+# NEVER commit terraform.tfvars (contains secrets).
+
+gcp_project_id = "<YOUR_PROJECT_ID>"
+gcp_region     = "us-central1"
+
+# Allow kubectl from your laptop (replace with your public IP)
+# master_authorized_cidrs = [{ cidr_block = "1.2.3.4/32", display_name = "laptop" }]
+environment    = "testing"
+cluster_name   = "xtrinode-gke-test"
+
+# Node pool. Keep node_preemptible=false for production baseline capacity.
+node_desired_size = 3
+node_min_size     = 1
+node_max_size     = 10
+node_machine_type = "e2-standard-2"
+node_preemptible  = false
+
+# PostgreSQL - disabled by default for dev (avoids teardown blockers). Set true + password to enable.
+# postgres_enabled = false
+# postgres_admin_password = "CHANGE_ME_TO_A_STRONG_PASSWORD"  # Required when postgres_enabled = true
+
+# Helm - leave empty to deploy operator manually after Terraform
+# Set to chart path for Terraform to install: "file://../../helm/xtrinode-operator"
+helm_repository          = ""
+xtrinode_operator_version = "0.1.0"
+
+# Optional observability stack. Terraform only installs the Helm chart;
+# Prometheus and Vector resources are rendered by xtrinode-observability.
+prometheus_enabled = false
+grafana_enabled    = false
+vector_enabled     = false
+
+# Iceberg GCS smoke test bucket + Workload Identity
+# iceberg_gcs_enabled = false
+# iceberg_gcs_bucket_name = "<globally-unique-bucket-name>"
+# hive_metastore_postgres_database_name = "hive_metastore"
+# hive_metastore_postgres_secret_name = "hive-metastore-postgres-secret"
+
+# Optional: Cluster API Provider GCP management-plane install.
+# Creates a CAPG Google service account key and stores it in Terraform state by default.
+# capg_enabled = false
+# capg_manage_gcp_credentials = true
+# capg_gcp_service_account_roles = [
+#   "roles/editor",
+#   "roles/iam.serviceAccountTokenCreator",
+# ]
+
+# Alternative: use an existing key instead of letting Terraform create one.
+# capg_manage_gcp_credentials = false
+# capg_gcp_credentials_b64 = "<base64-service-account-json>"

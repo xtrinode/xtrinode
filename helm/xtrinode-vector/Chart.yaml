@@ -1,0 +1,17 @@
+apiVersion: v2
+name: xtrinode-vector
+description: Vector log collection for XTrinode clusters
+type: application
+version: 0.1.0
+appVersion: "0.35.0"
+keywords:
+  - vector
+  - logging
+  - observability
+  - xtrinode
+home: https://github.com/xtrinode/xtrinode
+sources:
+  - https://github.com/xtrinode/xtrinode
+maintainers:
+  - name: XTrinode
+    email: xtrinode@gmail.com

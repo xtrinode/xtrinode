@@ -1,0 +1,84 @@
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinodeCatalog
+metadata:
+  name: tpch-smoke
+  namespace: team-test
+  labels:
+    team: team-test
+    catalog-type: tpch
+spec:
+  labels:
+    team: team-test
+    catalog-type: tpch
+  connector:
+    tpch:
+      properties:
+        tpch.splits-per-node: "4"
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: prom-query-smoke
+  namespace: team-test
+spec:
+  size: xs
+  minWorkers: 0
+  maxWorkers: 2
+  suspended: false
+  autoSuspendAfter: "10m"
+  wakeMinWorkers: 1
+  wakeTTL: "2m"
+  rolloutPolicy:
+    rollingUpdateStrategy:
+      maxSurge: 0
+      maxUnavailable: 1
+
+  catalogSelector:
+    matchLabels:
+      team: team-test
+      catalog-type: tpch
+
+  routing:
+    header: X-Trino-XTrinode=prom-query-smoke
+    routingGroup: prom-query-smoke
+
+  keda:
+    enabled: true
+    scalerType: prometheus
+    scalingMetric: query
+    threshold: "1"
+    scaleDownCooldown: "30s"
+    prometheusServer: http://xtrinode-observability-pro-prometheus.monitoring.svc.cluster.local:9090
+    prometheusQuery: |
+      sum(xtrinode_gateway_inflight_queries{exported_namespace="{namespace}",xtrinode="{xtrinodeName}"}) or sum(xtrinode_gateway_inflight_queries{namespace="{namespace}",xtrinode="{xtrinodeName}"})
+
+  helmChartConfig:
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+
+  valuesOverlay:
+    coordinator:
+      additionalJVMConfig:
+        - -Xmx768M
+      resources:
+        requests:
+          cpu: 100m
+          memory: 768Mi
+        limits:
+          cpu: 500m
+          memory: 1280Mi
+    worker:
+      additionalJVMConfig:
+        - -Xmx768M
+      resources:
+        requests:
+          cpu: 100m
+          memory: 768Mi
+        limits:
+          cpu: 500m
+          memory: 1280Mi
+    additionalConfigProperties:
+      - query.max-memory=512MB
+      - query.max-memory-per-node=256MB
+      - memory.heap-headroom-per-node=128MB

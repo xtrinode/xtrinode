@@ -1,0 +1,27 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "xtrinode-gateway.fullname" . }}
+  namespace: {{ include "xtrinode-gateway.namespace" . }}
+  labels:
+    {{- include "xtrinode-gateway.labels" . | nindent 4 }}
+rules:
+# Gateway needs read access to ConfigMap in its own namespace (xtrinode-gateway)
+# The trino-gateway-routes ConfigMap is managed by the operator and lives in this namespace
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["trino-gateway-routes"]
+  verbs: ["get", "list", "watch"]
+# Create: used by pre-install hook to bootstrap empty ConfigMap on fresh installs (resourceNames cannot restrict create)
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create"]
+{{- if and .Values.gateway.auth.enabled (eq .Values.gateway.auth.type "api-key") }}
+# Gateway needs read access to Secrets for API key authentication in its own namespace
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: [{{ .Values.gateway.auth.apiKey.secretName | quote }}]
+  verbs: ["get", "list", "watch"]
+{{- end }}
+{{- end }}
