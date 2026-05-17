@@ -17,6 +17,11 @@ previous_version="$(
     tr -d '"' || true
 )"
 
+if [ -z "${previous_version}" ]; then
+  echo "No previous XTrinode chart version found on ${BASE_REF}; release PR policy does not apply."
+  exit 0
+fi
+
 if [ "${current_version}" = "${previous_version}" ]; then
   echo "Chart version did not change; release PR policy does not apply."
   exit 0

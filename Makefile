@@ -158,7 +158,7 @@ CONTROLLER_GEN_VERSION ?= $(shell version=$$(awk '$$1 == "sigs.k8s.io/controller
 SETUP_ENVTEST_VERSION ?= v0.24.0
 ENVTEST_K8S_VERSION ?= 1.32.0
 SETUP_ENVTEST_BIN ?= $(shell go env GOPATH 2>/dev/null)/bin/setup-envtest
-LINT_TIMEOUT ?= 1m
+LINT_TIMEOUT ?= 10m
 
 # CI tool versions
 HELM_VERSION ?= v3.20.0
