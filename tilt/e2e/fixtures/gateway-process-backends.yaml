@@ -1,0 +1,333 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-process-backend-a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-process-backend-a
+  template:
+    metadata:
+      labels:
+        app: gateway-process-backend-a
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: python:3.12-alpine
+          command: ["python", "/app/server.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: BACKEND_NAME
+              value: process-a
+            - name: STATUS_CODE
+              value: "200"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: gateway-process-backend-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-process-backend-a
+spec:
+  selector:
+    app: gateway-process-backend-a
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-process-backend-b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-process-backend-b
+  template:
+    metadata:
+      labels:
+        app: gateway-process-backend-b
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: python:3.12-alpine
+          command: ["python", "/app/server.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: BACKEND_NAME
+              value: process-b
+            - name: STATUS_CODE
+              value: "200"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: gateway-process-backend-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-process-backend-b
+spec:
+  selector:
+    app: gateway-process-backend-b
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-process-backend-bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-process-backend-bad
+  template:
+    metadata:
+      labels:
+        app: gateway-process-backend-bad
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: python:3.12-alpine
+          command: ["python", "/app/server.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: BACKEND_NAME
+              value: process-bad
+            - name: STATUS_CODE
+              value: "500"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: gateway-process-backend-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-process-backend-bad
+spec:
+  selector:
+    app: gateway-process-backend-bad
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-process-backend-flaky-overload
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-process-backend-flaky-overload
+  template:
+    metadata:
+      labels:
+        app: gateway-process-backend-flaky-overload
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: python:3.12-alpine
+          command: ["python", "/app/server.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: BACKEND_NAME
+              value: process-flaky-overload
+            - name: STATUS_SEQUENCE
+              value: "500,500,500,500,500,503"
+            - name: DELAY_STATUS_CODE
+              value: "503"
+            - name: DELAY_SECONDS
+              value: "2"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: gateway-process-backend-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-process-backend-flaky-overload
+spec:
+  selector:
+    app: gateway-process-backend-flaky-overload
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-process-backend-flaky-paused
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-process-backend-flaky-paused
+  template:
+    metadata:
+      labels:
+        app: gateway-process-backend-flaky-paused
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: python:3.12-alpine
+          command: ["python", "/app/server.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: BACKEND_NAME
+              value: process-flaky-paused
+            - name: STATUS_SEQUENCE
+              value: "500,500,500,500,500,200,200"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: gateway-process-backend-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-process-backend-flaky-paused
+spec:
+  selector:
+    app: gateway-process-backend-flaky-paused
+  ports:
+    - port: 8080
+      targetPort: 8080

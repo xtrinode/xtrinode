@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "xtrinode-api-server.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xtrinode-api-server.labels" . | nindent 4 }}
+spec:
+  {{- if not (or .Values.autoscaling.enabled .Values.keda.enabled) }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "xtrinode-api-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "xtrinode-api-server.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- $global := .Values.global | default dict }}
+      {{- $pullSecrets := concat (.Values.imagePullSecrets | default list) ($global.imagePullSecrets | default list) | uniq }}
+      {{- with $pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "xtrinode-api-server.serviceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: api-server
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ include "xtrinode-api-server.image" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /xtrinode
+        args:
+        - --api-port={{ .Values.apiServer.port }}
+        - --api-path={{ .Values.apiServer.apiPath }}
+        - --health-path={{ .Values.apiServer.healthPath }}
+        - --metrics-path={{ .Values.apiServer.metricsPath }}
+        - --read-timeout={{ .Values.apiServer.readTimeout }}
+        - --write-timeout={{ .Values.apiServer.writeTimeout }}
+        - --shutdown-timeout={{ .Values.apiServer.shutdownTimeout }}
+        - --lease-namespace={{ .Values.apiServer.leaseNamespace | default .Release.Namespace }}
+        {{- if .Values.apiServer.auth.enabled }}
+        - --auth-enabled=true
+        - --auth-token-file=/var/run/xtrinode-api-server-auth/{{ .Values.apiServer.auth.secretKey | default "token" }}
+        {{- end }}
+        {{- if and .Values.apiServer.auth.enabled .Values.apiServer.auth.resume.enabled }}
+        - --resume-auth-token-file=/var/run/xtrinode-api-server-resume-auth/{{ .Values.apiServer.auth.resume.secretKey | default "token" }}
+        {{- end }}
+        {{- with .Values.apiServer.cors.allowedOrigins }}
+        - --cors-allowed-origins={{ join "," . }}
+        {{- end }}
+        {{- if .Values.apiServer.logLevel }}
+        - --log-level={{ .Values.apiServer.logLevel }}
+        {{- end }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.apiServer.port }}
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: {{ .Values.livenessProbe.httpGet.path | default "/health" }}
+            port: {{ .Values.livenessProbe.httpGet.port | default .Values.apiServer.port }}
+          initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds | default 10 }}
+          periodSeconds: {{ .Values.livenessProbe.periodSeconds | default 10 }}
+          timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds | default 5 }}
+          failureThreshold: {{ .Values.livenessProbe.failureThreshold | default 3 }}
+        readinessProbe:
+          httpGet:
+            path: {{ .Values.readinessProbe.httpGet.path | default "/health" }}
+            port: {{ .Values.readinessProbe.httpGet.port | default .Values.apiServer.port }}
+          initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds | default 5 }}
+          periodSeconds: {{ .Values.readinessProbe.periodSeconds | default 5 }}
+          timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds | default 3 }}
+          failureThreshold: {{ .Values.readinessProbe.failureThreshold | default 3 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        {{- if or .Values.apiServer.auth.enabled (and .Values.apiServer.auth.enabled .Values.apiServer.auth.resume.enabled) }}
+        volumeMounts:
+        {{- if .Values.apiServer.auth.enabled }}
+        - name: api-server-auth-token
+          mountPath: /var/run/xtrinode-api-server-auth
+          readOnly: true
+        {{- end }}
+        {{- if and .Values.apiServer.auth.enabled .Values.apiServer.auth.resume.enabled }}
+        - name: api-server-resume-auth-token
+          mountPath: /var/run/xtrinode-api-server-resume-auth
+          readOnly: true
+        {{- end }}
+        {{- end }}
+      {{- if or .Values.apiServer.auth.enabled (and .Values.apiServer.auth.enabled .Values.apiServer.auth.resume.enabled) }}
+      volumes:
+      {{- if .Values.apiServer.auth.enabled }}
+      - name: api-server-auth-token
+        secret:
+          secretName: {{ include "xtrinode-api-server.authSecretName" . }}
+      {{- end }}
+      {{- if and .Values.apiServer.auth.enabled .Values.apiServer.auth.resume.enabled }}
+      - name: api-server-resume-auth-token
+        secret:
+          secretName: {{ include "xtrinode-api-server.resumeAuthSecretName" . }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

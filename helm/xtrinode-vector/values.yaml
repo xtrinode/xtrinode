@@ -1,0 +1,188 @@
+# XTrinode Vector Helm Chart Values
+
+enabled: true
+
+namespaceOverride: observability
+createNamespace: true
+
+image:
+  repository: timberio/vector
+  tag: "0.35.0-debian"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+clusterName: "xtrinode"
+environment: "testing"
+region: "unknown"
+logLevel: "info"
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9598"
+  prometheus.io/path: "/metrics"
+
+podLabels: {}
+
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+priorityClassName: ""
+
+tolerations:
+  - effect: NoSchedule
+    operator: Exists
+  - effect: NoExecute
+    operator: Exists
+
+nodeSelector: {}
+affinity: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 9598
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9598"
+
+serviceMonitor:
+  enabled: true
+  apiVersion: monitoring.coreos.com/v1
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  annotations: {}
+
+probes:
+  enabled: true
+  apiPort: 8686
+  liveness:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+hostPaths:
+  varLog: /var/log
+  varLibContainerd: /var/lib/containerd
+  varLibDockerContainers: /var/lib/docker/containers
+
+extraEnv: []
+extraVolumeMounts: []
+extraVolumes: []
+
+config: |
+  data_dir: /var/lib/vector
+
+  api:
+    enabled: true
+    address: 0.0.0.0:8686
+
+  sources:
+    kubernetes_logs:
+      type: kubernetes_logs
+      auto_partial_merge: true
+      self_node_name: "${VECTOR_SELF_NODE_NAME}"
+      namespace_annotation_fields:
+        namespace_labels: ""
+      node_annotation_fields:
+        node_labels: ""
+      pod_annotation_fields:
+        pod_labels: ""
+        pod_annotations: ""
+      exclude_paths_glob_patterns:
+        - "**/kube-system/**"
+        - "**/kube-public/**"
+        - "**/kube-node-lease/**"
+        - "**/observability/vector*/**"
+
+    vector_metrics:
+      type: internal_metrics
+      namespace: vector
+
+  transforms:
+    filter_xtrinode_logs:
+      type: filter
+      inputs:
+        - kubernetes_logs
+      condition: |
+        namespace = string(.kubernetes.pod_namespace) ?? ""
+        !starts_with(namespace, "kube-") &&
+        !starts_with(namespace, "gke-") &&
+        !includes(["gmp-system", "observability", "monitoring"], namespace)
+
+    enrich_xtrinode_metadata:
+      type: remap
+      inputs:
+        - filter_xtrinode_logs
+      source: |
+        .cluster_name = "${CLUSTER_NAME}"
+        .environment = "${ENVIRONMENT}"
+        .region = "${REGION}"
+
+        if exists(.kubernetes.pod_labels."analytics.xtrinode.io/xtrinode") {
+          .xtrinode_name = .kubernetes.pod_labels."analytics.xtrinode.io/xtrinode"
+        }
+
+        if exists(.kubernetes.pod_labels."analytics.xtrinode.io/routing-group") {
+          .routing_group = .kubernetes.pod_labels."analytics.xtrinode.io/routing-group"
+        }
+
+        if exists(.kubernetes.pod_labels."app.kubernetes.io/component") {
+          .component = .kubernetes.pod_labels."app.kubernetes.io/component"
+        }
+
+  sinks:
+    console:
+      type: console
+      inputs:
+        - enrich_xtrinode_metadata
+      encoding:
+        codec: json
+
+    prometheus:
+      type: prometheus_exporter
+      inputs:
+        - vector_metrics
+      address: 0.0.0.0:9598
+      default_namespace: vector
+
+  log_schema:
+    host_key: host
+    message_key: message
+    source_type_key: source_type
+    timestamp_key: timestamp
+
+  timezone: UTC

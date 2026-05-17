@@ -1,0 +1,6 @@
+apiVersion: v2
+name: xtrinode-api-server
+description: A Helm chart for XTrinode API Server
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

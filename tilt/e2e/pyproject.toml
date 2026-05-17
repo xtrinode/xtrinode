@@ -1,0 +1,12 @@
+[project]
+name = "xtrinode-local-e2e"
+version = "0.1.0"
+description = "Local Robot Framework e2e suites for XTrinode."
+requires-python = ">=3.11"
+dependencies = [
+  "locust>=2.32,<3",
+  "robotframework>=7.0,<8",
+]
+
+[tool.uv]
+package = false

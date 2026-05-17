@@ -1,0 +1,330 @@
+# XTrinode Gateway Helm Chart Values
+#
+# NAMESPACE STRATEGY:
+# This gateway should be deployed to the 'xtrinode-gateway' namespace.
+# It routes queries to XTrinode instances across all user namespaces.
+# See docs/ARCHITECTURE.md#namespace-and-isolation-model for complete architecture details.
+#
+# Architecture:
+# - xtrinode-system: Operator + API Server (control plane)
+# - xtrinode-gateway: Gateway (data plane) <- THIS COMPONENT
+# - User namespaces: Each XTrinode instance runs in its own namespace
+#
+# Cross-namespace communication:
+# - Gateway -> API Server: xtrinode-api-server.xtrinode-system.svc.cluster.local:8081
+# - Gateway -> XTrinodes: trino-{name}.{namespace}.svc.cluster.local:8080
+
+replicaCount: 1
+
+image:
+  repository: xtrinode-gateway
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""
+
+# Gateway configuration
+gateway:
+  # API server base URL for auto-resume.
+  # This is a cross-namespace service URL following the pattern:
+  # http://{service}.{namespace}.svc.cluster.local:{port}/api/v1
+  apiServerURL: "http://xtrinode-api-server.xtrinode-system.svc.cluster.local:8081/api/v1"
+
+  # Bearer token used for Gateway -> API Server control-plane calls.
+  # Configure this with the same token as xtrinode-api-server.apiServer.auth.
+  apiServerAuth:
+    enabled: false
+    existingSecret: ""
+    secretName: ""
+    secretKey: "token"
+    token: ""
+
+  # Gateway HTTP port
+  port: 8080
+
+  # Gateway listener timeouts. Keep request/response deadlines disabled by default
+  # because Trino nextUri long-polling and result streaming can exceed ordinary
+  # REST timeouts.
+  http:
+    readHeaderTimeout: "5s"
+    readTimeout: "0s"
+    writeTimeout: "0s"
+    idleTimeout: "60s"
+
+  # Log level (debug, info, error)
+  logLevel: "info"
+
+  # Authentication configuration
+  auth:
+    # Enable authentication
+    enabled: false
+
+    # Authentication type: "api-key", "oauth", "oidc", "bearer-token", "jwt", "none"
+    # For SAML/OAuth2-proxy deployments, terminate auth at the ingress/proxy and
+    # keep gateway auth disabled, or use oauth/oidc when a JWT bearer token is forwarded.
+    type: "api-key"
+
+    # API Key authentication configuration
+    apiKey:
+      # Kubernetes Secret name containing API keys
+      secretName: "trino-gateway-api-keys"
+      # Key in Secret containing API keys data
+      secretKey: "api-keys"
+      # Namespace where Secret is located (should match gateway deployment namespace)
+      # Gateway uses namespace-scoped RBAC and can only access secrets in its own namespace
+      namespace: "xtrinode-gateway"
+
+    # OAuth/OIDC bearer token authentication. The gateway validates JWTs and
+    # still forwards the original Authorization header to the Trino coordinator.
+    oauth:
+      issuer: ""
+      audience: ""
+      # Leave empty to discover from {issuer}/.well-known/openid-configuration.
+      jwksURL: ""
+      refreshInterval: "1h"
+
+  # Redis for cross-replica sticky routing and distributed rate limiting.
+  # Set enabled=true and either use the in-chart Redis deployment below or
+  # provide url/password pointing to an external Redis instance.
+  redis:
+    enabled: false
+    url: ""
+    db: 0
+    stickyTTL: "1h"
+    timeout: "1s"
+    password: ""
+    existingSecret: ""
+    existingSecretKey: "redis-password"
+
+  # Rate limiting is local per gateway pod unless Redis is enabled.
+  # Any gateway configuration that can run multiple pods requires Redis.
+  rateLimit:
+    enabled: true
+    capacity: 100
+    refillRate: "1s"
+
+# Optional in-chart Redis. Suitable for dev/smoke tests and small installs.
+# For production, prefer a managed/external Redis and set gateway.redis.url.
+redis:
+  enabled: false
+  image:
+    repository: redis
+    tag: "7.4-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    enabled: false
+    password: ""
+    existingSecret: ""
+    existingSecretKey: "redis-password"
+  service:
+    port: 6379
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    fsGroup: 999
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# RBAC configuration
+rbac:
+  create: true
+
+# Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Service configuration
+service:
+  create: true
+  type: ClusterIP
+  port: 8080
+
+serviceMonitor:
+  enabled: true
+  forceRender: false
+  apiVersion: monitoring.coreos.com/v1
+  interval: "15s"
+  scrapeTimeout: "10s"
+  labels: {}
+  annotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: "nginx" # e.g., "nginx", "traefik", "istio"
+  annotations:
+    # NGINX-specific annotations for production
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Connection timeouts for long-running queries
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    # Request body size (for large query submissions)
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Rate limiting (optional - uncomment to enable)
+    # nginx.ingress.kubernetes.io/limit-rps: "100"
+    # nginx.ingress.kubernetes.io/limit-connections: "50"
+    # CORS headers (if needed for web clients)
+    # nginx.ingress.kubernetes.io/enable-cors: "true"
+    # nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    # TLS/SSL configuration
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: trino-gateway.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: trino-gateway-tls
+      hosts:
+        - trino-gateway.example.com
+
+# Resources
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+priorityClassName: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Pod disruption budget
+# minAvailable: 0 allows teardown/scale-down when nodes are drained (e.g. terraform destroy)
+# Set to 1 for production HA
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 0
+
+# Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Horizontal Pod Autoscaler configuration
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  # Target CPU utilization percentage (0-100)
+  targetCPUUtilizationPercentage: 70
+  # Target memory utilization percentage (0-100)
+  targetMemoryUtilizationPercentage: 80
+  # Custom metrics (optional)
+  metrics: []
+  # Scaling behavior (optional - uses defaults if not specified)
+  # scaleDownStabilizationWindowSeconds: 300
+  # scaleDownPercent: 50
+  # scaleDownPeriodSeconds: 60
+  # scaleDownPods: 1
+  # scaleUpStabilizationWindowSeconds: 0
+  # scaleUpPercent: 100
+  # scaleUpPeriodSeconds: 15
+  # scaleUpPods: 2
+
+# KEDA ScaledObject configuration
+keda:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  # Cooldown period in seconds (default: 300)
+  cooldownPeriod: 300
+  # Polling interval in seconds (default: 30)
+  pollingInterval: 30
+
+  # CPU-based scaling
+  cpu:
+    enabled: false
+    metricType: "Utilization" # Utilization or AverageValue
+    targetValue: "70" # Target CPU utilization percentage (for Utilization) or millicores (e.g., "500m" for AverageValue)
+    containerName: "" # Optional: specific container to monitor
+
+  # Memory-based scaling
+  memory:
+    enabled: false
+    metricType: "Utilization" # Utilization or AverageValue
+    targetValue: "80" # Target memory utilization percentage (for Utilization) or bytes (e.g., "500Mi" for AverageValue)
+    containerName: "" # Optional: specific container to monitor
+
+  # Prometheus-based scaling
+  prometheus:
+    enabled: false
+    serverAddress: "http://prometheus.monitoring.svc.cluster.local:9090"
+    metricName: "http_requests_per_second"
+    threshold: "100"
+    # Prometheus query (use {namespace} and {service} placeholders)
+    query: 'sum(rate(http_requests_total{namespace="{{namespace}}",service="{{service}}"}[1m]))'
+
+  # HTTP-based scaling (query metrics endpoint)
+  # URL defaults to service metrics endpoint if not specified
+  http:
+    enabled: false
+    targetValue: "100" # Target requests per pod
+    url: "" # Leave empty to use default service URL, or specify custom URL
+    valueLocation: "$.requests_per_second" # JSONPath or regex to extract value
+
+  # Custom triggers (advanced - full KEDA trigger spec)
+  triggers: []
+
+  # Fallback configuration (optional)
+  # fallback:
+  #   failureThreshold: 3
+  #   replicas: 2

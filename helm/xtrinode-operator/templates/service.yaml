@@ -1,0 +1,24 @@
+{{- if .Values.service.create -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "xtrinode-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xtrinode-operator.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - port: {{ .Values.service.port }}
+    targetPort: metrics
+    protocol: TCP
+    name: metrics
+  {{- if .Values.webhook.enabled }}
+  - port: {{ .Values.webhook.servicePort }}
+    targetPort: webhook
+    protocol: TCP
+    name: webhook
+  {{- end }}
+  selector:
+    {{- include "xtrinode-operator.selectorLabels" . | nindent 4 }}
+{{- end }}

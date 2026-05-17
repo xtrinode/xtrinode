@@ -1,0 +1,197 @@
+# GCP smoke test: Postgres catalog + small XTrinode
+#
+# Prereqs:
+# - GKE control plane installed with `make gcp-control-plane-deploy`
+# - XTrinode images pushed to Artifact Registry
+#
+# Apply:
+#   kubectl apply -f examples/xtrinode-gcp-test.yaml
+#
+# Query through gateway:
+#   kubectl port-forward -n xtrinode-gateway svc/xtrinode-gateway 8080:8080
+#   curl -sS -X POST -H "X-Trino-XTrinode: test" -H "X-Trino-User: test" http://localhost:8080/v1/statement \
+#     --data 'SELECT 1'
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-test
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+  namespace: team-test
+type: Opaque
+stringData:
+  username: trino
+  password: trino
+  database: analytics
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: team-test
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: database
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: postgres-data
+          emptyDir: {}
+        - name: postgres-run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: team-test
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinodeCatalog
+metadata:
+  name: postgres-analytics
+  namespace: team-test
+  labels:
+    team: team-test
+    catalog-type: postgres
+spec:
+  labels:
+    team: team-test
+    catalog-type: postgres
+  connector:
+    postgres:
+      connectionURL: jdbc:postgresql://postgres.team-test.svc.cluster.local:5432/analytics
+      connectionUser: trino
+      connectionPasswordSecret:
+        name: postgres-credentials
+        key: password
+
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: test
+  namespace: team-test
+spec:
+  size: s
+  maxWorkers: 3
+  minWorkers: 1
+  suspended: false
+
+  routing:
+    default: true
+    header: X-Trino-XTrinode=test
+    routingGroup: test
+
+  catalogSelector:
+    matchLabels:
+      team: team-test
+      catalog-type: postgres
+
+  keda:
+    enabled: true
+    scalerType: http
+    scalingMetric: memory
+    threshold: "10"
+
+  valuesOverlay:
+    coordinator:
+      additionalJVMConfig:
+        - -Xmx768M
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 1536Mi
+    worker:
+      additionalJVMConfig:
+        - -Xmx768M
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 1536Mi
+    additionalConfigProperties:
+      - http-server.process-forwarded=true
+      - query.max-memory=1GB
+      - query.max-memory-per-node=512MB
+      - memory.heap-headroom-per-node=256MB

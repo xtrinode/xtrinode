@@ -1,0 +1,64 @@
+{{- $hasAnyTrigger := or .Values.keda.cpu.enabled .Values.keda.memory.enabled .Values.keda.prometheus.enabled .Values.keda.http.enabled (gt (len .Values.keda.triggers) 0) }}
+{{- if and .Values.keda.enabled $hasAnyTrigger }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "xtrinode-api-server.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xtrinode-api-server.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "xtrinode-api-server.fullname" . }}
+  minReplicaCount: {{ .Values.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.keda.maxReplicas }}
+  triggers:
+    {{- if .Values.keda.cpu.enabled }}
+    - type: cpu
+      metadata:
+        type: {{ .Values.keda.cpu.metricType | default "Utilization" }}
+        value: "{{ .Values.keda.cpu.targetValue }}"
+        {{- if .Values.keda.cpu.containerName }}
+        containerName: {{ .Values.keda.cpu.containerName }}
+        {{- end }}
+    {{- end }}
+    {{- if .Values.keda.memory.enabled }}
+    - type: memory
+      metadata:
+        type: {{ .Values.keda.memory.metricType | default "Utilization" }}
+        value: "{{ .Values.keda.memory.targetValue }}"
+        {{- if .Values.keda.memory.containerName }}
+        containerName: {{ .Values.keda.memory.containerName }}
+        {{- end }}
+    {{- end }}
+    {{- if .Values.keda.prometheus.enabled }}
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.keda.prometheus.serverAddress }}
+        metricName: {{ .Values.keda.prometheus.metricName }}
+        threshold: "{{ .Values.keda.prometheus.threshold }}"
+        query: {{ .Values.keda.prometheus.query | quote }}
+    {{- end }}
+    {{- if .Values.keda.http.enabled }}
+    - type: http
+      metadata:
+        targetValue: "{{ .Values.keda.http.targetValue }}"
+        url: {{ .Values.keda.http.url | default (printf "http://%s.%s.svc.cluster.local:%v/metrics" (include "xtrinode-api-server.fullname" .) .Release.Namespace .Values.apiServer.port) }}
+        valueLocation: {{ .Values.keda.http.valueLocation | default "$.requests_per_second" }}
+    {{- end }}
+    {{- with .Values.keda.triggers }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- if .Values.keda.cooldownPeriod }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  {{- end }}
+  {{- if .Values.keda.pollingInterval }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  {{- end }}
+  {{- if .Values.keda.fallback }}
+  fallback:
+    {{- toYaml .Values.keda.fallback | nindent 4 }}
+  {{- end }}
+{{- end }}

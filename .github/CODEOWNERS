@@ -1,0 +1,44 @@
+# Default ownership for the public xtrinode account.
+* @xtrinode
+
+# Repository governance, CI, and release automation.
+.github/ @xtrinode
+.github/CODEOWNERS @xtrinode
+.github/dependabot.yml @xtrinode
+.github/workflows/ @xtrinode
+.github/workflows/ci.yml @xtrinode
+.github/workflows/release.yml @xtrinode
+.gitignore @xtrinode
+Makefile @xtrinode
+.golangci.yml @xtrinode
+.markdownlint.json @xtrinode
+.nvmrc @xtrinode
+.trivyignore* @xtrinode
+trivy.yaml @xtrinode
+trivy.yml @xtrinode
+package.json @xtrinode
+tools/ @xtrinode
+
+# Root project guidance and documentation.
+AGENTS.md @xtrinode
+CONTRIBUTING.md @xtrinode
+README.md @xtrinode
+docs/CODEOWNERS.md @xtrinode
+
+# Core operator code and generated API surface.
+xtrinode/ @xtrinode
+xtrinode/api/ @xtrinode
+xtrinode/cmd/ @xtrinode
+xtrinode/controllers/ @xtrinode
+xtrinode/internal/ @xtrinode
+xtrinode/pkg/ @xtrinode
+
+# Packaging, deployment, infrastructure, and documentation.
+docker/ @xtrinode
+docs/ @xtrinode
+examples/ @xtrinode
+helm/ @xtrinode
+logo/ @xtrinode
+terraform/ @xtrinode
+scripts/ @xtrinode
+tilt/ @xtrinode

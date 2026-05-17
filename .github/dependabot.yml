@@ -1,0 +1,60 @@
+version: 2
+
+# Dependabot PRs are reviewed through CODEOWNERS and the main-branch ruleset.
+# Keep this file focused on update sources, not duplicate reviewer/label policy.
+updates:
+  # Go modules
+  - package-ecosystem: "gomod"
+    directory: "/xtrinode"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      k8s:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      prometheus:
+        patterns:
+          - "github.com/prometheus/*"
+
+  # Go-based CI tools
+  - package-ecosystem: "gomod"
+    directory: "/tools"
+    schedule:
+      interval: "weekly"
+
+  # Node-based CI tools
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Docker
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+
+  # External Helm chart dependencies
+  - package-ecosystem: "helm"
+    directory: "/helm/xtrinode-operator"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "helm"
+    directory: "/helm/xtrinode-observability"
+    schedule:
+      interval: "weekly"
+
+  # Terraform — GCP
+  - package-ecosystem: "terraform"
+    directory: "/terraform/gcp"
+    schedule:
+      interval: "monthly"

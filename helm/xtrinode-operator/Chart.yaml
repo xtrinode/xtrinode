@@ -1,0 +1,23 @@
+apiVersion: v2
+name: xtrinode-operator
+description: XTrinode Operator - Elastic Trino Runtimes on Trino + Kubernetes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - trino
+  - runtime
+  - kubernetes
+  - operator
+home: https://github.com/xtrinode/xtrinode
+sources:
+  - https://github.com/xtrinode/xtrinode
+maintainers:
+  - name: XTrinode
+    email: xtrinode@gmail.com
+
+dependencies:
+  - name: keda
+    version: "2.18.0"
+    repository: https://kedacore.github.io/charts
+    condition: keda.enabled

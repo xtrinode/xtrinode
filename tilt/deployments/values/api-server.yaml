@@ -1,0 +1,25 @@
+replicaCount: 1
+
+image:
+  pullPolicy: Always
+
+apiServer:
+  logLevel: "info"
+  auth:
+    enabled: true
+    token: "local-dev-api-server-token"
+    resume:
+      enabled: true
+      token: "local-dev-api-server-resume-token"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
+
+metrics:
+  serviceMonitor:
+    enabled: false

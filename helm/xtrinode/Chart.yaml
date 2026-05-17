@@ -1,0 +1,31 @@
+apiVersion: v2
+name: xtrinode
+description: XTrinode - Complete deployment chart for Operator, API Server, and Gateway
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - trino
+  - runtime
+  - kubernetes
+  - operator
+home: https://github.com/xtrinode/xtrinode
+sources:
+  - https://github.com/xtrinode/xtrinode
+maintainers:
+  - name: XTrinode
+    email: xtrinode@gmail.com
+
+dependencies:
+  - name: xtrinode-operator
+    version: "0.1.0"
+    repository: "file://../xtrinode-operator"
+    condition: xtrinode-operator.enabled
+  - name: xtrinode-api-server
+    version: "0.1.0"
+    repository: "file://../xtrinode-api-server"
+    condition: xtrinode-api-server.enabled
+  - name: xtrinode-gateway
+    version: "0.1.0"
+    repository: "file://../xtrinode-gateway"
+    condition: xtrinode-gateway.enabled

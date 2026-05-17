@@ -1,0 +1,6 @@
+apiVersion: v2
+name: xtrinode-gateway
+description: XTrinode Gateway - Routes queries to XTrinode coordinators
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

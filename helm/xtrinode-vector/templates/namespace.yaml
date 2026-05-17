@@ -1,0 +1,9 @@
+{{- if and .Values.enabled .Values.createNamespace .Values.namespaceOverride }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "xtrinode-vector.namespace" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "xtrinode-vector.namespace" . }}
+    app.kubernetes.io/part-of: xtrinode
+{{- end }}

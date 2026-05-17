@@ -1,0 +1,21 @@
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: fault-tolerant
+  namespace: team-a
+spec:
+  size: m
+  minWorkers: 2
+  maxWorkers: 10
+  routing:
+    header: X-Trino-XTrinode=fault-tolerant
+    routingGroup: fault-tolerant
+  faultTolerantExecution:
+    retryPolicy: TASK
+    exchangeManager:
+      name: filesystem
+      baseDirectories:
+        - s3://trino-exchange/team-a/fault-tolerant
+      properties:
+        exchange.s3.region: us-east-1
+        exchange.s3.iam-role: arn:aws:iam::123456789012:role/trino-exchange

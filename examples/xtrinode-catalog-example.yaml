@@ -1,0 +1,72 @@
+# Example XTrinodeCatalog CRD
+# XTrinodeCatalog CRDs are used to manage Trino catalogs declaratively
+# XTrinode CRs reference catalogs via CatalogSelector (label selector)
+
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinodeCatalog
+metadata:
+  name: iceberg-catalog
+  namespace: team-a
+  labels:
+    team: finance
+    catalog-type: iceberg
+spec:
+  # Labels for selecting this catalog in XTrinodes
+  # XTrinodes use label selectors to find catalogs
+  labels:
+    team: finance
+    catalog-type: iceberg
+
+  # Connector configuration
+  connector:
+    # Iceberg connector example
+    iceberg:
+      catalogType: hive_metastore
+      warehouseURI: s3://data-warehouse/iceberg/
+      properties:
+        hive.metastore.uri: thrift://hive-metastore.metastore.svc:9083
+        fs.native-s3.enabled: "true"
+
+---
+# Another example: PostgreSQL catalog
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinodeCatalog
+metadata:
+  name: postgres-analytics
+  namespace: team-a
+  labels:
+    team: data-eng
+    catalog-type: postgres
+spec:
+  labels:
+    team: data-eng
+    catalog-type: postgres
+
+  connector:
+    postgres:
+      connectionURL: "jdbc:postgresql://postgres.analytics.svc:5432/analytics"
+      connectionUser: "trino"
+      connectionPasswordSecret:
+        name: postgres-credentials
+        key: password
+
+---
+# Example: Hive catalog
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinodeCatalog
+metadata:
+  name: hive-catalog
+  namespace: team-a
+  labels:
+    team: finance
+    catalog-type: hive
+spec:
+  labels:
+    team: finance
+    catalog-type: hive
+
+  connector:
+    hive:
+      metastoreURI: thrift://hive-metastore.metastore.svc:9083
+      properties:
+        fs.native-s3.enabled: "true"

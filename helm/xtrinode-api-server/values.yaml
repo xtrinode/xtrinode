@@ -1,0 +1,265 @@
+# XTrinode API Server Helm Chart Values
+#
+# NAMESPACE STRATEGY:
+# Deploy this API server in the same namespace as the operator/control plane.
+# It provides REST API for runtime lifecycle management.
+# See docs/ARCHITECTURE.md#namespace-and-isolation-model for complete architecture details.
+#
+# Architecture:
+# - Control-plane namespace: Operator + API Server <- THIS COMPONENT
+# - xtrinode-gateway: Gateway (data plane)
+# - User namespaces: Each XTrinode instance runs in its own namespace
+#
+# The API server:
+# - Manages K8s Lease objects in its release namespace for resume/suspend gating
+# - Provides REST API for runtime operations (resume, suspend, status)
+# - Exposes API-server Prometheus self-metrics
+
+replicaCount: 2
+
+image:
+  repository: xtrinode-api-server
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# API Server configuration
+apiServer:
+  # API server HTTP port
+  port: 8081
+
+  # Log level (debug, info, error)
+  logLevel: "info"
+
+  # API base path (e.g., "/api/v1")
+  apiPath: "/api/v1"
+
+  # Health check endpoint path
+  healthPath: "/health"
+
+  # Metrics endpoint path
+  metricsPath: "/metrics"
+
+  # HTTP timeouts
+  readTimeout: "10s"
+  writeTimeout: "30s"
+  shutdownTimeout: "5s"
+
+  # Namespace for Kubernetes Lease objects used by resume/suspend gating.
+  # Empty means the Helm release namespace.
+  leaseNamespace: ""
+
+  # Bearer authentication for API endpoints under apiPath.
+  # Health and Prometheus metrics endpoints remain unauthenticated.
+  auth:
+    enabled: false
+    # Prefer existingSecret in shared or production deployments.
+    existingSecret: ""
+    # Used when existingSecret is empty and token is provided.
+    secretName: ""
+    secretKey: "token"
+    token: ""
+    # Optional least-privilege token for Gateway -> API Server resume calls.
+    # This token can only call resume endpoints.
+    resume:
+      enabled: false
+      existingSecret: ""
+      secretName: ""
+      secretKey: "token"
+      token: ""
+
+  # Browser CORS is disabled by default. Add exact origins only when exposing
+  # the API server through a browser-facing ingress.
+  cors:
+    allowedOrigins: []
+
+# RBAC configuration
+rbac:
+  create: true
+
+# Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Service configuration
+service:
+  create: true
+  type: ClusterIP
+  port: 8081
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: "" # e.g., "nginx", "traefik", "istio"
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: xtrinode-api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: xtrinode-api-tls
+    #   hosts:
+    #     - xtrinode-api.example.com
+
+# Resources
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+priorityClassName: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8081
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Horizontal Pod Autoscaler configuration
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  # Target CPU utilization percentage (0-100)
+  # HPA will scale when average CPU usage exceeds this threshold
+  targetCPUUtilizationPercentage: 70
+  # Target memory utilization percentage (0-100)
+  # HPA will scale when average memory usage exceeds this threshold
+  targetMemoryUtilizationPercentage: 80
+  # Custom metrics (optional)
+  # Example:
+  # metrics:
+  #   - type: Pods
+  #     pods:
+  #       metric:
+  #         name: http_requests_per_second
+  #       target:
+  #         type: AverageValue
+  #         averageValue: "100"
+  metrics: []
+  # Scaling behavior (optional - uses defaults if not specified)
+  # scaleDownStabilizationWindowSeconds: 300  # Wait 5 minutes before scaling down
+  # scaleDownPercent: 50                      # Scale down by max 50% at a time
+  # scaleDownPeriodSeconds: 60                # Evaluate every 60 seconds
+  # scaleDownPods: 1                          # Or scale down by max 1 pod at a time
+  # scaleUpStabilizationWindowSeconds: 0       # Scale up immediately
+  # scaleUpPercent: 100                       # Scale up by max 100% at a time
+  # scaleUpPeriodSeconds: 15                  # Evaluate every 15 seconds
+  # scaleUpPods: 2
+
+# KEDA ScaledObject configuration
+keda:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  # Cooldown period in seconds (default: 300)
+  cooldownPeriod: 300
+  # Polling interval in seconds (default: 30)
+  pollingInterval: 30
+
+  # CPU-based scaling
+  cpu:
+    enabled: false
+    metricType: "Utilization" # Utilization or AverageValue
+    targetValue: "70" # Target CPU utilization percentage (for Utilization) or millicores (e.g., "500m" for AverageValue)
+    containerName: "" # Optional: specific container to monitor
+
+  # Memory-based scaling
+  memory:
+    enabled: false
+    metricType: "Utilization" # Utilization or AverageValue
+    targetValue: "80" # Target memory utilization percentage (for Utilization) or bytes (e.g., "500Mi" for AverageValue)
+    containerName: "" # Optional: specific container to monitor
+
+  # Prometheus-based scaling
+  prometheus:
+    enabled: false
+    serverAddress: "http://prometheus.monitoring.svc.cluster.local:9090"
+    metricName: "http_requests_per_second"
+    threshold: "100"
+    # Prometheus query (use {namespace} and {service} placeholders)
+    query: 'sum(rate(http_requests_total{namespace="{{namespace}}",service="{{service}}"}[1m]))'
+
+  # HTTP-based scaling (query metrics endpoint)
+  # URL defaults to service metrics endpoint if not specified
+  http:
+    enabled: false
+    targetValue: "100" # Target requests per pod
+    url: "" # Leave empty to use default service URL, or specify custom URL
+    valueLocation: "$.requests_per_second" # JSONPath or regex to extract value
+
+  # Custom triggers (advanced - full KEDA trigger spec)
+  triggers: []
+
+  # Fallback configuration (optional)
+  # fallback:
+  #   failureThreshold: 3
+  #   replicas: 2                            # Or scale up by max 2 pods at a time
+
+# Metrics and monitoring
+metrics:
+  # Prometheus ServiceMonitor for metrics scraping
+  serviceMonitor:
+    enabled: true
+    forceRender: false
+    # Namespace where ServiceMonitor will be created (defaults to release namespace)
+    namespace: ""
+    # Scrape interval
+    interval: 30s
+    # Scrape timeout
+    scrapeTimeout: 10s
+    # Additional labels for ServiceMonitor
+    labels: {}
+      # prometheus: kube-prometheus
+    # Additional annotations for ServiceMonitor
+    annotations: {}
+    # Relabeling configs
+    relabelings: []
+    # Metric relabeling configs
+    metricRelabelings: []

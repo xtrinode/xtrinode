@@ -1,0 +1,7 @@
+# XTrinode and KEDA are Kubernetes controllers. These RBAC rules are intentional:
+# - XTrinode owns generated Services, Ingresses, and Secrets for managed warehouses.
+# - The upstream KEDA chart needs broad read/webhook privileges for scaler discovery.
+KSV-0041
+KSV-0046
+KSV-0056
+KSV-0114

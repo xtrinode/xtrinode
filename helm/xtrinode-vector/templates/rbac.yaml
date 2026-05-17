@@ -1,0 +1,39 @@
+{{- if and .Values.enabled .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "xtrinode-vector.fullname" . }}
+  labels:
+    {{- include "xtrinode-vector.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+      - nodes
+      - pods
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods/log
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "xtrinode-vector.fullname" . }}
+  labels:
+    {{- include "xtrinode-vector.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "xtrinode-vector.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "xtrinode-vector.serviceAccountName" . }}
+    namespace: {{ include "xtrinode-vector.namespace" . }}
+{{- end }}

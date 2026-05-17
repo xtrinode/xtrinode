@@ -1,0 +1,107 @@
+{{- if .Values.webhook.enabled -}}
+{{- $fullname := include "xtrinode-operator.fullname" . -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $serviceName := $fullname -}}
+{{- $serviceHost := printf "%s.%s.svc" $serviceName $namespace -}}
+{{- $serviceHostFQDN := printf "%s.cluster.local" $serviceHost -}}
+{{- $secretName := include "xtrinode-operator.webhookSecretName" . -}}
+{{- $ca := genCA (printf "%s-webhook-ca" $fullname) 3650 -}}
+{{- $cert := genSignedCert $serviceHost nil (list $serviceName (printf "%s.%s" $serviceName $namespace) $serviceHost $serviceHostFQDN) 3650 $ca -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "xtrinode-operator.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  ca.crt: {{ $ca.Cert | b64enc | quote }}
+  tls.crt: {{ $cert.Cert | b64enc | quote }}
+  tls.key: {{ $cert.Key | b64enc | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}-mutating-webhook-configuration
+  labels:
+    {{- include "xtrinode-operator.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    caBundle: {{ $ca.Cert | b64enc | quote }}
+    service:
+      name: {{ $serviceName }}
+      namespace: {{ $namespace }}
+      path: /mutate-analytics-xtrinode-io-v1-xtrinode
+      port: {{ .Values.webhook.servicePort }}
+  failurePolicy: {{ .Values.webhook.failurePolicy }}
+  name: mxtrinode.kb.io
+  rules:
+  - apiGroups:
+    - analytics.xtrinode.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - xtrinodes
+  sideEffects: None
+  timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}-validating-webhook-configuration
+  labels:
+    {{- include "xtrinode-operator.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    caBundle: {{ $ca.Cert | b64enc | quote }}
+    service:
+      name: {{ $serviceName }}
+      namespace: {{ $namespace }}
+      path: /validate-analytics-xtrinode-io-v1-xtrinode
+      port: {{ .Values.webhook.servicePort }}
+  failurePolicy: {{ .Values.webhook.failurePolicy }}
+  name: vxtrinode.kb.io
+  rules:
+  - apiGroups:
+    - analytics.xtrinode.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - xtrinodes
+  sideEffects: None
+  timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    caBundle: {{ $ca.Cert | b64enc | quote }}
+    service:
+      name: {{ $serviceName }}
+      namespace: {{ $namespace }}
+      path: /validate-analytics-xtrinode-io-v1-xtrinodecatalog
+      port: {{ .Values.webhook.servicePort }}
+  failurePolicy: {{ .Values.webhook.failurePolicy }}
+  name: vxtrinodecatalog.kb.io
+  rules:
+  - apiGroups:
+    - analytics.xtrinode.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - xtrinodecatalogs
+  sideEffects: None
+  timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+{{- end }}

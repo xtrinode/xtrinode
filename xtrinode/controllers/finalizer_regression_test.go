@@ -1,0 +1,122 @@
+package controllers
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+)
+
+type gatewayServiceTestDouble struct {
+	drainErr        error
+	deregisterErr   error
+	drainCalls      int
+	deregisterCalls int
+}
+
+func (g *gatewayServiceTestDouble) RegisterRoute(_ context.Context, _ *analyticsv1.XTrinode) error {
+	return nil
+}
+
+func (g *gatewayServiceTestDouble) DrainRoute(_ context.Context, _ *analyticsv1.XTrinode) error {
+	g.drainCalls++
+	return g.drainErr
+}
+
+func (g *gatewayServiceTestDouble) DeregisterRoute(_ context.Context, _ *analyticsv1.XTrinode) error {
+	g.deregisterCalls++
+	return g.deregisterErr
+}
+
+type gracefulShutdownServiceTestDouble struct {
+	safeToScaleDown bool
+	checkErr        error
+	waitErr         error
+	checkCalls      int
+	waitCalls       int
+}
+
+func (g *gracefulShutdownServiceTestDouble) CheckQueriesBeforeScaleDown(_ context.Context, _ *analyticsv1.XTrinode, _ logr.Logger) (bool, error) {
+	g.checkCalls++
+	return g.safeToScaleDown, g.checkErr
+}
+
+func (g *gracefulShutdownServiceTestDouble) WaitForPodTermination(_ context.Context, _ *analyticsv1.XTrinode, _ logr.Logger) error {
+	g.waitCalls++
+	return g.waitErr
+}
+
+func TestFinalize_DrainFailureDoesNotMarkDrainStarted(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	key := types.NamespacedName{Name: "runtime", Namespace: "team-a"}
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       key.Name,
+			Namespace:  key.Namespace,
+			Finalizers: []string{FinalizerName},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme, xtrinode)
+	gateway := &gatewayServiceTestDouble{drainErr: errors.New("route config parse failed")}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.Error(t, err)
+	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, 1, gateway.drainCalls)
+	assert.Equal(t, 0, gateway.deregisterCalls)
+
+	var updated analyticsv1.XTrinode
+	require.NoError(t, cli.Get(ctx, key, &updated))
+	assert.Empty(t, updated.Annotations["xtrinode.analytics.xtrinode.io/drain-started-at"])
+	assert.Contains(t, updated.Finalizers, FinalizerName)
+}
+
+func TestFinalize_DeregisterFailureKeepsFinalizer(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	key := types.NamespacedName{Name: "runtime", Namespace: "team-a"}
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       key.Name,
+			Namespace:  key.Namespace,
+			Finalizers: []string{FinalizerName},
+			Annotations: map[string]string{
+				"xtrinode.analytics.xtrinode.io/drain-started-at": time.Now().Add(-6 * time.Minute).Format(time.RFC3339),
+			},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme, xtrinode)
+	gateway := &gatewayServiceTestDouble{deregisterErr: errors.New("route config update failed")}
+	graceful := &gracefulShutdownServiceTestDouble{safeToScaleDown: true}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+	reconciler.GracefulShutdownService = graceful
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.Error(t, err)
+	assert.Equal(t, 30*time.Second, result.RequeueAfter)
+	assert.Equal(t, 0, gateway.drainCalls)
+	assert.Equal(t, 1, gateway.deregisterCalls)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 1, graceful.waitCalls)
+
+	var updated analyticsv1.XTrinode
+	require.NoError(t, cli.Get(ctx, key, &updated))
+	assert.Contains(t, updated.Finalizers, FinalizerName)
+}

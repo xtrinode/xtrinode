@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xtrinode-capg-smoke
+  labels:
+    purpose: capg-nodepool-smoke
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: capg-s
+  namespace: xtrinode-capg-smoke
+  labels:
+    xtrinode: capg-s
+    team: xtrinode
+    environment: smoke
+spec:
+  size: xs
+  maxWorkers: 1
+  minWorkers: 0
+  suspended: false
+  autoSuspendAfter: "1h"
+
+  nodePool:
+    name: np-capg-s
+    provider: gcp
+    providerMode: managed
+    # Smoke safety: this intentionally does not match a real CAPI Cluster.
+    # Replace with a real CAPI-managed GKE Cluster name for actual nodepool creation.
+    clusterName: xtrinode-capg-smoke-missing
+    kubernetesVersion: v1.35.3
+    minNodes: 0
+    maxNodes: 1
+    zones:
+      - us-central1-a
+    gcp:
+      machineType: e2-standard-2
+      diskType: pd-standard
+    nodeLabels:
+      xtrinode.io/runtime: capg-s
+      xtrinode.io/node-pool: np-capg-s
+    nodeTaints:
+      - key: xtrinode.io/runtime
+        value: capg-s
+        effect: NoSchedule
+    resourceTags:
+      xtrinode-runtime: capg-s
+      xtrinode-smoke: "true"
+
+  routing:
+    header: "X-Trino-XTrinode=capg-s"
+    hostname: "capg-s.trino.local"
+
+  keda:
+    enabled: false
+
+  valuesOverlay:
+    server:
+      workers: 1

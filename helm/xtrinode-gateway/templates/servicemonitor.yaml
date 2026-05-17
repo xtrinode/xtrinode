@@ -1,0 +1,28 @@
+{{- if and .Values.serviceMonitor.enabled (or .Values.serviceMonitor.forceRender (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor")) }}
+apiVersion: {{ .Values.serviceMonitor.apiVersion | default "monitoring.coreos.com/v1" }}
+kind: ServiceMonitor
+metadata:
+  name: {{ include "xtrinode-gateway.fullname" . }}
+  namespace: {{ include "xtrinode-gateway.namespace" . }}
+  labels:
+    {{- include "xtrinode-gateway.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.serviceMonitor.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "xtrinode-gateway.gatewaySelectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ include "xtrinode-gateway.namespace" . }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval | default "15s" }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}

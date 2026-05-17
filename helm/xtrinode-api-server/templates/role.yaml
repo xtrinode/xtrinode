@@ -1,0 +1,23 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "xtrinode-api-server.fullname" . }}
+  labels:
+    {{- include "xtrinode-api-server.labels" . | nindent 4 }}
+rules:
+# XTrinode CRD permissions (for runtime management)
+- apiGroups: ["analytics.xtrinode.io"]
+  resources: ["xtrinodes", "xtrinodes/status"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Namespace permissions
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+
+# Lease permissions (for resume stampede prevention gating)
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+{{- end }}

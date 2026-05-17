@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build outputs and generated reports
+bin/
+dist/
+coverage*.out
+coverage.html
+lint-errors.txt
+*.test
+*.o
+*.a
+*.so
+
+# Tests are not needed for image builds
+*_test.go
+tests/
+testdata/
+
+# Documentation and deployment assets
+*.md
+docs/
+helm/
+
+# Local/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local configuration and logs
+.env
+.env.*
+*.log
+
+# CI and infrastructure
+.github/
+.gitlab-ci.yml
+.travis.yml
+terraform/
+*.tf
+*.tfvars
+*.tfstate
+*.tfstate.backup

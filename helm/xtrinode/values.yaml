@@ -1,0 +1,550 @@
+# XTrinode Umbrella Chart - Master Values File
+# Controls deployment of Operator, API Server, and Gateway
+
+# =============================================================================
+# Global Settings
+# =============================================================================
+global:
+  imageRegistry: yourregistry
+  imagePullSecrets: []
+
+# =============================================================================
+# XTrinode Operator Configuration
+# =============================================================================
+# Enable/disable flag is co-located with config to avoid duplicate YAML key collision.
+# Note: Configuration is nested under component name for subchart
+# Override any values from xtrinode/values.yaml here
+xtrinode-operator:
+  enabled: true
+  replicaCount: 1
+  fullnameOverride: xtrinode-operator
+
+  image:
+    repository: xtrinode-operator
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  # RBAC configuration
+  rbac:
+    create: true
+
+  # Service account configuration
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  # Pod annotations
+  podAnnotations: {}
+
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  # Service configuration
+  service:
+    create: true
+    type: ClusterIP
+    port: 8080
+
+  serviceMonitor:
+    enabled: true
+    forceRender: false
+    apiVersion: monitoring.coreos.com/v1
+    interval: "30s"
+    scrapeTimeout: "10s"
+    labels: {}
+    annotations: {}
+
+  # Watch namespace (empty = all namespaces)
+  watchNamespace: ""
+
+  # Resources
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 0  # 0 for testing - allows drain/eviction
+
+  # KEDA subchart scheduling. Use the same always-on system node pool for
+  # KEDA control components when this chart manages KEDA.
+  keda:
+    enabled: true
+    priorityClassName: ""
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+  # Operator configuration
+  operator:
+    # Number of workers for concurrent XTrinode reconciliation (default: 3)
+    workers: 3
+
+    # Watch namespace (empty = all namespaces)
+    watchNamespace: ""
+
+    # Prometheus address for KEDA integration
+    prometheus:
+      address: "http://prometheus.monitoring.svc.cluster.local:9090"
+
+    # Gateway configuration
+    gateway:
+      baseURL: "http://xtrinode-gateway.xtrinode-gateway.svc.cluster.local:8080"
+
+    # CAPI provider (azure, aws, gcp)
+    capiProvider: "azure"
+
+# =============================================================================
+# XTrinode API Server Configuration
+# =============================================================================
+xtrinode-api-server:
+  enabled: true
+  replicaCount: 2
+  fullnameOverride: xtrinode-api-server
+
+  image:
+    repository: xtrinode-api-server
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  # API Server configuration
+  apiServer:
+    # API server HTTP port
+    port: 8081
+
+    # Log level (debug, info, error)
+    logLevel: "info"
+
+    # API base path (e.g., "/api/v1")
+    apiPath: "/api/v1"
+
+    # Health check endpoint path
+    healthPath: "/health"
+
+    # Metrics endpoint path
+    metricsPath: "/metrics"
+
+    # HTTP timeouts
+    readTimeout: "10s"
+    writeTimeout: "30s"
+    shutdownTimeout: "5s"
+
+    auth:
+      enabled: false
+      existingSecret: ""
+      secretName: ""
+      secretKey: "token"
+      token: ""
+      resume:
+        enabled: false
+        existingSecret: ""
+        secretName: ""
+        secretKey: "token"
+        token: ""
+
+    cors:
+      allowedOrigins: []
+
+  # RBAC configuration
+  rbac:
+    create: true
+
+  # Service account configuration
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  # Pod annotations
+  podAnnotations: {}
+
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  # Service configuration
+  service:
+    create: true
+    type: ClusterIP
+    port: 8081
+
+  # Ingress configuration
+  ingress:
+    enabled: false
+    className: "" # e.g., "nginx", "traefik", "istio"
+    annotations: {}
+      # kubernetes.io/ingress.class: nginx
+      # kubernetes.io/tls-acme: "true"
+    hosts:
+      - host: xtrinode-api.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+      # - secretName: xtrinode-api-tls
+      #   hosts:
+      #     - xtrinode-api.example.com
+
+  # Resources
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Liveness and readiness probes
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8081
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8081
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Horizontal Pod Autoscaler configuration
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    # Target CPU utilization percentage (0-100)
+    targetCPUUtilizationPercentage: 70
+    # Target memory utilization percentage (0-100)
+    targetMemoryUtilizationPercentage: 80
+    # Custom metrics (optional)
+    metrics: []
+    # Scaling behavior (optional - uses defaults if not specified)
+    # scaleDownStabilizationWindowSeconds: 300
+    # scaleDownPercent: 50
+    # scaleDownPeriodSeconds: 60
+    # scaleDownPods: 1
+    # scaleUpStabilizationWindowSeconds: 0
+    # scaleUpPercent: 100
+    # scaleUpPeriodSeconds: 15
+    # scaleUpPods: 2
+
+  # KEDA ScaledObject configuration
+  keda:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    cooldownPeriod: 300
+    pollingInterval: 30
+    cpu:
+      enabled: false
+      metricType: "Utilization"
+      targetValue: "70"
+      containerName: ""
+    memory:
+      enabled: false
+      metricType: "Utilization"
+      targetValue: "80"
+      containerName: ""
+    prometheus:
+      enabled: false
+      serverAddress: "http://prometheus.monitoring.svc.cluster.local:9090"
+      metricName: "http_requests_per_second"
+      threshold: "100"
+      query: 'sum(rate(http_requests_total{namespace="{{namespace}}",service="{{service}}"}[1m]))'
+    http:
+      enabled: false
+      targetValue: "100"
+      url: ""
+      valueLocation: "$.requests_per_second"
+    triggers: []
+
+  metrics:
+    serviceMonitor:
+      enabled: true
+      forceRender: false
+      namespace: ""
+      interval: 30s
+      scrapeTimeout: 10s
+      labels: {}
+      annotations: {}
+      relabelings: []
+      metricRelabelings: []
+
+# =============================================================================
+# XTrinode Gateway Configuration
+# =============================================================================
+xtrinode-gateway:
+  enabled: true
+  replicaCount: 1
+  fullnameOverride: xtrinode-gateway
+  namespaceOverride: xtrinode-gateway
+
+  image:
+    repository: xtrinode-gateway
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  # Gateway configuration
+  gateway:
+    # API server base URL for auto-resume.
+    apiServerURL: "http://xtrinode-api-server.xtrinode-system.svc.cluster.local:8081/api/v1"
+
+    apiServerAuth:
+      enabled: false
+      existingSecret: ""
+      secretName: ""
+      secretKey: "token"
+      token: ""
+
+    # Gateway HTTP port
+    port: 8080
+
+    http:
+      readHeaderTimeout: "5s"
+      readTimeout: "0s"
+      writeTimeout: "0s"
+      idleTimeout: "60s"
+
+    # Log level (debug, info, error)
+    logLevel: "info"
+
+    # Authentication configuration
+    auth:
+      # Enable authentication
+      enabled: false
+
+      # Authentication type: "api-key", "oauth", "oidc", "bearer-token", "jwt", "none"
+      type: "api-key"
+
+      # API Key authentication configuration
+      apiKey:
+        # Kubernetes Secret name containing API keys
+        secretName: "trino-gateway-api-keys"
+        # Key in Secret containing API keys data
+        secretKey: "api-keys"
+        # Namespace where Secret is located (must match gateway deployment namespace)
+        namespace: "xtrinode-gateway"
+
+      oauth:
+        issuer: ""
+        audience: ""
+        jwksURL: ""
+        refreshInterval: "1h"
+
+    redis:
+      enabled: false
+      url: ""
+      db: 0
+      stickyTTL: "1h"
+      timeout: "1s"
+      password: ""
+      existingSecret: ""
+      existingSecretKey: "redis-password"
+
+    rateLimit:
+      enabled: true
+      capacity: 100
+      refillRate: "1s"
+
+  redis:
+    enabled: false
+    image:
+      repository: redis
+      tag: "7.4-alpine"
+      pullPolicy: IfNotPresent
+    auth:
+      enabled: false
+      password: ""
+      existingSecret: ""
+      existingSecretKey: "redis-password"
+    service:
+      port: 6379
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+    priorityClassName: ""
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+  # RBAC configuration
+  rbac:
+    create: true
+
+  # Service account configuration
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  # Pod annotations
+  podAnnotations: {}
+
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  # Service configuration
+  service:
+    create: true
+    type: ClusterIP
+    port: 8080
+
+  serviceMonitor:
+    enabled: true
+    forceRender: false
+    apiVersion: monitoring.coreos.com/v1
+    interval: "15s"
+    scrapeTimeout: "10s"
+    labels: {}
+    annotations: {}
+
+  # Ingress configuration
+  ingress:
+    enabled: false
+    className: "" # e.g., "nginx", "traefik", "istio"
+    annotations: {}
+      # kubernetes.io/ingress.class: nginx
+      # kubernetes.io/tls-acme: "true"
+    hosts:
+      - host: trino-gateway.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+      # - secretName: trino-gateway-tls
+      #   hosts:
+      #     - trino-gateway.example.com
+
+  # Resources
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  priorityClassName: ""
+  nodeSelector: {}
+
+  tolerations: []
+
+  affinity: {}
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # Liveness and readiness probes
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Horizontal Pod Autoscaler configuration
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    metrics: []
+
+  # KEDA ScaledObject configuration
+  keda:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    cooldownPeriod: 300
+    pollingInterval: 30
+    cpu:
+      enabled: false
+      metricType: "Utilization"
+      targetValue: "70"
+      containerName: ""
+    memory:
+      enabled: false
+      metricType: "Utilization"
+      targetValue: "80"
+      containerName: ""
+    prometheus:
+      enabled: false
+      serverAddress: "http://prometheus.monitoring.svc.cluster.local:9090"
+      metricName: "http_requests_per_second"
+      threshold: "100"
+      query: 'sum(rate(http_requests_total{namespace="{{namespace}}",service="{{service}}"}[1m]))'
+    http:
+      enabled: false
+      targetValue: "100"
+      url: ""
+      valueLocation: "$.requests_per_second"
+    triggers: []

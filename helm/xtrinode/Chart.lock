@@ -1,0 +1,12 @@
+dependencies:
+- name: xtrinode-operator
+  repository: file://../xtrinode-operator
+  version: 0.1.0
+- name: xtrinode-api-server
+  repository: file://../xtrinode-api-server
+  version: 0.1.0
+- name: xtrinode-gateway
+  repository: file://../xtrinode-gateway
+  version: 0.1.0
+digest: sha256:6d320a675d803dfabba37fac1acdd82f4cb186ac7f0a7abb4cf586c8430998a9
+generated: "2026-05-09T13:13:38.4392573+02:00"

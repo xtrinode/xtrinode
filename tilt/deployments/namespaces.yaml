@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xtrinode-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xtrinode-gateway
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-local

@@ -1,0 +1,353 @@
+# GCP Iceberg smoke test: GCS warehouse + standalone Hive Metastore + XTrinode
+#
+# This is a lightweight test setup. The Hive Metastore below stores metadata in
+# external Postgres and downloads HMS dependencies in an init container. For
+# production, bake the GCS connector and Postgres JDBC driver into a pinned HMS
+# image instead of downloading jars at pod startup.
+#
+# Prereqs:
+# - Replace <GCP_PROJECT_ID>, <GCS_BUCKET_NAME>, and optional service account values.
+# - Create the bucket first, for example:
+#     gcloud storage buckets create gs://<GCS_BUCKET_NAME> --project=<GCP_PROJECT_ID> --location=us-central1
+# - Prefer GKE Workload Identity for GCS access:
+#     Kubernetes service account: team-iceberg/trino-iceberg-gcs
+#     Google service account: trino-iceberg-gcs@<GCP_PROJECT_ID>.iam.gserviceaccount.com
+# - Run terraform/gcp with postgres_enabled=true to create Cloud SQL Postgres
+#   and the team-iceberg/hive-metastore-postgres-secret used by HMS.
+# - If you must use a JSON key instead, create a Secret with key `key.json`,
+#   mount it with helmChartConfig.secretMounts, and set:
+#     gcs.auth-type: SERVICE_ACCOUNT
+#     gcs.json-key-file-path: /etc/trino/secrets/gcs/key.json
+#
+# Iceberg smoke query after the XTrinode is Ready:
+#   CREATE SCHEMA iceberg.smoke
+#   WITH (location = 'gs://<GCS_BUCKET_NAME>/warehouse/iceberg/smoke');
+#   CREATE TABLE iceberg.smoke.t AS SELECT 1 id, 'ok' status;
+#   SELECT * FROM iceberg.smoke.t;
+#
+# Hive external-table smoke query over existing GCS files:
+#   CREATE SCHEMA IF NOT EXISTS hive.raw
+#   WITH (location = 'gs://<GCS_BUCKET_NAME>/warehouse/hive/raw');
+#   CREATE TABLE hive.raw.xtrinode_iceberg_smoke (
+#     id VARCHAR,
+#     status VARCHAR
+#   )
+#   WITH (
+#     format = 'CSV',
+#     external_location = 'gs://<GCS_BUCKET_NAME>/raw/',
+#     skip_header_line_count = 1
+#   );
+#   SELECT * FROM hive.raw.xtrinode_iceberg_smoke;
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-iceberg
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hive-metastore-gcs
+  namespace: team-iceberg
+  annotations:
+    iam.gke.io/gcp-service-account: trino-iceberg-gcs@<GCP_PROJECT_ID>.iam.gserviceaccount.com
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-metastore-gcs-config
+  namespace: team-iceberg
+data:
+  core-site.xml: |
+    <?xml version="1.0"?>
+    <configuration>
+      <property>
+        <name>fs.gs.impl</name>
+        <value>com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem</value>
+      </property>
+      <property>
+        <name>fs.AbstractFileSystem.gs.impl</name>
+        <value>com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS</value>
+      </property>
+      <property>
+        <name>google.cloud.auth.type</name>
+        <value>APPLICATION_DEFAULT</value>
+      </property>
+    </configuration>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive-metastore
+  namespace: team-iceberg
+  labels:
+    app.kubernetes.io/name: hive-metastore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hive-metastore
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hive-metastore
+    spec:
+      serviceAccountName: hive-metastore-gcs
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: install-hms-libs
+          image: curlimages/curl:8.16.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - sh
+            - -ec
+            - |
+              curl -fsSL -o /hms-libs/gcs-connector-hadoop3-latest.jar https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar
+              curl -fsSL -o /hms-libs/postgresql-42.7.10.jar https://repo.maven.apache.org/maven2/org/postgresql/postgresql/42.7.10/postgresql-42.7.10.jar
+          volumeMounts:
+            - name: hms-libs
+              mountPath: /hms-libs
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+      containers:
+        - name: metastore
+          image: apache/hive:4.0.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: SERVICE_NAME
+              value: metastore
+            - name: DB_DRIVER
+              value: postgres
+            - name: HMS_JDBC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hive-metastore-postgres-secret
+                  key: HMS_JDBC_URL
+            - name: HMS_POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: hive-metastore-postgres-secret
+                  key: HMS_POSTGRES_USER
+            - name: HMS_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hive-metastore-postgres-secret
+                  key: HMS_POSTGRES_PASSWORD
+            - name: SERVICE_OPTS
+              value: >-
+                -Djavax.jdo.option.ConnectionURL=$(HMS_JDBC_URL)
+                -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+                -Djavax.jdo.option.ConnectionUserName=$(HMS_POSTGRES_USER)
+                -Djavax.jdo.option.ConnectionPassword=$(HMS_POSTGRES_PASSWORD)
+                -Dhive.metastore.schema.verification=false
+                -Ddatanucleus.autoCreateSchema=false
+                -Ddatanucleus.fixedDatastore=true
+                -Dfs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem
+                -Dfs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS
+                -Dgoogle.cloud.auth.type=APPLICATION_DEFAULT
+          ports:
+            - name: thrift
+              containerPort: 9083
+          volumeMounts:
+            - name: hms-libs
+              mountPath: /opt/hive/lib/gcs-connector-hadoop3-latest.jar
+              subPath: gcs-connector-hadoop3-latest.jar
+            - name: hms-libs
+              mountPath: /opt/hive/lib/postgresql-42.7.10.jar
+              subPath: postgresql-42.7.10.jar
+            - name: hive-metastore-gcs-config
+              mountPath: /opt/hive/conf/core-site.xml
+              subPath: core-site.xml
+            - name: hive-logs
+              mountPath: /opt/hive/logs
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            tcpSocket:
+              port: thrift
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: thrift
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+      volumes:
+        - name: hms-libs
+          emptyDir: {}
+        - name: hive-metastore-gcs-config
+          configMap:
+            name: hive-metastore-gcs-config
+        - name: hive-logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hive-metastore
+  namespace: team-iceberg
+  labels:
+    app.kubernetes.io/name: hive-metastore
+spec:
+  selector:
+    app.kubernetes.io/name: hive-metastore
+  ports:
+    - name: thrift
+      port: 9083
+      targetPort: thrift
+
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinodeCatalog
+metadata:
+  name: iceberg
+  namespace: team-iceberg
+  labels:
+    team: team-iceberg
+    catalog-scope: lakehouse-gcs
+    catalog-type: iceberg
+spec:
+  labels:
+    team: team-iceberg
+    catalog-scope: lakehouse-gcs
+    catalog-type: iceberg
+  connector:
+    iceberg:
+      catalogType: hive_metastore
+      # For HMS-backed Iceberg, the actual schema/table location is supplied in SQL.
+      # The operator keeps this field for API compatibility.
+      warehouseURI: gs://<GCS_BUCKET_NAME>/warehouse/iceberg
+      properties:
+        hive.metastore.uri: thrift://hive-metastore.team-iceberg.svc.cluster.local:9083
+        fs.native-gcs.enabled: "true"
+        gcs.project-id: <GCP_PROJECT_ID>
+        gcs.auth-type: APPLICATION_DEFAULT
+        iceberg.file-format: PARQUET
+
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinodeCatalog
+metadata:
+  name: hive
+  namespace: team-iceberg
+  labels:
+    team: team-iceberg
+    catalog-scope: lakehouse-gcs
+    catalog-type: hive
+spec:
+  labels:
+    team: team-iceberg
+    catalog-scope: lakehouse-gcs
+    catalog-type: hive
+  connector:
+    hive:
+      metastoreURI: thrift://hive-metastore.team-iceberg.svc.cluster.local:9083
+      properties:
+        fs.native-gcs.enabled: "true"
+        gcs.project-id: <GCP_PROJECT_ID>
+        gcs.auth-type: APPLICATION_DEFAULT
+
+---
+apiVersion: analytics.xtrinode.io/v1
+kind: XTrinode
+metadata:
+  name: iceberg-gcs
+  namespace: team-iceberg
+spec:
+  size: s
+  minWorkers: 1
+  maxWorkers: 3
+  suspended: false
+
+  routing:
+    default: false
+    header: X-Trino-XTrinode=iceberg-gcs
+    routingGroup: iceberg-gcs
+
+  catalogSelector:
+    matchLabels:
+      team: team-iceberg
+      catalog-scope: lakehouse-gcs
+
+  keda:
+    enabled: true
+    scalerType: http
+    scalingMetric: memory
+    threshold: "70"
+    jmxExporter:
+      enabled: true
+      image: sourcemation/jmx-exporter:latest
+
+  helmChartConfig:
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: trino-iceberg-gcs@<GCP_PROJECT_ID>.iam.gserviceaccount.com
+
+  valuesOverlay:
+    additionalConfigProperties:
+      - query.max-memory=1GB
+      - query.max-memory-per-node=512MB
+    jmx:
+      exporter:
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+    coordinator:
+      additionalJVMConfig:
+        - -Xmx768M
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 1536Mi
+    worker:
+      additionalJVMConfig:
+        - -Xmx768M
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 1536Mi
