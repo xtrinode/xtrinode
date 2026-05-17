@@ -50,7 +50,7 @@ HELM_TEMPLATE_CHARTS ?= $(HELM_LINT_CHARTS)
 # Docker configuration
 DOCKERFILE ?= docker/Dockerfile
 ALPINE_VERSION ?= $(shell version=$$(awk -F= '/^ARG ALPINE_VERSION=/ {print $$2; exit}' $(DOCKERFILE) 2>/dev/null); printf '%s' "$${version:-3.23}")
-DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
+DOCKER_PLATFORMS ?= linux/amd64
 DOCKER_BUILDER ?= xtrinode-builder
 OPERATOR_DOCKERFILE ?= $(DOCKERFILE)
 GATEWAY_DOCKERFILE ?= $(DOCKERFILE)
@@ -213,7 +213,7 @@ help: ## Display this help message
 	@echo "  CLOUD_IMAGE_TAG      Cloud publish/deploy tag (default: appVersion when IMAGE_TAG is dev)"
 	@echo "  GO_VERSION           Go image version (default: go.mod go directive)"
 	@echo "  ALPINE_VERSION       Alpine image version (default: 3.23)"
-	@echo "  DOCKER_PLATFORMS     buildx platforms (default: linux/amd64,linux/arm64)"
+	@echo "  DOCKER_PLATFORMS     buildx platforms (default: linux/amd64)"
 	@echo "  NODE_VERSION         Required Node.js major version for markdown tooling (default: 22)"
 	@echo "  OPERATOR_NAMESPACE   Operator namespace (default: xtrinode-system)"
 	@echo "  GATEWAY_NAMESPACE    Gateway namespace (default: xtrinode-gateway)"
@@ -894,7 +894,7 @@ define docker_push
 endef
 
 define docker_buildx
-	@echo "Building and pushing multi-arch $(1) Docker image: $($(2))"
+	@echo "Building and pushing $(1) Docker image with buildx: $($(2))"
 	docker buildx build \
 		--platform $(DOCKER_PLATFORMS) \
 		--build-arg GO_VERSION=$(GO_VERSION) \
@@ -908,7 +908,7 @@ define docker_buildx
 		--push \
 		-f $($(3)_DOCKERFILE) \
 		$(OPERATOR_DIR)
-	@echo "Multi-arch $(1) image built and pushed"
+	@echo "$(1) image built and pushed with buildx"
 endef
 
 .PHONY: docker-build
@@ -942,7 +942,7 @@ docker-push-api-server: docker-build-api-server ## Build and push API server Doc
 	$(call docker_push,API server,API_SERVER_IMG)
 
 .PHONY: docker-buildx
-docker-buildx: docker-buildx-operator docker-buildx-gateway docker-buildx-api-server ## Build and push multi-arch Docker images (requires buildx)
+docker-buildx: docker-buildx-operator docker-buildx-gateway docker-buildx-api-server ## Build and push Docker images with buildx
 
 .PHONY: docker-buildx-builder
 docker-buildx-builder:
@@ -950,15 +950,15 @@ docker-buildx-builder:
 	@docker buildx use $(DOCKER_BUILDER)
 
 .PHONY: docker-buildx-operator
-docker-buildx-operator: docker-buildx-builder ## Build multi-arch operator Docker image
+docker-buildx-operator: docker-buildx-builder ## Build operator Docker image with buildx
 	$(call docker_buildx,Operator,IMG,OPERATOR)
 
 .PHONY: docker-buildx-gateway
-docker-buildx-gateway: docker-buildx-builder ## Build multi-arch gateway Docker image
+docker-buildx-gateway: docker-buildx-builder ## Build gateway Docker image with buildx
 	$(call docker_buildx,Gateway,GATEWAY_IMG,GATEWAY)
 
 .PHONY: docker-buildx-api-server
-docker-buildx-api-server: docker-buildx-builder ## Build multi-arch API server Docker image
+docker-buildx-api-server: docker-buildx-builder ## Build API server Docker image with buildx
 	$(call docker_buildx,API server,API_SERVER_IMG,API_SERVER)
 
 .PHONY: require-release-tag
@@ -1737,7 +1737,7 @@ ci-security: security-scan-fs security-scan-config ## Run CI security checks
 ci-e2e-local-contracts: test-e2e-local-contracts ## Run the CI local k3d contract e2e suite
 
 .PHONY: ci-build
-ci-build: godeps ci-lint ci-test ci-verify-manifests ci-terraform-validate-all ci-security docker-build ## CI build pipeline
+ci-build: godeps ci-lint ci-test ci-verify-manifests ci-terraform-validate-all ci-security ## CI build pipeline
 
 .PHONY: ci-release
 ci-release: ci-build ## CI release validation; publishing is handled by the release workflow

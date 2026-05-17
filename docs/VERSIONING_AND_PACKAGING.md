@@ -58,14 +58,12 @@ Multiple tags are created from the component image `appVersion` for each build:
 2. **Major.Minor Tag**: `0.1` (latest patch for minor version)
 3. **Major Tag**: `0` (latest minor for major version)
 4. **Latest Tag**: `latest` (latest release, main branch only)
-5. **Commit Tag**: `abc1234` (git commit SHA)
-6. **Branch Tag**: `main-abc1234` (branch + commit)
 
-### **Multi-Architecture Support**
+### **Architecture Support**
 
-- **Architectures**: `linux/amd64`, `linux/arm64`
-- **Build**: Uses Docker Buildx for multi-arch builds
-- **CI**: Automatically built on release
+- **Architecture**: `linux/amd64`
+- **Build**: Uses Docker Buildx for release image publishing
+- **CI**: Docker image builds run only on the release publishing path, not on pull request commits
 
 ### **Image Build Process**
 
@@ -73,7 +71,7 @@ Multiple tags are created from the component image `appVersion` for each build:
 # Local build
 make docker-build VERSION=0.1.0
 
-# Multi-arch build (CI)
+# Buildx release publish
 make docker-buildx
 
 # Push to registry
@@ -161,7 +159,7 @@ CODEOWNER, GitHub Actions automatically:
 
 1. Runs tests
 2. Creates the annotated release tag
-3. Builds multi-arch Docker images
+3. Builds Linux amd64 Docker images
 4. Pushes images to `ghcr.io`
 5. Packages Helm charts
 6. Creates GitHub Release
@@ -213,9 +211,8 @@ make build-operator
 1. **Lint**: Go fmt, vet, golangci-lint, and Helm lint
 2. **Test**: Unit tests with coverage
 3. **Verify**: Manifests up to date
-4. **Security**: Trivy filesystem/config checks and Trivy image scan of the built runtime image
-5. **Build**: Multi-arch Docker images
-6. **Push**: Images to `ghcr.io` only on pushes to `main`
+4. **Security**: Trivy filesystem/config checks
+5. **Image Build**: Skipped; image publishing is limited to the release path
 
 ### **On Release PR Merge**
 
@@ -223,7 +220,7 @@ make build-operator
 2. **Authorize**: Confirm the PR author, branch owner, and merger are explicit CODEOWNERS
 3. **Tag**: Create `vMAJOR.MINOR.PATCH` from the chart version after CI passes
 4. **Scan**: Build and Trivy-scan each release image before pushing tags
-5. **Build**: Multi-arch Docker images
+5. **Build**: Linux amd64 Docker images
 6. **Push**: Images with component image tags (`0.1.0`, `0.1`, `0`, `latest`)
 7. **Package**: Helm charts
 8. **Release**: Create GitHub Release with notes and chart artifacts
@@ -236,8 +233,8 @@ make build-operator
 
 - **Registry**: GitHub Container Registry
 - **Repository**: `ghcr.io/<owner>/xtrinode-operator`
-- **Tags**: Component image version, major.minor, major, latest, commit, branch-commit
-- **Architectures**: amd64, arm64
+- **Tags**: Component image version, major.minor, major, latest
+- **Architecture**: linux/amd64
 
 ### **Helm Charts** → GitHub Releases
 
@@ -291,7 +288,7 @@ Release version detection lives in `scripts/ci/prepare-release.sh` and is called
    versions, and `appVersion` fields in sync on the XTrinode release version.
 3. **Test Before Release**: Run full test suite and linting
 4. **Document Changes**: Update CHANGELOG.md for each release
-5. **Multi-Arch Builds**: Use `docker-buildx` for production releases
+5. **Image Builds**: Keep release image builds on the release publishing path
 6. **Immutable Tags**: Never overwrite version tags (use new version)
 7. **Release Notes**: Include meaningful release notes in GitHub Releases
 
@@ -316,4 +313,4 @@ workflow tool inputs automatically.
 - **GitHub Container Registry**:
   <https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry>
 - **Helm Chart Versioning**: <https://helm.sh/docs/topics/charts/#the-chartyaml-file>
-- **Docker Multi-Arch**: <https://docs.docker.com/build/building/multi-platform/>
+- **Docker Buildx**: <https://docs.docker.com/build/builders/>
