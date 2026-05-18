@@ -141,7 +141,7 @@ jobs:
         run: make ci-build-date-output
 
       - name: Build image for scan
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: xtrinode
           file: docker/Dockerfile
@@ -164,7 +164,7 @@ jobs:
         run: make ci-scan-image IMAGE=local/${{ matrix.image }}:scan-${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Build and push image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: xtrinode
           file: docker/Dockerfile
