@@ -1,0 +1,74 @@
+name: Documentation issue
+description: Report missing, stale, unclear, or overclaiming documentation.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for documentation gaps, incorrect instructions, unclear
+        examples, or claims that do not match current XTrinode behavior.
+  - type: input
+    id: page
+    attributes:
+      label: Page or file
+      description: Link or name the documentation page, README section, example, or chart values file.
+      placeholder: "docs/DEPLOYMENT.md, README.md#security, helm/xtrinode/values.yaml"
+    validations:
+      required: true
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Documentation problem
+      options:
+        - Missing information
+        - Incorrect or stale instructions
+        - Overclaim or unsupported behavior
+        - Confusing wording
+        - Broken link or missing reference
+        - Example does not work
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behavior or wording
+      description: Describe what the documentation says now, or what is missing.
+    validations:
+      required: true
+  - type: textarea
+    id: requested
+    attributes:
+      label: Requested change
+      description: Describe the documentation change you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Primary audience
+      options:
+        - New users
+        - Operators
+        - Contributors
+        - Release maintainers
+        - Cloud deployers
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add links, command output, screenshots, or related issues.
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I checked existing issues and discussions for duplicates.
+          required: true
+        - label: I agree to follow the XTrinode Code of Conduct.
+          required: true

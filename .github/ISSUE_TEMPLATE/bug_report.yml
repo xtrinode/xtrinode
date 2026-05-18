@@ -1,0 +1,122 @@
+name: Bug report
+description: Report a reproducible XTrinode defect or regression.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Do not include secrets,
+        credentials, auth headers, kubeconfigs, Terraform state, or sensitive
+        cluster details. Use the private security reporting path for security
+        vulnerabilities.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Select the closest affected area.
+      options:
+        - Operator
+        - API Server
+        - Gateway
+        - Catalogs and connectors
+        - Helm charts
+        - Terraform or cloud deployment
+        - CI or release automation
+        - Documentation or examples
+        - Unsure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the release version, image tag, chart version, or commit SHA.
+      placeholder: "v0.1.0, 0.1.0, or abc1234"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment path
+      description: Where did this happen?
+      options:
+        - Local k3d/Tilt
+        - GKE or GCP Terraform
+        - AWS
+        - Azure
+        - Existing Kubernetes cluster
+        - CI
+        - Not deployment-related
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the defect and the observed behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should XTrinode have done instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the shortest reliable reproduction path.
+      placeholder: |
+        1. Apply this manifest or run this command...
+        2. Wait for...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: Add redacted manifests, Helm values, Terraform snippets, or flags.
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or events
+      description: Add redacted logs, Kubernetes events, status conditions, or command output.
+      render: shell
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Blocks installation or upgrade
+        - Breaks query routing or runtime availability
+        - Causes incorrect reconciliation or scaling
+        - Causes confusing status, metrics, or documentation
+        - Minor issue or papercut
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Checks already run
+      description: List any commands or diagnostics you already ran.
+      placeholder: "make ci-test, kubectl describe, helm template, ..."
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I checked existing issues and discussions for duplicates.
+          required: true
+        - label: I have removed secrets, tokens, kubeconfigs, Terraform state, and sensitive cluster details.
+          required: true
+        - label: This is not a security vulnerability report with exploit details.
+          required: true
+        - label: I agree to follow the XTrinode Code of Conduct.
+          required: true

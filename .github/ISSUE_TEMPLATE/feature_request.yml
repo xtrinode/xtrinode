@@ -1,0 +1,81 @@
+name: Feature request
+description: Propose a focused enhancement or new XTrinode capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for concrete enhancements. For broad design exploration or
+        support questions, start a Discussion instead.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Select the closest area for the requested change.
+      options:
+        - Operator
+        - API Server
+        - Gateway
+        - Catalogs and connectors
+        - Helm charts
+        - Terraform or cloud deployment
+        - Observability
+        - Local development or e2e
+        - CI or release automation
+        - Documentation or examples
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What user or operator problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful version of the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or designs that should not be used, if any.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals
+      description: What should this issue include, and what should it explicitly avoid?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List concrete outcomes that would close this issue.
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification targets
+      description: Name existing or new checks that should validate the change.
+      placeholder: "make ci-test, make lint-helm, test-e2e-local-..."
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I checked existing issues and discussions for duplicates.
+          required: true
+        - label: This request has a concrete user or operator use case.
+          required: true
+        - label: I agree to follow the XTrinode Code of Conduct.
+          required: true
