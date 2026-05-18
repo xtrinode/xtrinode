@@ -96,6 +96,11 @@ if [ "${current_version}" = "${previous_version}" ]; then
   exit 0
 fi
 
+if [ -z "${previous_version}" ]; then
+  echo "No previous XTrinode chart version found at ${BEFORE_SHA}; initial project import does not create a release."
+  exit 0
+fi
+
 validate_release_version_metadata "${current_version}"
 
 if [ "${current_image_version}" != "${previous_image_version}" ]; then

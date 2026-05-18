@@ -52,18 +52,20 @@ We use [Semantic Versioning](https://semver.org/) (SemVer) for releases:
 
 ### **Image Tags**
 
-Multiple tags are created from the component image `appVersion` for each build:
+Multiple tags are created from the component image `appVersion` for each release image push:
 
 1. **Version Tag**: `0.1.0` (exact image version)
 2. **Major.Minor Tag**: `0.1` (latest patch for minor version)
 3. **Major Tag**: `0` (latest minor for major version)
-4. **Latest Tag**: `latest` (latest release, main branch only)
+4. **Latest Tag**: `latest` (latest stable release; not created for prereleases)
 
 ### **Architecture Support**
 
 - **Architecture**: `linux/amd64`
 - **Build**: Uses Docker Buildx for release image publishing
 - **CI**: Docker image builds run only on the release publishing path, not on pull request commits
+- **Override**: Set `DOCKER_PLATFORMS` explicitly for local experimental platform builds; the
+  release workflow publishes `linux/amd64`
 
 ### **Image Build Process**
 
@@ -135,7 +137,7 @@ helm package . --version 0.1.0 --app-version 0.1.0
 - [ ] Linting passes (`make lint`)
 - [ ] Manifests up to date (`make verify-manifests`)
 - [ ] Documentation updated
-- [ ] CHANGELOG.md updated
+- [ ] Release notes inputs reviewed; GitHub Release notes are generated from merged commits
 
 ### **2. Create Release PR**
 
@@ -146,7 +148,10 @@ helm package . --version 0.1.0 --app-version 0.1.0
 #    helm/xtrinode-operator/Chart.yaml
 #    helm/xtrinode/Chart.yaml
 #
-# 2. Commit the version bump and open a PR
+# 2. Refresh the umbrella lock after dependency version changes:
+helm dependency update helm/xtrinode
+#
+# 3. Commit the version bump and open a PR
 git add .
 git commit -m "Release v0.1.0"
 git push origin release/v0.1.0
@@ -232,14 +237,21 @@ make build-operator
 ### **Docker Images** → `ghcr.io`
 
 - **Registry**: GitHub Container Registry
-- **Repository**: `ghcr.io/<owner>/xtrinode-operator`
+- **Repositories**:
+  `ghcr.io/<owner>/xtrinode-operator`,
+  `ghcr.io/<owner>/xtrinode-api-server`,
+  `ghcr.io/<owner>/xtrinode-gateway`
 - **Tags**: Component image version, major.minor, major, latest
 - **Architecture**: linux/amd64
 
 ### **Helm Charts** → GitHub Releases
 
 - **Location**: GitHub Releases (attached `.tgz` file)
-- **Format**: `xtrinode-operator-<version>.tgz`
+- **Format**:
+  `xtrinode-<version>.tgz`,
+  `xtrinode-operator-<version>.tgz`,
+  `xtrinode-api-server-<version>.tgz`,
+  `xtrinode-gateway-<version>.tgz`
 - **Future**: OCI registry (`ghcr.io/<owner>/xtrinode-operator-chart`)
 
 ### **Source Code** → GitHub Repository
@@ -287,7 +299,7 @@ Release version detection lives in `scripts/ci/prepare-release.sh` and is called
 2. **Update Chart.yaml deliberately**: Keep all XTrinode chart `version` fields, umbrella dependency
    versions, and `appVersion` fields in sync on the XTrinode release version.
 3. **Test Before Release**: Run full test suite and linting
-4. **Document Changes**: Update CHANGELOG.md for each release
+4. **Document Changes**: Keep docs and PR descriptions clear enough for generated release notes
 5. **Image Builds**: Keep release image builds on the release publishing path
 6. **Immutable Tags**: Never overwrite version tags (use new version)
 7. **Release Notes**: Include meaningful release notes in GitHub Releases
