@@ -42,8 +42,6 @@ func (r *XTrinodeReconciler) ensureFinalizer(ctx context.Context, xtrinode *anal
 	return ctrl.Result{}, nil
 }
 
-// Old annotation handling functions removed - replaced by ProcessCommands() in commands.go
-
 func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1.XTrinode) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
@@ -52,7 +50,6 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 	}
 
 	// DRAIN-BEFORE-REMOVAL STATE MACHINE
-	// Step 0: Set backend to DRAINING state (if not already done)
 	// Check annotation to track drain state
 	if xtrinode.Annotations == nil {
 		xtrinode.Annotations = make(map[string]string)
@@ -91,7 +88,7 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// Step 1: Check drain condition (time-based: 5 minutes)
+	// Wait for the drain period to complete.
 	drainStartTime, err := time.Parse(time.RFC3339, drainStartedAt)
 	if err != nil {
 		log.Error(err, "failed to parse drain start time, proceeding with deletion")
@@ -111,7 +108,7 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 	log.Info("Drain condition met, proceeding with deletion", "xtrinode", xtrinode.Name)
 	r.EventRecorder.Normal(xtrinode, events.ReasonDrainCompleted, "Drain period completed, proceeding with resource cleanup")
 
-	// Step 2: Check if queries are running before deletion (graceful shutdown)
+	// Check if queries are running before deletion.
 	safeToDelete, err := r.GracefulShutdownService.CheckQueriesBeforeScaleDown(ctx, xtrinode, log)
 	if err != nil {
 		log.Error(err, "failed to check queries before deletion")
@@ -122,13 +119,13 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Step 3: Wait for pods to terminate gracefully (if any are terminating)
+	// Wait for pods to terminate gracefully if any are terminating.
 	if err := r.GracefulShutdownService.WaitForPodTermination(ctx, xtrinode, log); err != nil {
 		log.Info("Pods still terminating, waiting", "xtrinode", xtrinode.Name, "error", err)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Step 4: Clean up resources (Kubernetes owner references handle most cleanup automatically)
+	// Clean up resources. Kubernetes owner references handle most cleanup automatically.
 	r.EventRecorder.Normal(xtrinode, events.ReasonCleanupStarted, "Starting cleanup of all XTrinode resources (gateway, KEDA, Trino, node pool)")
 	if err := r.cleanupResources(ctx, xtrinode, log); err != nil {
 		r.EventRecorder.Warningf(xtrinode, events.ReasonCleanupStarted, "Resource cleanup failed: %v", err)
@@ -198,7 +195,7 @@ func (r *XTrinodeReconciler) cleanupTrinoResources(ctx context.Context, xtrinode
 
 	log.Info("Cleaning up Trino resources", "catalogs", catalogs)
 
-	// Get operator version for resource set building (needed for revision computation)
+	// Build the last-known resource set so deletion includes revisioned resources.
 	resourceSet, err := r.TrinoResourcesService.BuildTrinoResourceSet(ctx, xtrinode, catalogs, r.OperatorVersion)
 	if err != nil {
 		log.Error(err, "failed to build resource set for deletion")

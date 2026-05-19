@@ -21,7 +21,7 @@ import (
 // reconcileKEDA ensures KEDA ScaledObject configuration
 func (r *XTrinodeReconciler) reconcileKEDA(ctx context.Context, xtrinode *analyticsv1.XTrinode) error {
 	log := ctrl.LoggerFrom(ctx)
-	// Step 6: Ensure KEDA ScaledObject (after node pool so nodes can be ready).
+	// Ensure KEDA ScaledObject after node pool reconciliation so nodes can be ready.
 	// KEDA is opt-in; fixed worker replicas are used unless spec.keda.enabled=true.
 	if !isKEDAEnabled(xtrinode) {
 		log.Info("KEDA disabled, using fixed worker count from deployment replicas", "xtrinode", xtrinode.Name)
@@ -81,7 +81,7 @@ func (r *XTrinodeReconciler) reconcileKEDA(ctx context.Context, xtrinode *analyt
 // reconcileGateway registers gateway route
 func (r *XTrinodeReconciler) reconcileGateway(ctx context.Context, xtrinode *analyticsv1.XTrinode) error {
 	log := ctrl.LoggerFrom(ctx)
-	// Step 7: Register gateway route
+	// Register gateway route.
 	if err := r.registerGatewayRoute(ctx, xtrinode); err != nil {
 		log.Error(err, "failed to register gateway route")
 		status.SetCondition(xtrinode, status.ConditionTypeGatewayReady, metav1.ConditionFalse, status.ConditionReasonGatewayFailed, fmt.Sprintf("Failed: %v", err))

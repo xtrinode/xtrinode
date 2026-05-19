@@ -46,13 +46,9 @@ func (r *XTrinodeReconciler) reconcileWakeTTL(ctx context.Context, xtrinode *ana
 	return nil
 }
 
-// resetWakeTTLIfExpired removed - wake state now managed via status.wake field
-// KEDA reads wake state from invariants which read from status.wake
-
 // reconcileAutoSuspend checks auto-suspend conditions
 func (r *XTrinodeReconciler) reconcileAutoSuspend(ctx context.Context, xtrinode *analyticsv1.XTrinode) (bool, error) {
 	log := ctrl.LoggerFrom(ctx)
-	// Step 9: Check auto-suspend conditions
 	// Note: This checks idle time, but actual query activity should be monitored
 	// via Prometheus metrics in a separate goroutine or controller
 	if xtrinode.Spec.AutoSuspendAfter != nil && !xtrinode.Spec.Suspended {

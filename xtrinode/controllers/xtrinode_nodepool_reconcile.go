@@ -26,7 +26,7 @@ import (
 func (r *XTrinodeReconciler) reconcileNodePoolBlocking(ctx context.Context, xtrinode *analyticsv1.XTrinode) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
-	// Step 1: Check if node pool resource already exists to avoid duplicate event recording
+	// Check if node pool resource already exists to avoid duplicate event recording.
 	nodePool := xtrinode.Spec.NodePool
 	if nodePool == nil {
 		return ctrl.Result{}, nil
@@ -48,7 +48,7 @@ func (r *XTrinodeReconciler) reconcileNodePoolBlocking(ctx context.Context, xtri
 		r.EventRecorder.Normalf(xtrinode, events.ReasonNodePoolProvisioning, "Node pool provisioning started for provider %s", nodePool.Provider)
 	}
 
-	// Step 2: Ensure node pool resource exists
+	// Ensure node pool resource exists.
 	err = external.CallWithTimeout(ctx, config.NodePoolTimeout, func(ctx context.Context) error {
 		return r.NodePoolAdapter.EnsureNodePool(ctx, xtrinode)
 	})
@@ -65,7 +65,7 @@ func (r *XTrinodeReconciler) reconcileNodePoolBlocking(ctx context.Context, xtri
 		metrics.NodePoolProvisioned.WithLabelValues(xtrinode.Namespace, xtrinode.Name, nodePool.Provider).Inc()
 	}
 
-	// Step 3: Wait for nodes to be ready (blocking)
+	// Wait for nodes to be ready before continuing reconciliation.
 	ready, result, err := r.waitForNodePoolReady(ctx, xtrinode, log)
 	if err != nil {
 		log.Error(err, "failed to check node pool readiness")

@@ -61,7 +61,7 @@ func (r *XTrinodeReconciler) reconcileResume(ctx context.Context, xtrinode *anal
 			}
 		}
 
-		// Step 0: Scale node pool back up if it was scaled down
+		// Scale node pool back up if it was scaled down.
 		if xtrinode.Spec.NodePool != nil {
 			scaleDownOnSuspend := true // Default: scale down
 			if xtrinode.Spec.NodePool.ScaleDownOnSuspend != nil {
@@ -87,12 +87,12 @@ func (r *XTrinodeReconciler) reconcileResume(ctx context.Context, xtrinode *anal
 			}
 		}
 
-		// Step 1: Scale coordinator (and workers if KEDA disabled) for resume
+		// Scale coordinator, and workers when KEDA is disabled, for resume.
 		if err := r.scaleForResume(ctx, xtrinode, wakeMinWorkers); err != nil {
 			return err
 		}
 
-		// Step 2: Clear wake annotations after scaling succeeds so one-time wake
+		// Clear wake annotations after scaling succeeds so one-time wake
 		// overrides survive retries when scaling fails.
 		if xtrinode.Annotations != nil &&
 			(xtrinode.Annotations[config.WakeMinWorkersAnnotation] != "" ||

@@ -186,7 +186,7 @@ func (r *XTrinodeReconciler) reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{RequeueAfter: 60 * time.Second}, err
 	}
 
-	// Step 10: Update status to Ready
+	// Update status to Ready.
 	if err := r.transitionToReady(ctx, &xtrinode, oldPhase, log); err != nil {
 		return ctrl.Result{}, err
 	}

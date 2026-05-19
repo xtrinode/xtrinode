@@ -16,7 +16,7 @@ import (
 // reconcileCatalogs handles catalog discovery and validation
 func (r *XTrinodeReconciler) reconcileCatalogs(ctx context.Context, xtrinode *analyticsv1.XTrinode) ([]string, error) {
 	log := ctrl.LoggerFrom(ctx)
-	// Step 1: Get effective catalogs (explicit spec.catalogs or auto-discovered from ConfigMaps)
+	// Get effective catalogs from explicit spec.catalogs or auto-discovered ConfigMaps.
 	effectiveCatalogs, err := r.CatalogService.GetEffectiveCatalogs(ctx, xtrinode, log)
 	if err != nil {
 		log.Error(err, "failed to get effective catalogs")
@@ -36,9 +36,8 @@ func (r *XTrinodeReconciler) reconcileCatalogs(ctx context.Context, xtrinode *an
 		r.EventRecorder.Normalf(xtrinode, events.ReasonCatalogsDiscovered, "Discovered %d catalog(s): %s", len(effectiveCatalogs), strings.Join(effectiveCatalogs, ", "))
 	}
 
-	// Step 2: Validate catalog ConfigMaps (teams provide their own ConfigMaps)
-	// Validate both explicit and auto-discovered catalogs
-	// Teams create ConfigMaps with catalog properties - operator just validates they exist
+	// Validate both explicit and auto-discovered catalog ConfigMaps.
+	// Teams create ConfigMaps with catalog properties; the operator only validates they exist.
 	if err := r.CatalogService.ValidateCatalogConfigMaps(ctx, xtrinode, effectiveCatalogs, log); err != nil {
 		log.Error(err, "failed to validate catalog ConfigMaps")
 		r.EventRecorder.Warning(xtrinode, events.ReasonCatalogSyncFailed, events.FormatMessage("Failed to validate catalog ConfigMaps: %v", err))
@@ -53,9 +52,7 @@ func (r *XTrinodeReconciler) reconcileCatalogs(ctx context.Context, xtrinode *an
 func (r *XTrinodeReconciler) reconcileTrinoResources(ctx context.Context, xtrinode *analyticsv1.XTrinode, effectiveCatalogs []string) error {
 	log := ctrl.LoggerFrom(ctx)
 
-	// Get operator version for revision computation
-
-	// Step 4: Build and apply Trino resources
+	// Build and apply Trino resources using the operator version for revision computation.
 	resourceSet, err := r.TrinoResourcesService.BuildTrinoResourceSet(ctx, xtrinode, effectiveCatalogs, r.OperatorVersion)
 	if err != nil {
 		log.Error(err, "failed to build Trino resources")

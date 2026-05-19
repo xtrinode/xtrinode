@@ -71,7 +71,7 @@ func (r *XTrinodeReconciler) reconcileSuspend(ctx context.Context, xtrinode *ana
 		}
 	}
 
-	// Step 1: Check if queries are running before touching deployments
+	// Check if queries are running before touching deployments.
 	safeToSuspend, err := r.GracefulShutdownService.CheckQueriesBeforeScaleDown(ctx, xtrinode, log)
 	if err != nil {
 		log.Error(err, "failed to check queries before suspend")
@@ -82,19 +82,19 @@ func (r *XTrinodeReconciler) reconcileSuspend(ctx context.Context, xtrinode *ana
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Step 2: Scale down deployments + disable KEDA now that it is safe to do so
+	// Scale down deployments and disable KEDA now that it is safe to do so.
 	if err := r.ensureSuspendedInvariants(ctx, xtrinode); err != nil {
 		log.Error(err, "failed to scale down for suspend")
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	// Step 3: Wait for pods to terminate gracefully
+	// Wait for pods to terminate gracefully.
 	if err := r.GracefulShutdownService.WaitForPodTermination(ctx, xtrinode, log); err != nil {
 		log.Info("Pods still terminating, waiting before marking as suspended", "xtrinode", xtrinode.Name, "error", err)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Step 4: Mark as suspended in status
+	// Mark as suspended in status.
 	currentPhase := status.Phase(xtrinode.Status.Phase)
 	if err := currentPhase.TransitionTo(status.PhaseSuspended); err != nil {
 		log.Error(err, "invalid phase transition", "from", currentPhase, "to", "Suspended")
@@ -199,7 +199,7 @@ func (r *XTrinodeReconciler) ensureSuspendedInvariants(ctx context.Context, xtri
 	// Get expected invariants for suspended state
 	inv := status.GetInvariants(status.PhaseSuspended, xtrinode)
 
-	// Step 1: Disable KEDA scaling if needed.
+	// Disable KEDA scaling if needed.
 	// If KEDA is still enabled and we scale deployments to 0, KEDA will immediately
 	// fight us by scaling back up. Block the scale-down if KEDA disable fails with a
 	// permanent error (anything other than "not found", which is already-gone and safe).
@@ -219,14 +219,14 @@ func (r *XTrinodeReconciler) ensureSuspendedInvariants(ctx context.Context, xtri
 		}
 	}
 
-	// Step 2: Scale deployments to match invariants
+	// Scale deployments to match invariants.
 	if err := r.scaleDeployments(ctx, xtrinode, inv.CoordReplicas, inv.MinWorkerReplicas); err != nil {
 		log.Error(err, "failed to scale deployments to suspended state")
 		r.EventRecorder.Warningf(xtrinode, events.ReasonSuspendFailed, "Failed to enforce suspended state: %v", err)
 		return fmt.Errorf("failed to scale deployments: %w", err)
 	}
 
-	// Step 3: Scale node pool to match invariants
+	// Scale node pool to match invariants.
 	if inv.NodePoolMinNodes != nil {
 		err := external.CallWithTimeout(ctx, config.NodePoolTimeout, func(ctx context.Context) error {
 			return r.NodePoolAdapter.ScaleNodePoolMinNodes(ctx, xtrinode, *inv.NodePoolMinNodes)
