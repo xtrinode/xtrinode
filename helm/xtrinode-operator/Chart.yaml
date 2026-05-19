@@ -18,6 +18,6 @@ maintainers:
 
 dependencies:
   - name: keda
-    version: "2.18.0"
+    version: 2.19.0
     repository: https://kedacore.github.io/charts
     condition: keda.enabled
