@@ -168,7 +168,7 @@ func (gs *GatewayService) handleRequest(w http.ResponseWriter, r *http.Request) 
 	ctx = context.WithValue(ctx, ctxBackendURL, backendURL)
 	ctx = context.WithValue(ctx, ctxXTrinodeName, xtrinodeName)
 	ctx = context.WithValue(ctx, ctxNamespace, namespace)
-	ctx = context.WithValue(ctx, ctxTrinoUIPrefix, gatewayBackendTrinoUIPath(Backend{Name: xtrinodeName, Namespace: namespace}))
+	ctx = context.WithValue(ctx, ctxTrinoUIPrefix, gatewayBackendTrinoUIPath(&Backend{Name: xtrinodeName, Namespace: namespace}))
 	r = r.WithContext(ctx)
 
 	// Forward request to coordinator using retry proxy (includes circuit breaker)
@@ -191,7 +191,7 @@ func (gs *GatewayService) handleTrinoUIRequest(w http.ResponseWriter, r *http.Re
 			http.NotFound(w, r)
 			return
 		}
-		http.Redirect(w, r, gatewayBackendTrinoUIPath(backend), http.StatusTemporaryRedirect)
+		http.Redirect(w, r, gatewayBackendTrinoUIPath(&backend), http.StatusTemporaryRedirect)
 		return
 	}
 
@@ -242,7 +242,7 @@ func (gs *GatewayService) handleTrinoUIRequest(w http.ResponseWriter, r *http.Re
 	ctx = context.WithValue(ctx, ctxXTrinodeName, backend.Name)
 	ctx = context.WithValue(ctx, ctxNamespace, backend.Namespace)
 	ctx = context.WithValue(ctx, ctxTargetPath, targetPath)
-	ctx = context.WithValue(ctx, ctxTrinoUIPrefix, gatewayBackendTrinoUIPath(backend))
+	ctx = context.WithValue(ctx, ctxTrinoUIPrefix, gatewayBackendTrinoUIPath(&backend))
 	r = r.WithContext(ctx)
 
 	gs.retryProxy.ServeHTTP(wrapper, r)
@@ -266,14 +266,14 @@ func (gs *GatewayService) defaultTrinoUIBackend() (RouteEntry, Backend, bool) {
 		route   RouteEntry
 		backend Backend
 	}
-	selectable := make(map[string]candidate)
+	selectable := make(map[string]*candidate)
 	for i := range routes {
 		for j := range routes[i].Backends {
 			backend := routes[i].Backends[j]
 			if !gs.isBackendSelectable(&backend) {
 				continue
 			}
-			selectable[backendIdentityKey(backend)] = candidate{route: routes[i], backend: backend}
+			selectable[backendIdentityKey(&backend)] = &candidate{route: routes[i], backend: backend}
 		}
 	}
 	if len(selectable) == 1 {
@@ -285,14 +285,14 @@ func (gs *GatewayService) defaultTrinoUIBackend() (RouteEntry, Backend, bool) {
 		return RouteEntry{}, Backend{}, false
 	}
 
-	resumable := make(map[string]candidate)
+	resumable := make(map[string]*candidate)
 	for i := range routes {
 		for j := range routes[i].Backends {
 			backend := routes[i].Backends[j]
-			if !trinoUIResumeCandidate(backend) {
+			if !trinoUIResumeCandidate(&backend) {
 				continue
 			}
-			resumable[backendIdentityKey(backend)] = candidate{route: routes[i], backend: backend}
+			resumable[backendIdentityKey(&backend)] = &candidate{route: routes[i], backend: backend}
 		}
 	}
 	if len(resumable) != 1 {
@@ -304,7 +304,7 @@ func (gs *GatewayService) defaultTrinoUIBackend() (RouteEntry, Backend, bool) {
 	return RouteEntry{}, Backend{}, false
 }
 
-func trinoUIResumeCandidate(backend Backend) bool {
+func trinoUIResumeCandidate(backend *Backend) bool {
 	if !backend.Active || backend.Name == "" || backend.Namespace == "" {
 		return false
 	}
@@ -332,7 +332,7 @@ func isDefaultTrinoUIPath(path string) bool {
 		strings.HasSuffix(first, ".ico")
 }
 
-func (gs *GatewayService) resolveTrinoUIBackend(path string) (RouteEntry, Backend, string, bool, bool) {
+func (gs *GatewayService) resolveTrinoUIBackend(path string) (route RouteEntry, backend Backend, targetPath string, ok, ambiguous bool) {
 	trimmed := strings.TrimPrefix(path, TrinoUIPath+"/")
 	if trimmed == "" || trimmed == path {
 		return RouteEntry{}, Backend{}, "", false, false
@@ -343,7 +343,7 @@ func (gs *GatewayService) resolveTrinoUIBackend(path string) (RouteEntry, Backen
 		namespace, namespaceOK := url.PathUnescape(segments[0])
 		name, nameOK := url.PathUnescape(segments[1])
 		if namespaceOK == nil && nameOK == nil && namespace != "" && name != "" {
-			route, backend, ok, _ := gs.findTrinoUIBackend(namespace, name)
+			route, backend, ok, _ = gs.findTrinoUIBackend(namespace, name)
 			if ok {
 				return route, backend, trinoUITargetPath(segments[2:]), true, false
 			}
@@ -354,7 +354,7 @@ func (gs *GatewayService) resolveTrinoUIBackend(path string) (RouteEntry, Backen
 	if err != nil || name == "" {
 		return RouteEntry{}, Backend{}, "", false, false
 	}
-	route, backend, ok, ambiguous := gs.findTrinoUIBackend("", name)
+	route, backend, ok, ambiguous = gs.findTrinoUIBackend("", name)
 	if !ok || ambiguous {
 		return RouteEntry{}, Backend{}, "", ok, ambiguous
 	}
@@ -378,7 +378,7 @@ func (gs *GatewayService) findTrinoUIBackend(namespace, name string) (RouteEntry
 			if namespace != "" && backend.Namespace != namespace {
 				continue
 			}
-			key := backendIdentityKey(backend)
+			key := backendIdentityKey(&backend)
 			if _, exists := seen[key]; exists {
 				continue
 			}
@@ -402,7 +402,7 @@ func trinoUITargetPath(segments []string) string {
 	return "/ui/" + strings.Join(segments, "/")
 }
 
-func backendIdentityKey(backend Backend) string {
+func backendIdentityKey(backend *Backend) string {
 	return backend.Namespace + "\x00" + backend.Name + "\x00" + backend.CoordinatorURL
 }
 
@@ -499,8 +499,8 @@ func (gs *GatewayService) modifyResponse(resp *http.Response) error {
 }
 
 func rewriteTrinoUILocation(resp *http.Response) {
-	prefix, _ := resp.Request.Context().Value(ctxTrinoUIPrefix).(string)
-	if prefix == "" {
+	prefix, ok := resp.Request.Context().Value(ctxTrinoUIPrefix).(string)
+	if !ok || prefix == "" {
 		return
 	}
 	location := resp.Header.Get("Location")

@@ -157,9 +157,9 @@ func (gs *GatewayService) gatewayStatusSnapshot(ctx context.Context) GatewayStat
 		}
 
 		for _, backend := range route.Backends {
-			backendStatus := gs.gatewayBackendStatus(ctx, backend, now)
+			backendStatus := gs.gatewayBackendStatus(ctx, &backend, now)
 			routeStatus.Backends = append(routeStatus.Backends, backendStatus)
-			accumulateGatewaySummary(&response.Summary, backendStatus)
+			accumulateGatewaySummary(&response.Summary, &backendStatus)
 		}
 
 		response.Routes = append(response.Routes, routeStatus)
@@ -206,7 +206,7 @@ func (gs *GatewayService) uniqueRouteSnapshot() []RouteEntry {
 	return routes
 }
 
-func (gs *GatewayService) gatewayBackendStatus(ctx context.Context, backend Backend, now time.Time) GatewayBackendStatus {
+func (gs *GatewayService) gatewayBackendStatus(ctx context.Context, backend *Backend, now time.Time) GatewayBackendStatus {
 	coordinatorURL := redactURLUserInfo(backend.CoordinatorURL)
 	status := GatewayBackendStatus{
 		Name:           backend.Name,
@@ -242,7 +242,7 @@ func (gs *GatewayService) gatewayBackendStatus(ctx context.Context, backend Back
 	return status
 }
 
-func gatewayBackendTrinoUIPath(backend Backend) string {
+func gatewayBackendTrinoUIPath(backend *Backend) string {
 	if backend.Name == "" {
 		return ""
 	}
@@ -252,7 +252,7 @@ func gatewayBackendTrinoUIPath(backend Backend) string {
 	return TrinoUIPath + "/" + url.PathEscape(backend.Namespace) + "/" + url.PathEscape(backend.Name) + "/"
 }
 
-func (gs *GatewayService) gatewayBackendLifecycle(ctx context.Context, backend Backend, now time.Time) *GatewayBackendLifecycle {
+func (gs *GatewayService) gatewayBackendLifecycle(ctx context.Context, backend *Backend, now time.Time) *GatewayBackendLifecycle {
 	if gs.client == nil || backend.Name == "" || backend.Namespace == "" {
 		return nil
 	}
@@ -270,7 +270,7 @@ func (gs *GatewayService) gatewayBackendLifecycle(ctx context.Context, backend B
 
 	status := &GatewayBackendLifecycle{}
 	if xtrinode.Status.LastActivity != nil {
-		lastActivity := xtrinode.Status.LastActivity.Time.UTC()
+		lastActivity := xtrinode.Status.LastActivity.UTC()
 		status.LastActivity = &lastActivity
 	}
 
@@ -286,8 +286,8 @@ func (gs *GatewayService) gatewayBackendLifecycle(ctx context.Context, backend B
 
 			if !idleSince.IsZero() {
 				suspendAt := idleSince.Add(autoSuspendAfter).UTC()
-				if xtrinode.Status.Wake != nil && xtrinode.Status.Wake.ExpiresAt.Time.After(now) && xtrinode.Status.Wake.ExpiresAt.Time.After(suspendAt) {
-					suspendAt = xtrinode.Status.Wake.ExpiresAt.Time.UTC()
+				if xtrinode.Status.Wake != nil && xtrinode.Status.Wake.ExpiresAt.After(now) && xtrinode.Status.Wake.ExpiresAt.After(suspendAt) {
+					suspendAt = xtrinode.Status.Wake.ExpiresAt.UTC()
 				}
 				status.SuspendAt = timePtr(suspendAt)
 			}
@@ -327,7 +327,7 @@ func (gs *GatewayService) circuitBreakerStatus(backendURL string) CircuitBreaker
 	return status
 }
 
-func accumulateGatewaySummary(summary *GatewayStatusSummary, backend GatewayBackendStatus) {
+func accumulateGatewaySummary(summary *GatewayStatusSummary, backend *GatewayBackendStatus) {
 	summary.Backends++
 	if backend.Active {
 		summary.ActiveBackends++

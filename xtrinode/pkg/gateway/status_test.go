@@ -37,6 +37,7 @@ func (a staticAuthenticator) Authenticate(*http.Request) (*auth.Result, error) {
 }
 
 func TestGatewayStatusSnapshotDeduplicatesRoutesAndRedactsURLUserInfo(t *testing.T) {
+	// #nosec G101 -- Deliberate fake URL userinfo for redaction coverage.
 	backendURL := "http://user:secret@trino-runtime.team-a.svc.cluster.local:8080"
 	gs, _ := createTestGatewayService(t, []RouteEntry{
 		{

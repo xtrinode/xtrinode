@@ -49,8 +49,8 @@ func trinoUIPrefixForResponse(resp *http.Response) string {
 	if resp == nil || resp.Request == nil {
 		return ""
 	}
-	prefix, _ := resp.Request.Context().Value(ctxTrinoUIPrefix).(string)
-	if prefix != "" {
+	prefix, ok := resp.Request.Context().Value(ctxTrinoUIPrefix).(string)
+	if ok && prefix != "" {
 		return prefix
 	}
 	name := resp.Request.Header.Get("X-Trino-XTrinode-Name")
@@ -58,7 +58,7 @@ func trinoUIPrefixForResponse(resp *http.Response) string {
 	if name == "" || namespace == "" {
 		return ""
 	}
-	return gatewayBackendTrinoUIPath(Backend{Name: name, Namespace: namespace})
+	return gatewayBackendTrinoUIPath(&Backend{Name: name, Namespace: namespace})
 }
 
 func rewriteTrinoUIInfoURIInJSONPrefix(prefix []byte, uiPrefix string) ([]byte, bool) {
@@ -85,7 +85,7 @@ func rewriteTrinoUIInfoURIInJSONPrefix(prefix []byte, uiPrefix string) ([]byte, 
 			return prefix, false
 		}
 		if key != "infoUri" {
-			if err := skipJSONValue(dec); err != nil {
+			if skipErr := skipJSONValue(dec); skipErr != nil {
 				return prefix, false
 			}
 			continue
