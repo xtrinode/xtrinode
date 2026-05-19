@@ -17,6 +17,13 @@ type queryActivity struct {
 	lastSeen     time.Time
 }
 
+// BackendLoad tracks recently observed query activity for a backend.
+type BackendLoad struct {
+	RunningQueries int       `json:"runningQueries"`
+	QueuedQueries  int       `json:"queuedQueries"`
+	LastUpdate     time.Time `json:"lastUpdate"`
+}
+
 type QueryActivityTracker struct {
 	mu      sync.Mutex
 	queries map[string]queryActivity
