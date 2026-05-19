@@ -73,6 +73,8 @@ type gatewayOptions struct {
 	readTimeout              time.Duration
 	writeTimeout             time.Duration
 	idleTimeout              time.Duration
+	uiEnabled                bool
+	uiRequireAuth            bool
 }
 
 func defaultGatewayOptions() gatewayOptions {
@@ -98,6 +100,8 @@ func defaultGatewayOptions() gatewayOptions {
 		readTimeout:              config.GatewayReadTimeout,
 		writeTimeout:             config.GatewayWriteTimeout,
 		idleTimeout:              config.GatewayIdleTimeout,
+		uiEnabled:                false,
+		uiRequireAuth:            true,
 	}
 }
 
@@ -136,6 +140,8 @@ func parseGatewayOptions(args []string, output io.Writer) (gatewayOptions, zap.O
 	fs.DurationVar(&options.readTimeout, "read-timeout", options.readTimeout, "HTTP read timeout; 0 disables the deadline for Trino request streams")
 	fs.DurationVar(&options.writeTimeout, "write-timeout", options.writeTimeout, "HTTP write timeout; 0 disables the deadline for Trino response streams")
 	fs.DurationVar(&options.idleTimeout, "idle-timeout", options.idleTimeout, "HTTP keep-alive idle timeout")
+	fs.BoolVar(&options.uiEnabled, "ui-enabled", options.uiEnabled, "Enable the embedded read-only Gateway UI and status API")
+	fs.BoolVar(&options.uiRequireAuth, "ui-require-auth", options.uiRequireAuth, "Require gateway authentication for the embedded Gateway UI and status API")
 
 	zapOptions.BindFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -258,6 +264,10 @@ func run() int {
 				ReadTimeout:       options.readTimeout,
 				WriteTimeout:      options.writeTimeout,
 				IdleTimeout:       options.idleTimeout,
+			},
+			UI: gateway.GatewayUIConfig{
+				Enabled:     options.uiEnabled,
+				RequireAuth: options.uiRequireAuth,
 			},
 		},
 	)

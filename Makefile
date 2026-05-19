@@ -17,6 +17,7 @@ GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Go configuration
+GO ?= $(shell command -v go 2>/dev/null || command -v /usr/local/go/bin/go 2>/dev/null || echo go)
 GO_VERSION ?= $(shell awk '/^go / {print $$2; exit}' $(OPERATOR_DIR)/go.mod 2>/dev/null || echo 1.26.3)
 GOOS ?= linux
 GOARCH ?= amd64
@@ -744,6 +745,11 @@ test-coverage-summary: ## Show coverage summary for all packages
 test-unit: ## Run unit tests only (strict mode)
 	@echo "Running unit tests (strict mode)..."
 	cd $(OPERATOR_DIR) && go test $(TEST_FLAGS) ./pkg/... ./controllers/... ./api/...
+
+.PHONY: test-gateway-ui
+test-gateway-ui: ## Run focused Gateway UI/status API tests
+	@echo "Running Gateway UI/status API tests..."
+	cd $(OPERATOR_DIR) && $(GO) test $(TEST_FLAGS) ./cmd/gateway ./pkg/gateway -run 'GatewayUI|GatewayStatus|ParseGatewayOptions'
 
 .PHONY: ensure-setup-envtest
 ensure-setup-envtest: ## Install setup-envtest if needed

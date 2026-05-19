@@ -30,7 +30,7 @@ spec:
   minWorkers: 1
   maxWorkers: 2
   suspended: false
-  autoSuspendAfter: "30m"
+  autoSuspendAfter: "5m"
   wakeMinWorkers: 1
   wakeTTL: "2m"
 

@@ -1,0 +1,16 @@
+{{- if and .Values.rbac.create .Values.rbac.xtrinodeRead .Values.gateway.ui.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "xtrinode-gateway.fullname" . }}-xtrinode-reader
+  labels:
+    {{- include "xtrinode-gateway.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "xtrinode-gateway.fullname" . }}-xtrinode-reader
+subjects:
+- kind: ServiceAccount
+  name: {{ include "xtrinode-gateway.serviceAccountName" . }}
+  namespace: {{ include "xtrinode-gateway.namespace" . }}
+{{- end }}

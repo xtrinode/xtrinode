@@ -49,7 +49,10 @@ func (gs *GatewayService) extractQueryInfoFromResponse(resp *http.Response) (que
 	}
 
 	// Restore full body by prepending the prefix we read
-	resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), resp.Body))
+	resp.Body = chainedReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(prefix), resp.Body),
+		closer: resp.Body,
+	}
 
 	queryID, state, err = extractQueryInfoFromJSONPrefix(prefix)
 	if err != nil {

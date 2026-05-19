@@ -6,11 +6,13 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/sizing"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -243,6 +245,11 @@ func (t *XTrinode) Default() {
 	if t.Spec.MinWorkers == nil {
 		defaultMin := int32(0)
 		t.Spec.MinWorkers = &defaultMin
+	}
+
+	// Set default auto-suspend threshold if not specified.
+	if t.Spec.AutoSuspendAfter == nil {
+		t.Spec.AutoSuspendAfter = &metav1.Duration{Duration: 5 * time.Minute}
 	}
 
 	// Set default node pool name if not specified

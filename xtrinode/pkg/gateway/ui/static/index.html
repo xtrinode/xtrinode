@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XTrinode Gateway</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" src="xtrinode-logo.svg" alt="XTrinode">
+        <div>
+          <h1>XTrinode Gateway</h1>
+          <div class="subtitle" id="generated">Loading</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="summary" aria-label="Gateway summary">
+        <div class="metric"><div class="metric-label">Routes</div><div class="metric-value" id="metric-routes">0</div></div>
+        <div class="metric"><div class="metric-label">Backends</div><div class="metric-value" id="metric-backends">0</div></div>
+        <div class="metric"><div class="metric-label">Running</div><div class="metric-value" id="metric-running">0</div></div>
+        <div class="metric"><div class="metric-label">Paused</div><div class="metric-value" id="metric-paused">0</div></div>
+        <div class="metric"><div class="metric-label">Unhealthy</div><div class="metric-value" id="metric-unhealthy">0</div></div>
+        <div class="metric"><div class="metric-label">Open circuits</div><div class="metric-value" id="metric-circuits">0</div></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Route Inventory</h2>
+        </div>
+        <div class="filters">
+          <div class="control">
+            <label for="search">Search</label>
+            <input id="search" type="search" placeholder="namespace, runtime, host, group">
+          </div>
+          <div class="control">
+            <label for="state">State</label>
+            <select id="state">
+              <option value="">All states</option>
+              <option value="RUNNING">Running</option>
+              <option value="PAUSED">Paused</option>
+              <option value="RESUMING">Resuming</option>
+              <option value="DRAINING">Draining</option>
+            </select>
+          </div>
+          <div class="control">
+            <label for="health">Health</label>
+            <select id="health">
+              <option value="">All health</option>
+              <option value="healthy">Healthy</option>
+              <option value="unknown">Unknown</option>
+              <option value="sleeping">Sleeping</option>
+              <option value="unhealthy">Unhealthy</option>
+            </select>
+          </div>
+          <div class="control">
+            <label for="route-kind">Route</label>
+            <select id="route-kind">
+              <option value="">All routes</option>
+              <option value="default">Default</option>
+              <option value="hostname">Hostname</option>
+              <option value="header">Header</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="col-runtime">Runtime</th>
+                <th class="col-namespace">Namespace</th>
+                <th class="col-routing">Routing</th>
+                <th class="col-state">State</th>
+                <th class="col-health">Health</th>
+                <th class="col-circuit">Circuit</th>
+                <th class="col-coordinator">Coordinator</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="empty" id="empty" hidden>No backends match the current filters.</div>
+        <div class="error" id="error" hidden></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <aside class="drawer" id="backend-detail" aria-label="Backend details" aria-hidden="true" hidden>
+    <div class="drawer-head">
+      <div>
+        <div class="drawer-kicker">Backend</div>
+        <h2 class="drawer-title" id="drawer-title"></h2>
+        <div class="drawer-subtitle" id="drawer-subtitle"></div>
+      </div>
+      <button class="icon-button" id="drawer-close" type="button" title="Close details" aria-label="Close details">X</button>
+    </div>
+    <div class="drawer-body">
+      <section class="detail-section">
+        <h3 class="detail-heading">Route Selectors</h3>
+        <div class="selector-list" id="drawer-selectors"></div>
+      </section>
+      <section class="detail-section">
+        <h3 class="detail-heading">Coordinator URL</h3>
+        <code class="mono coordinator-value" id="drawer-coordinator"></code>
+      </section>
+      <section class="detail-section">
+        <h3 class="detail-heading">Trino UI</h3>
+        <div id="drawer-trino-ui"></div>
+      </section>
+      <section class="detail-section">
+        <h3 class="detail-heading">State</h3>
+        <div id="drawer-basics"></div>
+      </section>
+      <section class="detail-section">
+        <h3 class="detail-heading">Lifecycle</h3>
+        <div id="drawer-lifecycle"></div>
+      </section>
+      <section class="detail-section">
+        <h3 class="detail-heading">Health</h3>
+        <div id="drawer-health"></div>
+      </section>
+      <section class="detail-section">
+        <h3 class="detail-heading">Circuit Breaker</h3>
+        <div id="drawer-circuit"></div>
+      </section>
+      <section class="detail-section">
+        <h3 class="detail-heading">Reload Metadata</h3>
+        <div id="drawer-reload"></div>
+      </section>
+      <section class="detail-section">
+        <h3 class="detail-heading">Query Examples</h3>
+        <div class="examples" id="drawer-examples"></div>
+      </section>
+    </div>
+  </aside>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

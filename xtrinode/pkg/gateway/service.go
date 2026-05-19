@@ -44,6 +44,7 @@ type GatewayService struct {
 	port   int
 
 	httpServer HTTPServerConfig
+	ui         GatewayUIConfig
 
 	// Route cache
 	// NOTE: Multi-index map - same *RouteEntry may be indexed by routingGroup, hostname, and header.
@@ -78,6 +79,10 @@ type GatewayService struct {
 
 	// Retry proxy wrapper
 	retryProxy *RetryProxy
+
+	// Route reload status for operator-facing diagnostics.
+	reloadState     routeReloadState
+	reloadStateLock sync.RWMutex
 }
 
 // GatewayOptions contains runtime options that are deployment-specific.
@@ -85,6 +90,7 @@ type GatewayOptions struct {
 	Redis              RedisConfig
 	RateLimit          RateLimitConfig
 	HTTPServer         HTTPServerConfig
+	UI                 GatewayUIConfig
 	APIServerAuthToken string
 	Port               int
 }
@@ -102,6 +108,11 @@ type RateLimitConfig struct {
 	RefillRate time.Duration
 }
 
+type GatewayUIConfig struct {
+	Enabled     bool
+	RequireAuth bool
+}
+
 // NewGatewayService creates a new gateway service
 // authenticator is the authentication implementation (optional, nil disables authentication)
 func NewGatewayService(cli client.Client, log logr.Logger, apiServerURL string, authenticator auth.Authenticator) (*GatewayService, error) {
@@ -109,6 +120,7 @@ func NewGatewayService(cli client.Client, log logr.Logger, apiServerURL string, 
 		Redis:      defaultRedisConfig(),
 		RateLimit:  defaultRateLimitConfig(),
 		HTTPServer: defaultHTTPServerConfig(),
+		UI:         defaultGatewayUIConfig(),
 	})
 }
 
@@ -140,6 +152,13 @@ func defaultHTTPServerConfig() HTTPServerConfig {
 	}
 }
 
+func defaultGatewayUIConfig() GatewayUIConfig {
+	return GatewayUIConfig{
+		Enabled:     false,
+		RequireAuth: true,
+	}
+}
+
 // NewGatewayServiceWithOptions creates a gateway service with explicit runtime options.
 func NewGatewayServiceWithOptions(cli client.Client, log logr.Logger, apiServerURL string, authenticator auth.Authenticator, opts *GatewayOptions) (*GatewayService, error) {
 	if opts == nil {
@@ -147,6 +166,7 @@ func NewGatewayServiceWithOptions(cli client.Client, log logr.Logger, apiServerU
 			Redis:      defaultRedisConfig(),
 			RateLimit:  defaultRateLimitConfig(),
 			HTTPServer: defaultHTTPServerConfig(),
+			UI:         defaultGatewayUIConfig(),
 		}
 	}
 	redisConfig := opts.Redis
@@ -166,6 +186,10 @@ func NewGatewayServiceWithOptions(cli client.Client, log logr.Logger, apiServerU
 	}
 	if httpServerConfig.IdleTimeout <= 0 {
 		httpServerConfig.IdleTimeout = config.GatewayIdleTimeout
+	}
+	uiConfig := opts.UI
+	if !uiConfig.Enabled {
+		uiConfig.RequireAuth = true
 	}
 	stickyClient, err := NewRedisStickyClient(redisConfig, log)
 	if err != nil {
@@ -188,6 +212,7 @@ func NewGatewayServiceWithOptions(cli client.Client, log logr.Logger, apiServerU
 		log:             log,
 		port:            port,
 		httpServer:      httpServerConfig,
+		ui:              uiConfig,
 		routes:          make(map[string]*RouteEntry),
 		authenticator:   authenticator,
 		stickyClient:    stickyClient,
@@ -346,15 +371,24 @@ func (gs *GatewayService) Start(ctx context.Context) error {
 func (gs *GatewayService) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
+	mux.Handle(GatewayStatusAPIPath, gs.gatewayUIHandler(http.HandlerFunc(gs.handleGatewayStatus)))
+	mux.Handle(GatewayUIPath, gs.gatewayUIHandler(http.HandlerFunc(gs.redirectGatewayUI)))
+	mux.Handle(GatewayUIPath+"/", gs.gatewayUIHandler(gs.gatewayUIFileServer()))
+
 	// Apply middleware chain: rate limiting -> authentication -> request handler.
 	// Rate limiting intentionally runs before auth and keys on network identity.
 	var handler http.Handler = http.HandlerFunc(gs.handleRequest)
+	var trinoUIHandler http.Handler = http.HandlerFunc(gs.handleTrinoUIRequest)
 	if gs.authenticator != nil {
 		handler = auth.Middleware(gs.authenticator)(handler)
+		trinoUIHandler = auth.Middleware(gs.authenticator)(trinoUIHandler)
 	}
 	if gs.rateLimiter != nil {
 		handler = RateLimitMiddleware(gs.rateLimiter)(handler)
+		trinoUIHandler = RateLimitMiddleware(gs.rateLimiter)(trinoUIHandler)
 	}
+	mux.Handle(TrinoUIPath, trinoUIHandler)
+	mux.Handle(TrinoUIPath+"/", trinoUIHandler)
 	mux.Handle("/", handler)
 
 	// Health and metrics endpoints bypass auth and rate limiting.

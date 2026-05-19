@@ -56,6 +56,7 @@ spec:
             properties:
               autoSuspendAfter:
                 description: AutoSuspendAfter is the idle duration before auto-suspend
+                default: 5m
                 type: string
               catalogSelector:
                 description: |-

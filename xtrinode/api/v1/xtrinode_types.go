@@ -31,6 +31,7 @@ type XTrinodeSpec struct {
 	Suspended bool `json:"suspended,omitempty"`
 
 	// AutoSuspendAfter is the idle duration before auto-suspend
+	// +kubebuilder:default="5m"
 	AutoSuspendAfter *metav1.Duration `json:"autoSuspendAfter,omitempty"`
 
 	// WakeMinWorkers is the number of workers to pre-warm on resume

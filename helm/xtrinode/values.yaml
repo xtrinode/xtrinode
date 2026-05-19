@@ -349,6 +349,10 @@ xtrinode-gateway:
     # Log level (debug, info, error)
     logLevel: "info"
 
+    ui:
+      enabled: false
+      requireAuth: true
+
     # Authentication configuration
     auth:
       # Enable authentication
@@ -415,6 +419,8 @@ xtrinode-gateway:
   # RBAC configuration
   rbac:
     create: true
+    # Only rendered when gateway.ui.enabled=true.
+    xtrinodeRead: true
 
   # Service account configuration
   serviceAccount:

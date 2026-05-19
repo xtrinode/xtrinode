@@ -22,6 +22,8 @@ const (
 	ctxBackendURL
 	ctxXTrinodeName
 	ctxNamespace
+	ctxTargetPath
+	ctxTrinoUIPrefix
 )
 
 // responseWriterWrapper wraps http.ResponseWriter to capture status code
@@ -166,10 +168,242 @@ func (gs *GatewayService) handleRequest(w http.ResponseWriter, r *http.Request) 
 	ctx = context.WithValue(ctx, ctxBackendURL, backendURL)
 	ctx = context.WithValue(ctx, ctxXTrinodeName, xtrinodeName)
 	ctx = context.WithValue(ctx, ctxNamespace, namespace)
+	ctx = context.WithValue(ctx, ctxTrinoUIPrefix, gatewayBackendTrinoUIPath(Backend{Name: xtrinodeName, Namespace: namespace}))
 	r = r.WithContext(ctx)
 
 	// Forward request to coordinator using retry proxy (includes circuit breaker)
 	gs.retryProxy.ServeHTTP(wrapper, r)
+}
+
+func (gs *GatewayService) handleTrinoUIRequest(w http.ResponseWriter, r *http.Request) {
+	if isGatewayAdminUIRequest(r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+
+	if r.URL.Path == TrinoUIPath || r.URL.Path == TrinoUIPath+"/" {
+		if gs.ui.Enabled {
+			http.Redirect(w, r, GatewayUIRedirectURL, http.StatusTemporaryRedirect)
+			return
+		}
+		_, backend, ok := gs.defaultTrinoUIBackend()
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, gatewayBackendTrinoUIPath(backend), http.StatusTemporaryRedirect)
+		return
+	}
+
+	route, backend, targetPath, ok, ambiguous := gs.resolveTrinoUIBackend(r.URL.Path)
+	if ambiguous {
+		http.Error(w, "Backend name is ambiguous; use /ui/<namespace>/<backend>/", http.StatusBadRequest)
+		return
+	}
+	if !ok {
+		if isDefaultTrinoUIPath(r.URL.Path) {
+			var defaultOK bool
+			route, backend, defaultOK = gs.defaultTrinoUIBackend()
+			if !defaultOK {
+				http.NotFound(w, r)
+				return
+			}
+			targetPath = r.URL.Path
+		} else {
+			http.NotFound(w, r)
+			return
+		}
+	}
+
+	wrapper := &responseWriterWrapper{ResponseWriter: w, statusCode: http.StatusOK}
+	startTime := time.Now()
+	defer func() {
+		duration := time.Since(startTime).Seconds()
+		metrics.GatewayRequestDuration.WithLabelValues(route.RoutingGroup).Observe(duration)
+		metrics.GatewayRequestsTotal.WithLabelValues(route.RoutingGroup, strconv.Itoa(wrapper.statusCode)).Inc()
+		if wrapper.statusCode == http.StatusServiceUnavailable {
+			metrics.Gateway503Total.WithLabelValues(route.RoutingGroup).Inc()
+		}
+	}()
+
+	if !gs.isBackendSelectable(&backend) {
+		if backend.State == StatePaused || backend.State == StateResuming {
+			metrics.GatewayAutoResumeTotal.WithLabelValues(route.RoutingGroup).Inc()
+			gs.handleResumeViaAPI(wrapper, r, backend.Namespace, backend.Name, route.RoutingGroup)
+			return
+		}
+		http.Error(wrapper, "Backend is not available for Trino UI", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+	ctx = context.WithValue(ctx, ctxRoute, &route)
+	ctx = context.WithValue(ctx, ctxBackendURL, backend.CoordinatorURL)
+	ctx = context.WithValue(ctx, ctxXTrinodeName, backend.Name)
+	ctx = context.WithValue(ctx, ctxNamespace, backend.Namespace)
+	ctx = context.WithValue(ctx, ctxTargetPath, targetPath)
+	ctx = context.WithValue(ctx, ctxTrinoUIPrefix, gatewayBackendTrinoUIPath(backend))
+	r = r.WithContext(ctx)
+
+	gs.retryProxy.ServeHTTP(wrapper, r)
+}
+
+func (gs *GatewayService) defaultTrinoUIBackend() (RouteEntry, Backend, bool) {
+	routes := gs.uniqueRouteSnapshot()
+	for i := range routes {
+		if !routes[i].Default {
+			continue
+		}
+		if backend := gs.selectBackend(&routes[i]); backend != nil {
+			return routes[i], *backend, true
+		}
+		if backend := gs.pickResumeCandidate(&routes[i]); backend != nil {
+			return routes[i], *backend, true
+		}
+	}
+
+	type candidate struct {
+		route   RouteEntry
+		backend Backend
+	}
+	selectable := make(map[string]candidate)
+	for i := range routes {
+		for j := range routes[i].Backends {
+			backend := routes[i].Backends[j]
+			if !gs.isBackendSelectable(&backend) {
+				continue
+			}
+			selectable[backendIdentityKey(backend)] = candidate{route: routes[i], backend: backend}
+		}
+	}
+	if len(selectable) == 1 {
+		for _, candidate := range selectable {
+			return candidate.route, candidate.backend, true
+		}
+	}
+	if len(selectable) > 1 {
+		return RouteEntry{}, Backend{}, false
+	}
+
+	resumable := make(map[string]candidate)
+	for i := range routes {
+		for j := range routes[i].Backends {
+			backend := routes[i].Backends[j]
+			if !trinoUIResumeCandidate(backend) {
+				continue
+			}
+			resumable[backendIdentityKey(backend)] = candidate{route: routes[i], backend: backend}
+		}
+	}
+	if len(resumable) != 1 {
+		return RouteEntry{}, Backend{}, false
+	}
+	for _, candidate := range resumable {
+		return candidate.route, candidate.backend, true
+	}
+	return RouteEntry{}, Backend{}, false
+}
+
+func trinoUIResumeCandidate(backend Backend) bool {
+	if !backend.Active || backend.Name == "" || backend.Namespace == "" {
+		return false
+	}
+	_, ok := resumeStatePriority(backend.State)
+	return ok
+}
+
+func isDefaultTrinoUIPath(path string) bool {
+	trimmed := strings.TrimPrefix(path, TrinoUIPath+"/")
+	if trimmed == "" || trimmed == path {
+		return false
+	}
+	first, _, _ := strings.Cut(trimmed, "/")
+	first, err := url.PathUnescape(first)
+	if err != nil || first == "" {
+		return false
+	}
+	switch first {
+	case "assets", "vendor", "api", "login", "logout":
+		return true
+	}
+	return strings.HasSuffix(first, ".html") ||
+		strings.HasSuffix(first, ".css") ||
+		strings.HasSuffix(first, ".js") ||
+		strings.HasSuffix(first, ".ico")
+}
+
+func (gs *GatewayService) resolveTrinoUIBackend(path string) (RouteEntry, Backend, string, bool, bool) {
+	trimmed := strings.TrimPrefix(path, TrinoUIPath+"/")
+	if trimmed == "" || trimmed == path {
+		return RouteEntry{}, Backend{}, "", false, false
+	}
+
+	segments := strings.Split(trimmed, "/")
+	if len(segments) >= 2 {
+		namespace, namespaceOK := url.PathUnescape(segments[0])
+		name, nameOK := url.PathUnescape(segments[1])
+		if namespaceOK == nil && nameOK == nil && namespace != "" && name != "" {
+			route, backend, ok, _ := gs.findTrinoUIBackend(namespace, name)
+			if ok {
+				return route, backend, trinoUITargetPath(segments[2:]), true, false
+			}
+		}
+	}
+
+	name, err := url.PathUnescape(segments[0])
+	if err != nil || name == "" {
+		return RouteEntry{}, Backend{}, "", false, false
+	}
+	route, backend, ok, ambiguous := gs.findTrinoUIBackend("", name)
+	if !ok || ambiguous {
+		return RouteEntry{}, Backend{}, "", ok, ambiguous
+	}
+	return route, backend, trinoUITargetPath(segments[1:]), true, false
+}
+
+func (gs *GatewayService) findTrinoUIBackend(namespace, name string) (RouteEntry, Backend, bool, bool) {
+	routes := gs.uniqueRouteSnapshot()
+	type match struct {
+		route   RouteEntry
+		backend Backend
+	}
+	matches := make([]match, 0, 1)
+	seen := make(map[string]struct{})
+	for i := range routes {
+		for j := range routes[i].Backends {
+			backend := routes[i].Backends[j]
+			if backend.Name != name {
+				continue
+			}
+			if namespace != "" && backend.Namespace != namespace {
+				continue
+			}
+			key := backendIdentityKey(backend)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			matches = append(matches, match{route: routes[i], backend: backend})
+		}
+	}
+	if len(matches) == 0 {
+		return RouteEntry{}, Backend{}, false, false
+	}
+	if namespace == "" && len(matches) > 1 {
+		return RouteEntry{}, Backend{}, true, true
+	}
+	return matches[0].route, matches[0].backend, true, false
+}
+
+func trinoUITargetPath(segments []string) string {
+	if len(segments) == 0 || strings.Join(segments, "/") == "" {
+		return "/ui/"
+	}
+	return "/ui/" + strings.Join(segments, "/")
+}
+
+func backendIdentityKey(backend Backend) string {
+	return backend.Namespace + "\x00" + backend.Name + "\x00" + backend.CoordinatorURL
 }
 
 // director sets up the reverse proxy director function.
@@ -193,6 +427,8 @@ func (gs *GatewayService) director(req *http.Request) {
 	xtrinodeName, _ := req.Context().Value(ctxXTrinodeName).(string)
 	//nolint:errcheck // best-effort context value extraction; used for logging only
 	namespace, _ := req.Context().Value(ctxNamespace).(string)
+	//nolint:errcheck // best-effort context value extraction; empty string check below handles default path
+	targetPath, _ := req.Context().Value(ctxTargetPath).(string)
 
 	if route == nil || backendURL == "" {
 		return
@@ -215,7 +451,12 @@ func (gs *GatewayService) director(req *http.Request) {
 	// Set target URL
 	req.URL.Scheme = targetURL.Scheme
 	req.URL.Host = targetURL.Host
-	req.URL.Path = singleJoiningSlash(targetURL.Path, req.URL.Path)
+	requestPath := req.URL.Path
+	if targetPath != "" {
+		requestPath = targetPath
+		req.URL.RawPath = ""
+	}
+	req.URL.Path = singleJoiningSlash(targetURL.Path, requestPath)
 	req.Host = targetURL.Host // Important: set Host header for backend
 
 	// Set X-Forwarded headers with original client info (only if not already set)
@@ -240,6 +481,7 @@ func (gs *GatewayService) director(req *http.Request) {
 // This function is called for each response from the backend coordinator.
 // It implements:
 //   - Sticky routing: Extracts query ID from JSON response and caches it for subsequent requests
+//   - Trino UI link rewriting: Converts JSON infoUri and UI redirects to backend-specific paths
 //   - Circuit breaker: Records success/failure based on HTTP status code
 //   - 503 handling: Adds Retry-After headers without triggering resume
 //
@@ -248,10 +490,36 @@ func (gs *GatewayService) director(req *http.Request) {
 //
 // Returns an error if response modification fails (should not happen in normal operation).
 func (gs *GatewayService) modifyResponse(resp *http.Response) error {
+	rewriteTrinoUILocation(resp)
+	rewriteTrinoUIInfoURI(resp)
 	gs.handleStickyRoutingFromResponse(resp)
 	gs.handle503Response(resp)
 	gs.recordCircuitBreakerState(resp)
 	return nil
+}
+
+func rewriteTrinoUILocation(resp *http.Response) {
+	prefix, _ := resp.Request.Context().Value(ctxTrinoUIPrefix).(string)
+	if prefix == "" {
+		return
+	}
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return
+	}
+	parsed, err := url.Parse(location)
+	if err != nil || (parsed.Path != TrinoUIPath && !strings.HasPrefix(parsed.Path, TrinoUIPath+"/")) {
+		return
+	}
+
+	suffix := strings.TrimPrefix(parsed.Path, TrinoUIPath)
+	parsed.Path = strings.TrimRight(prefix, "/") + suffix
+	parsed.RawPath = ""
+	parsed.Scheme = ""
+	parsed.Host = ""
+	parsed.User = nil
+	parsed.Opaque = ""
+	resp.Header.Set("Location", parsed.String())
 }
 
 // handleStickyRoutingFromResponse extracts query ID from response and caches it
@@ -260,8 +528,7 @@ func (gs *GatewayService) handleStickyRoutingFromResponse(resp *http.Response) {
 		return
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if contentType != "application/json" && !strings.HasPrefix(contentType, "application/json;") {
+	if !isJSONContentType(resp.Header.Get("Content-Type")) {
 		return
 	}
 
