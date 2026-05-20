@@ -6,6 +6,9 @@ image:
 gateway:
   apiServerURL: "http://xtrinode-api-server.xtrinode-system.svc.cluster.local:8081/api/v1"
   logLevel: "info"
+  ui:
+    enabled: true
+    requireAuth: false
   apiServerAuth:
     enabled: true
     token: "local-dev-api-server-resume-token"
