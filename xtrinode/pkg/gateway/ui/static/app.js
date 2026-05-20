@@ -32,6 +32,7 @@ const elements = {
     routes: document.getElementById("metric-routes"),
     backends: document.getElementById("metric-backends"),
     running: document.getElementById("metric-running"),
+    draining: document.getElementById("metric-draining"),
     paused: document.getElementById("metric-paused"),
     unhealthy: document.getElementById("metric-unhealthy"),
     circuits: document.getElementById("metric-circuits")
@@ -71,6 +72,7 @@ function render() {
   elements.metrics.routes.textContent = summary.routes || 0;
   elements.metrics.backends.textContent = summary.backends || 0;
   elements.metrics.running.textContent = summary.runningBackends || 0;
+  elements.metrics.draining.textContent = summary.drainingBackends || 0;
   elements.metrics.paused.textContent = summary.pausedBackends || 0;
   elements.metrics.unhealthy.textContent = (summary.unhealthyBackends || 0) + (summary.sleepingBackends || 0);
   elements.metrics.circuits.textContent = summary.openCircuitBackends || 0;
@@ -196,7 +198,8 @@ function renderDrawer(row) {
     ["Selectable for new queries", selectabilityLabel(backend)],
     ["Tier", backend.tier || "not set"],
     ["Capacity units", backend.capacityUnits || "not set"],
-    ["Drain until", backend.drainUntil || "not set"]
+    ["Drain until", formatOptionalDrainUntil(backend.drainUntil)],
+    ["Drain ETA", formatDrainEta(backend.drainUntil)]
   ]);
   renderFieldList(elements.drawerLifecycle, [
     ["Auto suspend after", lifecycle.autoSuspendAfter || "not set"],
@@ -514,6 +517,10 @@ function formatOptionalDate(value) {
   return value ? formatDate(value) : "never";
 }
 
+function formatOptionalDrainUntil(value) {
+  return value ? formatDate(value) : "not set";
+}
+
 function formatSuspendEta(value) {
   if (!value) return "not scheduled";
   const suspendAt = new Date(value);
@@ -522,6 +529,16 @@ function formatSuspendEta(value) {
   if (!Number.isFinite(remainingMillis)) return formatDate(value);
   if (remainingMillis <= 0) return `${formatDate(value)} (due)`;
   return `${formatDate(value)} (${formatDuration(remainingMillis)} remaining)`;
+}
+
+function formatDrainEta(value) {
+  if (!value) return "not draining";
+  const drainUntil = new Date(value);
+  const generatedAt = state.data?.generatedAt ? new Date(state.data.generatedAt) : new Date();
+  const remainingMillis = drainUntil.getTime() - generatedAt.getTime();
+  if (!Number.isFinite(remainingMillis)) return formatDate(value);
+  if (remainingMillis <= 0) return "fallback window elapsed";
+  return `${formatDuration(remainingMillis)} remaining`;
 }
 
 function formatDuration(milliseconds) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -47,6 +48,8 @@ type operatorOptions struct {
 	showVersion                    bool
 	maxConcurrentReconciles        int
 	maxConcurrentReconcilesCatalog int
+	gatewayDrainDuration           time.Duration
+	gatewayDrainRequeueInterval    time.Duration
 	webhookEnabled                 bool
 	webhookPort                    int
 	webhookCertDir                 string
@@ -57,6 +60,8 @@ func defaultOperatorOptions() operatorOptions {
 		enableLeaderElection:           config.LeaderElectionEnabled,
 		maxConcurrentReconciles:        config.MaxConcurrentReconciles,
 		maxConcurrentReconcilesCatalog: config.MaxConcurrentReconcilesCatalog,
+		gatewayDrainDuration:           config.GatewayDrainDuration,
+		gatewayDrainRequeueInterval:    config.GatewayDrainRequeueInterval,
 		webhookEnabled:                 true,
 		webhookPort:                    webhook.DefaultPort,
 	}
@@ -76,6 +81,10 @@ func parseOperatorOptions(args []string, output io.Writer) (operatorOptions, zap
 		"Maximum number of concurrent XTrinode reconciliations.")
 	fs.IntVar(&options.maxConcurrentReconcilesCatalog, "max-concurrent-reconciles-catalog", options.maxConcurrentReconcilesCatalog,
 		"Maximum number of concurrent XTrinodeCatalog reconciliations.")
+	fs.DurationVar(&options.gatewayDrainDuration, "gateway-drain-duration", options.gatewayDrainDuration,
+		"Maximum gateway route drain window before elapsed-time fallback is allowed.")
+	fs.DurationVar(&options.gatewayDrainRequeueInterval, "gateway-drain-requeue-interval", options.gatewayDrainRequeueInterval,
+		"Interval for query-aware gateway drain rechecks.")
 	fs.BoolVar(&options.webhookEnabled, "webhook-enabled", options.webhookEnabled,
 		"Enable admission webhooks for XTrinode resources.")
 	fs.IntVar(&options.webhookPort, "webhook-port", options.webhookPort,
@@ -151,7 +160,7 @@ func run() int {
 
 	// Create all service dependencies (injected)
 	nodePoolAdapter := controllers.NewNodePoolAdapter(mgr.GetClient(), setupLog)
-	gatewayService := controllers.NewGatewayService(mgr.GetClient())
+	gatewayService := controllers.NewGatewayServiceWithDrainDuration(mgr.GetClient(), options.gatewayDrainDuration)
 	kedaService := controllers.NewKEDAService(mgr.GetClient(), mgr.GetScheme())
 	catalogService := controllers.NewCatalogService(mgr.GetClient())
 	trinoResourcesService := controllers.NewTrinoResourcesService(mgr.GetClient(), mgr.GetScheme(), version)
@@ -175,6 +184,8 @@ func run() int {
 		AutosuspendService:      autosuspendService,
 		GracefulShutdownService: gracefulShutdownService,
 		OperatorVersion:         version,
+		DrainDuration:           options.gatewayDrainDuration,
+		DrainRequeueInterval:    options.gatewayDrainRequeueInterval,
 	}
 
 	setupLog.Info("Controller initialized",
@@ -182,6 +193,8 @@ func run() int {
 		"leaderElectionNamespace", operatorNamespace,
 		"maxConcurrentReconciles", options.maxConcurrentReconciles,
 		"maxConcurrentReconcilesCatalog", options.maxConcurrentReconcilesCatalog,
+		"gatewayDrainDuration", options.gatewayDrainDuration,
+		"gatewayDrainRequeueInterval", options.gatewayDrainRequeueInterval,
 		"webhookEnabled", options.webhookEnabled,
 		"webhookPort", options.webhookPort,
 		"webhookCertDir", options.webhookCertDir,

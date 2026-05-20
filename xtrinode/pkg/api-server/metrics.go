@@ -58,7 +58,7 @@ var (
 			Name: "xtrinode_api_k8s_lease_acquired_total",
 			Help: "Total number of K8s Lease acquisitions by key type",
 		},
-		[]string{"key_type"}, // runtime, pool
+		[]string{"key_type"}, // runtime, pool, suspend
 	)
 
 	// k8sLeaseGatedTotal tracks requests gated by K8s Lease
@@ -67,7 +67,16 @@ var (
 			Name: "xtrinode_api_k8s_lease_gated_total",
 			Help: "Total number of requests gated by active K8s Lease",
 		},
-		[]string{"key_type"}, // runtime, pool
+		[]string{"key_type"}, // runtime, pool, suspend
+	)
+
+	// k8sLeaseErrorsTotal tracks K8s Lease acquisition errors
+	k8sLeaseErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "xtrinode_api_k8s_lease_errors_total",
+			Help: "Total number of K8s Lease errors by key type",
+		},
+		[]string{"key_type"}, // runtime, pool, suspend
 	)
 )
 
@@ -104,4 +113,9 @@ func recordK8sLeaseAcquired(keyType string) {
 // recordK8sLeaseGated records a request gated by K8s Lease
 func recordK8sLeaseGated(keyType string) {
 	k8sLeaseGatedTotal.WithLabelValues(keyType).Inc()
+}
+
+// recordK8sLeaseError records a K8s Lease acquisition error
+func recordK8sLeaseError(keyType string) {
+	k8sLeaseErrorsTotal.WithLabelValues(keyType).Inc()
 }

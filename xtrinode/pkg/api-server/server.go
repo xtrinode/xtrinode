@@ -487,6 +487,7 @@ func (s *Server) resumeRuntime(w http.ResponseWriter, r *http.Request, namespace
 	if err != nil {
 		result = "error"
 		recordResumeRequest(result)
+		recordK8sLeaseError(string(keyType))
 		s.log.Error(err, "Failed to acquire lease", "namespace", namespace, "name", name, "key", key)
 		s.writeError(w, http.StatusInternalServerError, "Failed to acquire lease", "LEASE_ERROR")
 		return
@@ -631,6 +632,7 @@ func (s *Server) suspendRuntime(w http.ResponseWriter, r *http.Request, namespac
 	if err != nil {
 		result = "error"
 		recordSuspendRequest(result)
+		recordK8sLeaseError(string(keyType))
 		s.log.Error(err, "Failed to acquire lease", "namespace", namespace, "name", name, "key", key)
 		s.writeError(w, http.StatusInternalServerError, "Failed to acquire lease", "LEASE_ERROR")
 		return

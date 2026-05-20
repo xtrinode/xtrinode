@@ -285,7 +285,19 @@ xtrinode-gateway:
 The Gateway can serve an embedded read-only admin UI at `/ui/admin` and a dynamic status API at
 `/ui/admin/api/gateway/status`. This UI shows the Gateway's current routing view, backend
 lifecycle states, auto-suspend metadata, health check state, circuit-breaker state, and route reload
-status. Trino's own web UI is exposed per backend at `/ui/<namespace>/<backend>/`.
+status. The summary includes the number of draining backends, and backend details show the drain
+deadline and remaining fallback time. Trino's own web UI is exposed per backend at
+`/ui/<namespace>/<backend>/`.
+
+The operator's deletion drain timing is configurable through the operator chart values:
+
+```yaml
+xtrinode-operator:
+  operator:
+    lifecycle:
+      drainDuration: "5m"
+      drainRequeueInterval: "30s"
+```
 
 The UI is disabled by default. If it is enabled behind public ingress, the chart requires Gateway
 auth and TLS:

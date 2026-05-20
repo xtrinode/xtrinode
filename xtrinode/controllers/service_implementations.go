@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -10,6 +11,7 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/autosuspend"
 	"github.com/xtrinode/xtrinode/internal/catalog"
+	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/gracefulshutdown"
 	"github.com/xtrinode/xtrinode/internal/keda"
 	"github.com/xtrinode/xtrinode/internal/trino/resources"
@@ -18,12 +20,21 @@ import (
 
 // GatewayService wraps the gateway package functions
 type GatewayService struct {
-	client client.Client
+	client        client.Client
+	drainDuration time.Duration
 }
 
 // NewGatewayService creates a new GatewayService
 func NewGatewayService(cli client.Client) GatewayServiceInterface {
-	return &GatewayService{client: cli}
+	return NewGatewayServiceWithDrainDuration(cli, config.GatewayDrainDuration)
+}
+
+// NewGatewayServiceWithDrainDuration creates a GatewayService with explicit route-drain timing.
+func NewGatewayServiceWithDrainDuration(cli client.Client, drainDuration time.Duration) GatewayServiceInterface {
+	if drainDuration <= 0 {
+		drainDuration = config.GatewayDrainDuration
+	}
+	return &GatewayService{client: cli, drainDuration: drainDuration}
 }
 
 // RegisterRoute registers a gateway route
@@ -33,7 +44,7 @@ func (g *GatewayService) RegisterRoute(ctx context.Context, xtrinode *analyticsv
 
 // DrainRoute sets a backend to DRAINING state for graceful removal
 func (g *GatewayService) DrainRoute(ctx context.Context, xtrinode *analyticsv1.XTrinode) error {
-	return gateway.DrainRoute(ctx, g.client, xtrinode)
+	return gateway.DrainRouteWithDuration(ctx, g.client, xtrinode, g.drainDuration)
 }
 
 // DeregisterRoute deregisters a gateway route
