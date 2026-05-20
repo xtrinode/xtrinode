@@ -152,7 +152,7 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 	return ctrl.Result{}, nil
 }
 
-func (r *XTrinodeReconciler) queryAwareDrainComplete(ctx context.Context, xtrinode *analyticsv1.XTrinode, drainStartedAt string, log logr.Logger) (bool, string, time.Duration) {
+func (r *XTrinodeReconciler) queryAwareDrainComplete(ctx context.Context, xtrinode *analyticsv1.XTrinode, drainStartedAt string, log logr.Logger) (complete bool, result string, elapsed time.Duration) {
 	drainDuration := r.drainDuration()
 	drainStartTime, err := time.Parse(time.RFC3339, drainStartedAt)
 	if err != nil {
@@ -161,7 +161,7 @@ func (r *XTrinodeReconciler) queryAwareDrainComplete(ctx context.Context, xtrino
 		drainStartTime = time.Now().Add(-drainDuration)
 	}
 
-	elapsed := time.Since(drainStartTime)
+	elapsed = time.Since(drainStartTime)
 	if elapsed < 0 {
 		elapsed = 0
 	}
