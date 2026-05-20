@@ -8,6 +8,15 @@ This chart owns the GCP/local observability stack for XTrinode:
 The chart intentionally disables generic cluster infrastructure monitors by default (`nodeExporter`,
 kubelet, API server, scheduler, etc.) so it can coexist with an existing cluster monitoring stack.
 XTrinode charts render their own `ServiceMonitor` resources when Prometheus is enabled.
+This chart also renders an optional Grafana dashboard ConfigMap for lifecycle drain state and API
+server Lease acquired/gated/error outcomes. It is enabled by default with the
+`grafana_dashboard=1` label used by the Grafana sidecar.
+
+The dashboard can be disabled with:
+
+```sh
+--set dashboards.enabled=false
+```
 
 Install directly:
 

@@ -57,6 +57,31 @@ var (
 		[]string{"namespace", "name"},
 	)
 
+	XTrinodeDrainActive = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "xtrinode_drain_active",
+			Help: "Whether a XTrinode deletion drain is active (1=active, 0=inactive)",
+		},
+		[]string{"namespace", "name"},
+	)
+
+	XTrinodeDrainDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "xtrinode_drain_duration_seconds",
+			Help:    "Duration of XTrinode deletion drains in seconds",
+			Buckets: []float64{1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600},
+		},
+		[]string{"namespace", "name", "result"},
+	)
+
+	XTrinodeDrainFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "xtrinode_drain_failures_total",
+			Help: "Total number of XTrinode drain failures by reason",
+		},
+		[]string{"namespace", "name", "reason"},
+	)
+
 	// Scaling metrics
 	WorkersCurrent = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -274,6 +299,9 @@ func init() {
 		XTrinodeSuspended,
 		XTrinodeResumed,
 		XTrinodeDeleted,
+		XTrinodeDrainActive,
+		XTrinodeDrainDuration,
+		XTrinodeDrainFailures,
 		// Scaling metrics
 		WorkersCurrent,
 		WorkersDesired,

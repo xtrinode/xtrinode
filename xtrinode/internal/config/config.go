@@ -166,6 +166,13 @@ const (
 	// before marking an XTrinode Ready and exposing it as RUNNING through the gateway.
 	RuntimeReadinessRequeueInterval = 5 * time.Second
 
+	// GatewayDrainDuration is the maximum route-drain window used as a fallback
+	// when query-aware drain completion cannot be verified from the coordinator.
+	GatewayDrainDuration = 5 * time.Minute
+
+	// GatewayDrainRequeueInterval is how often the operator rechecks route drain completion.
+	GatewayDrainRequeueInterval = 30 * time.Second
+
 	// Redis sticky routing configuration
 	// GatewayRedisEnabled enables Redis for distributed sticky routing
 	GatewayRedisEnabled = false
@@ -501,6 +508,15 @@ const (
 
 	// SuspendLeaseUntilAnnotation stores RFC3339 timestamp until which suspend operation is leased
 	SuspendLeaseUntilAnnotation = "xtrinode.analytics.xtrinode.io/suspend-lease-until"
+
+	// DrainStartedAtAnnotation stores when a gateway route drain started during finalization.
+	DrainStartedAtAnnotation = "xtrinode.analytics.xtrinode.io/drain-started-at"
+
+	// DrainCompletedAtAnnotation stores when query-aware drain completion was observed.
+	DrainCompletedAtAnnotation = "xtrinode.analytics.xtrinode.io/drain-completed-at"
+
+	// DrainResultAnnotation stores the completion path for the deletion drain.
+	DrainResultAnnotation = "xtrinode.analytics.xtrinode.io/drain-result"
 )
 
 // LabelKeys defines label keys used for resource organization

@@ -27,6 +27,9 @@ func TestSharedCollectorsRegistered(t *testing.T) {
 		"xtrinode_suspended_total",
 		"xtrinode_resumed_total",
 		"xtrinode_deleted_total",
+		"xtrinode_drain_active",
+		"xtrinode_drain_duration_seconds",
+		"xtrinode_drain_failures_total",
 		"xtrinode_workers_current",
 		"xtrinode_workers_desired",
 		"xtrinode_scale_up_total",
@@ -79,6 +82,9 @@ func seedSharedCollectors() {
 	XTrinodeSuspended.WithLabelValues(namespace, xtrinodeName).Add(0)
 	XTrinodeResumed.WithLabelValues(namespace, xtrinodeName).Add(0)
 	XTrinodeDeleted.WithLabelValues(namespace, xtrinodeName).Add(0)
+	XTrinodeDrainActive.WithLabelValues(namespace, xtrinodeName).Set(0)
+	XTrinodeDrainDuration.WithLabelValues(namespace, xtrinodeName, "query_complete").Observe(0)
+	XTrinodeDrainFailures.WithLabelValues(namespace, xtrinodeName, "query_check_error").Add(0)
 
 	WorkersCurrent.WithLabelValues(namespace, xtrinodeName).Set(0)
 	WorkersDesired.WithLabelValues(namespace, xtrinodeName).Set(0)

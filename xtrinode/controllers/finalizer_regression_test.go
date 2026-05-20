@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
+	"github.com/xtrinode/xtrinode/internal/config"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -80,7 +81,7 @@ func TestFinalize_DrainFailureDoesNotMarkDrainStarted(t *testing.T) {
 
 	var updated analyticsv1.XTrinode
 	require.NoError(t, cli.Get(ctx, key, &updated))
-	assert.Empty(t, updated.Annotations["xtrinode.analytics.xtrinode.io/drain-started-at"])
+	assert.Empty(t, updated.Annotations[config.DrainStartedAtAnnotation])
 	assert.Contains(t, updated.Finalizers, FinalizerName)
 }
 
@@ -94,7 +95,7 @@ func TestFinalize_DeregisterFailureKeepsFinalizer(t *testing.T) {
 			Namespace:  key.Namespace,
 			Finalizers: []string{FinalizerName},
 			Annotations: map[string]string{
-				"xtrinode.analytics.xtrinode.io/drain-started-at": time.Now().Add(-6 * time.Minute).Format(time.RFC3339),
+				config.DrainStartedAtAnnotation: time.Now().Add(-6 * time.Minute).Format(time.RFC3339),
 			},
 		},
 		Spec: analyticsv1.XTrinodeSpec{
@@ -119,4 +120,253 @@ func TestFinalize_DeregisterFailureKeepsFinalizer(t *testing.T) {
 	var updated analyticsv1.XTrinode
 	require.NoError(t, cli.Get(ctx, key, &updated))
 	assert.Contains(t, updated.Finalizers, FinalizerName)
+}
+
+func TestFinalize_DrainCompletionAnnotationDoesNotSkipQueryRecheck(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	key := types.NamespacedName{Name: "runtime", Namespace: "team-a"}
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       key.Name,
+			Namespace:  key.Namespace,
+			Finalizers: []string{FinalizerName},
+			Annotations: map[string]string{
+				config.DrainStartedAtAnnotation:   time.Now().Add(-time.Minute).Format(time.RFC3339),
+				config.DrainCompletedAtAnnotation: time.Now().Format(time.RFC3339),
+				config.DrainResultAnnotation:      "query_complete",
+			},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme, xtrinode)
+	gateway := &gatewayServiceTestDouble{}
+	graceful := &gracefulShutdownServiceTestDouble{checkErr: errors.New("coordinator query endpoint unavailable")}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+	reconciler.GracefulShutdownService = graceful
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.NoError(t, err)
+	assert.Equal(t, config.GatewayDrainRequeueInterval, result.RequeueAfter)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 0, graceful.waitCalls)
+	assert.Equal(t, 0, gateway.deregisterCalls)
+
+	var updated analyticsv1.XTrinode
+	require.NoError(t, cli.Get(ctx, key, &updated))
+	assertDrainCompletionAnnotations(t, &updated, "query_complete")
+	assert.Contains(t, updated.Finalizers, FinalizerName)
+}
+
+func TestFinalize_QueryAwareDrainCompletesBeforeFallbackWindow(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	key := types.NamespacedName{Name: "runtime", Namespace: "team-a"}
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       key.Name,
+			Namespace:  key.Namespace,
+			Finalizers: []string{FinalizerName},
+			Annotations: map[string]string{
+				config.DrainStartedAtAnnotation: time.Now().Add(-time.Minute).Format(time.RFC3339),
+			},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme, xtrinode)
+	gateway := &gatewayServiceTestDouble{}
+	graceful := &gracefulShutdownServiceTestDouble{safeToScaleDown: true}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+	reconciler.GracefulShutdownService = graceful
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.NoError(t, err)
+	assert.Zero(t, result.RequeueAfter)
+	assert.Equal(t, 0, gateway.drainCalls)
+	assert.Equal(t, 1, gateway.deregisterCalls)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 1, graceful.waitCalls)
+
+	var updated analyticsv1.XTrinode
+	require.NoError(t, cli.Get(ctx, key, &updated))
+	assertDrainCompletionAnnotations(t, &updated, "query_complete")
+	assert.NotContains(t, updated.Finalizers, FinalizerName)
+}
+
+func TestFinalize_QueryAwareDrainWaitsForActiveQueries(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "runtime",
+			Namespace:  "team-a",
+			Finalizers: []string{FinalizerName},
+			Annotations: map[string]string{
+				config.DrainStartedAtAnnotation: time.Now().Add(-time.Minute).Format(time.RFC3339),
+			},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme, xtrinode)
+	gateway := &gatewayServiceTestDouble{}
+	graceful := &gracefulShutdownServiceTestDouble{safeToScaleDown: false}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+	reconciler.GracefulShutdownService = graceful
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.NoError(t, err)
+	assert.Equal(t, config.GatewayDrainRequeueInterval, result.RequeueAfter)
+	assert.Equal(t, 0, gateway.deregisterCalls)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 0, graceful.waitCalls)
+}
+
+func TestFinalize_DrainCompletionNotFoundIsTreatedAsAlreadyFinalized(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "runtime",
+			Namespace:  "team-a",
+			Finalizers: []string{FinalizerName},
+			Annotations: map[string]string{
+				config.DrainStartedAtAnnotation: time.Now().Add(-time.Minute).Format(time.RFC3339),
+			},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme)
+	gateway := &gatewayServiceTestDouble{}
+	graceful := &gracefulShutdownServiceTestDouble{safeToScaleDown: true}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+	reconciler.GracefulShutdownService = graceful
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.NoError(t, err)
+	assert.Zero(t, result.RequeueAfter)
+	assert.Equal(t, 0, gateway.deregisterCalls)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 0, graceful.waitCalls)
+}
+
+func TestFinalize_QueryCheckErrorUsesTimeFallbackAfterDrainWindow(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	key := types.NamespacedName{Name: "runtime", Namespace: "team-a"}
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       key.Name,
+			Namespace:  key.Namespace,
+			Finalizers: []string{FinalizerName},
+			Annotations: map[string]string{
+				config.DrainStartedAtAnnotation: time.Now().Add(-config.GatewayDrainDuration - time.Minute).Format(time.RFC3339),
+			},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme, xtrinode)
+	gateway := &gatewayServiceTestDouble{}
+	graceful := &gracefulShutdownServiceTestDouble{checkErr: errors.New("coordinator query endpoint unavailable")}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+	reconciler.GracefulShutdownService = graceful
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.NoError(t, err)
+	assert.Zero(t, result.RequeueAfter)
+	assert.Equal(t, 1, gateway.deregisterCalls)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 1, graceful.waitCalls)
+
+	var updated analyticsv1.XTrinode
+	require.NoError(t, cli.Get(ctx, key, &updated))
+	assertDrainCompletionAnnotations(t, &updated, "time_fallback")
+}
+
+func TestFinalize_QueryCheckErrorWaitsBeforeFallbackWindow(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "runtime",
+			Namespace:  "team-a",
+			Finalizers: []string{FinalizerName},
+			Annotations: map[string]string{
+				config.DrainStartedAtAnnotation: time.Now().Add(-time.Minute).Format(time.RFC3339),
+			},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme, xtrinode)
+	gateway := &gatewayServiceTestDouble{}
+	graceful := &gracefulShutdownServiceTestDouble{checkErr: errors.New("coordinator query endpoint unavailable")}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+	reconciler.GracefulShutdownService = graceful
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.NoError(t, err)
+	assert.Equal(t, config.GatewayDrainRequeueInterval, result.RequeueAfter)
+	assert.Equal(t, 0, gateway.deregisterCalls)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 0, graceful.waitCalls)
+}
+
+func assertDrainCompletionAnnotations(t *testing.T, xtrinode *analyticsv1.XTrinode, expectedResult string) {
+	t.Helper()
+	require.NotNil(t, xtrinode.Annotations)
+	completedAt := xtrinode.Annotations[config.DrainCompletedAtAnnotation]
+	require.NotEmpty(t, completedAt)
+	_, err := time.Parse(time.RFC3339, completedAt)
+	require.NoError(t, err)
+	assert.Equal(t, expectedResult, xtrinode.Annotations[config.DrainResultAnnotation])
+}
+
+func TestFinalize_QueryCheckErrorUsesCustomDrainWindow(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "runtime",
+			Namespace:  "team-a",
+			Finalizers: []string{FinalizerName},
+			Annotations: map[string]string{
+				config.DrainStartedAtAnnotation: time.Now().Add(-6 * time.Minute).Format(time.RFC3339),
+			},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+	}
+	cli := newTestClient(scheme, xtrinode)
+	gateway := &gatewayServiceTestDouble{}
+	graceful := &gracefulShutdownServiceTestDouble{checkErr: errors.New("coordinator query endpoint unavailable")}
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.GatewayService = gateway
+	reconciler.GracefulShutdownService = graceful
+	reconciler.DrainDuration = 10 * time.Minute
+	reconciler.DrainRequeueInterval = 7 * time.Second
+
+	result, err := reconciler.finalize(ctx, xtrinode)
+	require.NoError(t, err)
+	assert.Equal(t, 7*time.Second, result.RequeueAfter)
+	assert.Equal(t, 0, gateway.deregisterCalls)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 0, graceful.waitCalls)
 }

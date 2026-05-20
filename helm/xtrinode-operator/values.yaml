@@ -139,5 +139,12 @@ operator:
   gateway:
     baseURL: "http://xtrinode-gateway.xtrinode-gateway.svc.cluster.local:8080"
 
+  # Lifecycle drain configuration
+  lifecycle:
+    # Maximum route-drain window before elapsed-time fallback is allowed.
+    drainDuration: "5m"
+    # Recheck interval while waiting for active Trino queries to drain.
+    drainRequeueInterval: "30s"
+
   # CAPI provider (azure, aws, gcp)
   capiProvider: "azure"

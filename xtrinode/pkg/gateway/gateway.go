@@ -193,10 +193,14 @@ func RegisterRoute(ctx context.Context, cli client.Client, xtrinode *analyticsv1
 //
 // Drain policy:
 // - Sets State = DRAINING
-// - Sets DrainUntil = now + 5 minutes (configurable)
+// - Sets DrainUntil = now + configured drain duration
 // - Gateway will reject NEW queries but allow sticky queries
 // - Operator should wait for drain condition before calling DeregisterRoute
 func DrainRoute(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XTrinode) error {
+	return DrainRouteWithDuration(ctx, cli, xtrinode, config.GatewayDrainDuration)
+}
+
+func DrainRouteWithDuration(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XTrinode, drainDuration time.Duration) error {
 	// Get the gateway ConfigMap (read-only, don't create if missing)
 	configMap, err := getConfigMap(ctx, cli, GatewayConfigMapName, GatewayConfigMapNamespace)
 	if err != nil {
@@ -222,7 +226,7 @@ func DrainRoute(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XT
 				return fmt.Errorf("cannot update routes due to parse error: %w", err)
 			}
 			// Set backend to DRAINING state with drain timestamp anywhere it exists.
-			routes, changed := setBackendDrainingAllRoutes(routes, xtrinode.Name, xtrinode.Namespace)
+			routes, changed := setBackendDrainingAllRoutes(routes, xtrinode.Name, xtrinode.Namespace, drainDuration)
 			if !changed {
 				return nil
 			}
@@ -341,8 +345,11 @@ func computeBackendState(xtrinode *analyticsv1.XTrinode) BackendState {
 	}
 }
 
-func setBackendDrainingAllRoutes(routes []RouteEntry, backendName, backendNamespace string) ([]RouteEntry, bool) {
-	drainUntil := time.Now().Add(5 * time.Minute).Format(time.RFC3339)
+func setBackendDrainingAllRoutes(routes []RouteEntry, backendName, backendNamespace string, drainDuration time.Duration) ([]RouteEntry, bool) {
+	if drainDuration <= 0 {
+		drainDuration = config.GatewayDrainDuration
+	}
+	drainUntil := time.Now().Add(drainDuration).Format(time.RFC3339)
 	changed := false
 	for i := range routes {
 		for j := range routes[i].Backends {

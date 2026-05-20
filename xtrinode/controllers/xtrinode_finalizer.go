@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -15,6 +16,7 @@ import (
 	"github.com/xtrinode/xtrinode/internal/events"
 	"github.com/xtrinode/xtrinode/internal/external"
 	"github.com/xtrinode/xtrinode/internal/retry"
+	"github.com/xtrinode/xtrinode/pkg/metrics"
 )
 
 // ensureFinalizer ensures the finalizer is present on the XTrinode
@@ -54,7 +56,7 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 	if xtrinode.Annotations == nil {
 		xtrinode.Annotations = make(map[string]string)
 	}
-	drainStartedAt, drainStarted := xtrinode.Annotations["xtrinode.analytics.xtrinode.io/drain-started-at"]
+	drainStartedAt, drainStarted := xtrinode.Annotations[config.DrainStartedAtAnnotation]
 
 	if !drainStarted {
 		// First time in finalizer - initiate drain
@@ -64,6 +66,7 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 		}); err != nil {
 			log.Error(err, "failed to drain gateway route")
 			r.EventRecorder.Warningf(xtrinode, events.ReasonDrainStarted, "Failed to start gateway route drain: %v", err)
+			metrics.XTrinodeDrainFailures.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "route_update_error").Inc()
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, fmt.Errorf("failed to start gateway route drain: %w", err)
 		}
 
@@ -75,48 +78,46 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 				if xtrinode.Annotations == nil {
 					xtrinode.Annotations = make(map[string]string)
 				}
-				xtrinode.Annotations["xtrinode.analytics.xtrinode.io/drain-started-at"] = time.Now().Format(time.RFC3339)
+				xtrinode.Annotations[config.DrainStartedAtAnnotation] = time.Now().Format(time.RFC3339)
 				return r.Update(ctx, xtrinode)
 			},
 		)
 		if err != nil {
 			log.Error(err, "failed to update drain annotation")
+			metrics.XTrinodeDrainFailures.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "annotation_update_error").Inc()
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 		}
+		metrics.XTrinodeDrainActive.WithLabelValues(xtrinode.Namespace, xtrinode.Name).Set(1)
 		log.Info("Backend set to DRAINING, waiting for drain condition", "xtrinode", xtrinode.Name)
-		r.EventRecorder.Normal(xtrinode, events.ReasonDrainStarted, "Gateway route set to DRAINING state, waiting 5 minutes for active connections to complete")
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		r.EventRecorder.Normal(xtrinode, events.ReasonDrainStarted, "Gateway route set to DRAINING state, waiting for active queries to complete")
+		return ctrl.Result{RequeueAfter: r.drainRequeueInterval()}, nil
 	}
 
-	// Wait for the drain period to complete.
-	drainStartTime, err := time.Parse(time.RFC3339, drainStartedAt)
+	metrics.XTrinodeDrainActive.WithLabelValues(xtrinode.Namespace, xtrinode.Name).Set(1)
+	drainComplete, drainResult, drainElapsed := r.queryAwareDrainComplete(ctx, xtrinode, drainStartedAt, log)
+	if !drainComplete {
+		return ctrl.Result{RequeueAfter: r.drainRequeueInterval()}, nil
+	}
+
+	drainMarked, err := r.markDrainComplete(ctx, xtrinode, drainResult, log)
 	if err != nil {
-		log.Error(err, "failed to parse drain start time, proceeding with deletion")
-	} else {
-		elapsed := time.Since(drainStartTime)
-		drainDuration := 5 * time.Minute // Match DrainRoute policy
-		if elapsed < drainDuration {
-			remaining := drainDuration - elapsed
-			log.Info("Drain condition not met, waiting",
+		if k8serrors.IsNotFound(err) {
+			log.Info("XTrinode no longer exists while marking drain completion, treating finalization as complete",
 				"xtrinode", xtrinode.Name,
-				"elapsed", elapsed,
-				"remaining", remaining)
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+				"result", drainResult)
+			metrics.XTrinodeDrainActive.WithLabelValues(xtrinode.Namespace, xtrinode.Name).Set(0)
+			return ctrl.Result{}, nil
 		}
+		log.Error(err, "failed to update drain completion annotation")
+		metrics.XTrinodeDrainFailures.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "completion_annotation_update_error").Inc()
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
 	}
-
-	log.Info("Drain condition met, proceeding with deletion", "xtrinode", xtrinode.Name)
-	r.EventRecorder.Normal(xtrinode, events.ReasonDrainCompleted, "Drain period completed, proceeding with resource cleanup")
-
-	// Check if queries are running before deletion.
-	safeToDelete, err := r.GracefulShutdownService.CheckQueriesBeforeScaleDown(ctx, xtrinode, log)
-	if err != nil {
-		log.Error(err, "failed to check queries before deletion")
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
-	}
-	if !safeToDelete {
-		log.Info("Queries still running, waiting before deletion", "xtrinode", xtrinode.Name)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	if drainMarked {
+		log.Info("Drain condition met, proceeding with deletion", "xtrinode", xtrinode.Name, "result", drainResult, "elapsed", drainElapsed)
+		r.EventRecorder.Normalf(xtrinode, events.ReasonDrainCompleted, "Drain completed via %s, proceeding with resource cleanup", drainResult)
+		metrics.XTrinodeDrainDuration.WithLabelValues(xtrinode.Namespace, xtrinode.Name, drainResult).Observe(drainElapsed.Seconds())
+	} else {
+		log.Info("Drain already marked complete, continuing deletion", "xtrinode", xtrinode.Name, "result", xtrinode.Annotations[config.DrainResultAnnotation])
 	}
 
 	// Wait for pods to terminate gracefully if any are terminating.
@@ -131,6 +132,7 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 		r.EventRecorder.Warningf(xtrinode, events.ReasonCleanupStarted, "Resource cleanup failed: %v", err)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
+	metrics.XTrinodeDrainActive.WithLabelValues(xtrinode.Namespace, xtrinode.Name).Set(0)
 	r.EventRecorder.Normal(xtrinode, events.ReasonCleanupCompleted, "Resource cleanup completed")
 
 	if err := r.reconcileNamespaceGuardrailsAfterDelete(ctx, xtrinode, log); err != nil {
@@ -148,6 +150,88 @@ func (r *XTrinodeReconciler) finalize(ctx context.Context, xtrinode *analyticsv1
 	r.EventRecorder.Normal(xtrinode, events.ReasonFinalized, events.FormatMessage("XTrinode finalization complete, all resources cleaned up"))
 
 	return ctrl.Result{}, nil
+}
+
+func (r *XTrinodeReconciler) queryAwareDrainComplete(ctx context.Context, xtrinode *analyticsv1.XTrinode, drainStartedAt string, log logr.Logger) (bool, string, time.Duration) {
+	drainDuration := r.drainDuration()
+	drainStartTime, err := time.Parse(time.RFC3339, drainStartedAt)
+	if err != nil {
+		log.Error(err, "failed to parse drain start time, using elapsed drain fallback")
+		metrics.XTrinodeDrainFailures.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "invalid_start_time").Inc()
+		drainStartTime = time.Now().Add(-drainDuration)
+	}
+
+	elapsed := time.Since(drainStartTime)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	fallbackReady := elapsed >= drainDuration
+
+	safeToDelete, checkErr := r.GracefulShutdownService.CheckQueriesBeforeScaleDown(ctx, xtrinode, log)
+	if checkErr != nil {
+		metrics.XTrinodeDrainFailures.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "query_check_error").Inc()
+		if fallbackReady {
+			log.Info("Query-aware drain check failed after fallback window, proceeding by elapsed drain time",
+				"xtrinode", xtrinode.Name,
+				"elapsed", elapsed,
+				"fallbackWindow", drainDuration,
+				"error", checkErr)
+			return true, "time_fallback", elapsed
+		}
+		log.Info("Query-aware drain check failed before fallback window, waiting",
+			"xtrinode", xtrinode.Name,
+			"elapsed", elapsed,
+			"remaining", drainDuration-elapsed,
+			"error", checkErr)
+		return false, "query_check_error", elapsed
+	}
+
+	if safeToDelete {
+		return true, "query_complete", elapsed
+	}
+
+	log.Info("Queries still running, waiting before deletion",
+		"xtrinode", xtrinode.Name,
+		"elapsed", elapsed,
+		"fallbackWindow", drainDuration)
+	return false, "active_queries", elapsed
+}
+
+func (r *XTrinodeReconciler) markDrainComplete(ctx context.Context, xtrinode *analyticsv1.XTrinode, result string, log logr.Logger) (bool, error) {
+	completedAt := time.Now().Format(time.RFC3339)
+	marked := false
+	err := retry.OnConflictWithRefresh(ctx, retry.DefaultConfig(), log,
+		func() error {
+			return r.Get(ctx, client.ObjectKeyFromObject(xtrinode), xtrinode)
+		},
+		func() error {
+			if xtrinode.Annotations == nil {
+				xtrinode.Annotations = make(map[string]string)
+			}
+			if xtrinode.Annotations[config.DrainCompletedAtAnnotation] != "" {
+				return nil
+			}
+			xtrinode.Annotations[config.DrainCompletedAtAnnotation] = completedAt
+			xtrinode.Annotations[config.DrainResultAnnotation] = result
+			marked = true
+			return r.Update(ctx, xtrinode)
+		},
+	)
+	return marked, err
+}
+
+func (r *XTrinodeReconciler) drainDuration() time.Duration {
+	if r.DrainDuration <= 0 {
+		return config.GatewayDrainDuration
+	}
+	return r.DrainDuration
+}
+
+func (r *XTrinodeReconciler) drainRequeueInterval() time.Duration {
+	if r.DrainRequeueInterval <= 0 {
+		return config.GatewayDrainRequeueInterval
+	}
+	return r.DrainRequeueInterval
 }
 
 // cleanupResources cleans up all XTrinode resources.

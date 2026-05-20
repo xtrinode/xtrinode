@@ -112,6 +112,11 @@ xtrinode-operator:
     gateway:
       baseURL: "http://xtrinode-gateway.xtrinode-gateway.svc.cluster.local:8080"
 
+    # Lifecycle drain configuration
+    lifecycle:
+      drainDuration: "5m"
+      drainRequeueInterval: "30s"
+
     # CAPI provider (azure, aws, gcp)
     capiProvider: "azure"
 
