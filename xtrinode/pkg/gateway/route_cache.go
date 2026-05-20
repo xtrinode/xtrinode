@@ -12,6 +12,8 @@ import (
 
 // loadRoutes loads routes from ConfigMap
 func (gs *GatewayService) loadRoutes(ctx context.Context) error {
+	gs.recordRouteReloadAttempt()
+
 	configMap := &corev1.ConfigMap{}
 	err := gs.client.Get(ctx, types.NamespacedName{
 		Name:      GatewayConfigMapName,
@@ -19,6 +21,7 @@ func (gs *GatewayService) loadRoutes(ctx context.Context) error {
 	}, configMap)
 
 	if err != nil {
+		gs.recordRouteReloadFailure("", 0, 0, fmt.Sprintf("failed to get gateway ConfigMap: %v", err))
 		return fmt.Errorf("failed to get gateway ConfigMap: %w", err)
 	}
 
@@ -26,6 +29,7 @@ func (gs *GatewayService) loadRoutes(ctx context.Context) error {
 	yamlData, keyExists := configMap.Data[GatewayConfigMapKey]
 	if !keyExists {
 		gs.log.Error(nil, "ConfigMap key missing, keeping existing routes", "key", GatewayConfigMapKey)
+		gs.recordRouteReloadFailure(configMap.ResourceVersion, 0, 0, fmt.Sprintf("ConfigMap key %q missing", GatewayConfigMapKey))
 		return nil
 	}
 
@@ -34,6 +38,7 @@ func (gs *GatewayService) loadRoutes(ctx context.Context) error {
 		// Don't replace in-memory routes with empty on parse error
 		// Just log and keep last-good routes
 		gs.log.Error(err, "Failed to parse routes from ConfigMap, keeping existing routes")
+		gs.recordRouteReloadFailure(configMap.ResourceVersion, 0, 0, fmt.Sprintf("failed to parse routes: %v", err))
 		return nil
 	}
 
@@ -98,6 +103,7 @@ func (gs *GatewayService) loadRoutes(ctx context.Context) error {
 	}
 	if len(routes) > 0 && len(validRoutes) == 0 {
 		gs.log.Error(nil, "All parsed routes were invalid, keeping existing routes")
+		gs.recordRouteReloadFailure(configMap.ResourceVersion, 0, len(routes), "all parsed routes were invalid")
 		return nil
 	}
 
@@ -155,6 +161,7 @@ func (gs *GatewayService) loadRoutes(ctx context.Context) error {
 	}
 
 	gs.log.Info("Loaded routes", "count", len(validRoutes))
+	gs.recordRouteReloadSuccess(configMap.ResourceVersion, len(validRoutes), len(routes)-len(validRoutes))
 	return nil
 }
 

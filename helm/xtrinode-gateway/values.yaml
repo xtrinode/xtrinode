@@ -57,6 +57,12 @@ gateway:
   # Log level (debug, info, error)
   logLevel: "info"
 
+  # Embedded read-only operator UI.
+  # Disabled by default. When exposed through ingress, keep TLS and gateway auth enabled.
+  ui:
+    enabled: false
+    requireAuth: true
+
   # Authentication configuration
   auth:
     # Enable authentication
@@ -145,6 +151,10 @@ redis:
 # RBAC configuration
 rbac:
   create: true
+  # When Gateway UI is enabled, grants read-only access to XTrinode CRs so
+  # lifecycle fields such as auto-suspend duration, last activity, and suspend
+  # ETA can be shown.
+  xtrinodeRead: true
 
 # Service account configuration
 serviceAccount:

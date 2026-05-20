@@ -1,11 +1,25 @@
 {{- $gatewayRedisEnabled := or .Values.gateway.redis.enabled .Values.redis.enabled }}
 {{- $gatewayHTTP := .Values.gateway.http | default dict }}
+{{- $gatewayUIEnabled := .Values.gateway.ui.enabled }}
+{{- $gatewayUIRequireAuth := .Values.gateway.ui.requireAuth }}
 {{- $kedaHasAnyTrigger := or .Values.keda.cpu.enabled .Values.keda.memory.enabled .Values.keda.prometheus.enabled .Values.keda.http.enabled (gt (len .Values.keda.triggers) 0) }}
 {{- $staticMultipleReplicas := and (not (or .Values.autoscaling.enabled .Values.keda.enabled)) (gt (int .Values.replicaCount) 1) }}
 {{- $hpaMultipleReplicas := and .Values.autoscaling.enabled (not .Values.keda.enabled) (gt (int .Values.autoscaling.maxReplicas) 1) }}
 {{- $kedaMultipleReplicas := and .Values.keda.enabled $kedaHasAnyTrigger (gt (int .Values.keda.maxReplicas) 1) }}
 {{- if and (or $staticMultipleReplicas $hpaMultipleReplicas $kedaMultipleReplicas) (not $gatewayRedisEnabled) }}
 {{- fail "xtrinode-gateway multiple replicas require gateway.redis.enabled=true or redis.enabled=true for cross-replica sticky routing and rate limiting" }}
+{{- end }}
+{{- if and $gatewayUIEnabled $gatewayUIRequireAuth (not .Values.gateway.auth.enabled) }}
+{{- fail "xtrinode-gateway gateway.ui.enabled=true with gateway.ui.requireAuth=true requires gateway.auth.enabled=true" }}
+{{- end }}
+{{- if and $gatewayUIEnabled .Values.ingress.enabled (not .Values.gateway.auth.enabled) }}
+{{- fail "xtrinode-gateway public ingress exposure of gateway.ui.enabled=true requires gateway.auth.enabled=true" }}
+{{- end }}
+{{- if and $gatewayUIEnabled .Values.ingress.enabled (not $gatewayUIRequireAuth) }}
+{{- fail "xtrinode-gateway public ingress exposure of gateway.ui.enabled=true requires gateway.ui.requireAuth=true" }}
+{{- end }}
+{{- if and $gatewayUIEnabled .Values.ingress.enabled (eq (len .Values.ingress.tls) 0) }}
+{{- fail "xtrinode-gateway public ingress exposure of gateway.ui.enabled=true requires ingress.tls" }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -120,6 +134,8 @@ spec:
         - --rate-limit-enabled={{ .Values.gateway.rateLimit.enabled }}
         - --rate-limit-capacity={{ .Values.gateway.rateLimit.capacity }}
         - --rate-limit-refill-rate={{ .Values.gateway.rateLimit.refillRate }}
+        - --ui-enabled={{ $gatewayUIEnabled }}
+        - --ui-require-auth={{ $gatewayUIRequireAuth }}
         {{- if .Values.gateway.logLevel }}
         - --log-level={{ .Values.gateway.logLevel }}
         {{- end }}

@@ -81,6 +81,20 @@ func requireStickySet(t *testing.T, gs *GatewayService, queryID, namespace, name
 	}
 }
 
+type trackingReadCloser struct {
+	reader *strings.Reader
+	closed *atomic.Bool
+}
+
+func (r trackingReadCloser) Read(p []byte) (int, error) {
+	return r.reader.Read(p)
+}
+
+func (r trackingReadCloser) Close() error {
+	r.closed.Store(true)
+	return nil
+}
+
 func TestExtractQueryIdFromRequest(t *testing.T) {
 	gs, _ := createTestGatewayService(t, []RouteEntry{})
 
@@ -228,6 +242,39 @@ func TestExtractQueryInfoFromResponse(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != `{"id":"20250115_123456_00001_abc12","stats":{"state":"QUEUED"}}` {
 		t.Fatalf("response body was not restored: %s", string(body))
+	}
+}
+
+func TestExtractQueryInfoFromResponseRestoredBodyClosesOriginal(t *testing.T) {
+	gs, _ := createTestGatewayService(t, []RouteEntry{})
+	body := `{"id":"20250115_123456_00001_abc12","stats":{"state":"QUEUED"}}`
+	var closed atomic.Bool
+	resp := &http.Response{
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+		Body: trackingReadCloser{
+			reader: strings.NewReader(body),
+			closed: &closed,
+		},
+	}
+
+	queryID, state := gs.extractQueryInfoFromResponse(resp)
+	if queryID != "20250115_123456_00001_abc12" || state != "QUEUED" {
+		t.Fatalf("unexpected query info: id=%q state=%q", queryID, state)
+	}
+	restored, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read restored body: %v", err)
+	}
+	if string(restored) != body {
+		t.Fatalf("response body was not restored: %s", string(restored))
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("failed to close restored body: %v", err)
+	}
+	if !closed.Load() {
+		t.Fatalf("expected restored body close to close original body")
 	}
 }
 

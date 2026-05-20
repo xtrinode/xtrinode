@@ -55,6 +55,7 @@ spec:
             description: XTrinodeSpec defines the desired state of a XTrinode runtime
             properties:
               autoSuspendAfter:
+                default: 5m
                 description: AutoSuspendAfter is the idle duration before auto-suspend
                 type: string
               catalogSelector:

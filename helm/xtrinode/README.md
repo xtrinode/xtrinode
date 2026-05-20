@@ -280,6 +280,36 @@ xtrinode-gateway:
           - trino-gateway.example.com
 ```
 
+### Gateway UI
+
+The Gateway can serve an embedded read-only admin UI at `/ui/admin` and a dynamic status API at
+`/ui/admin/api/gateway/status`. This UI shows the Gateway's current routing view, backend
+lifecycle states, auto-suspend metadata, health check state, circuit-breaker state, and route reload
+status. Trino's own web UI is exposed per backend at `/ui/<namespace>/<backend>/`.
+
+The UI is disabled by default. If it is enabled behind public ingress, the chart requires Gateway
+auth and TLS:
+
+```yaml
+xtrinode-gateway:
+  gateway:
+    ui:
+      enabled: true
+      requireAuth: true
+    auth:
+      enabled: true
+      type: oidc
+      oauth:
+        issuer: "https://issuer.example"
+        audience: "trino-gateway"
+  ingress:
+    enabled: true
+    tls:
+      - secretName: trino-gateway-tls
+        hosts:
+          - trino-gateway.example.com
+```
+
 ## Examples
 
 ### Full Deployment with Ingress

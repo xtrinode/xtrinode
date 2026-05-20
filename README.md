@@ -108,6 +108,14 @@ flowchart TB
   keda --> runtimeB
 ```
 
+## Gateway Admin UI
+
+The gateway includes an optional read-only admin UI at `/ui/admin` for route and
+backend visibility. It shows route selectors, lifecycle state, health, circuit
+breaker stats, reload metadata, and query examples.
+
+![XTrinode Gateway admin UI](misc/gateway_ui.png)
+
 ## Comparison
 
 XTrinode assumes Trino remains the query engine. The comparison below focuses on

@@ -149,6 +149,7 @@ robot_deps = [
     'e2e/fixtures/gateway-process-backends.yaml',
     'e2e/helpers/local-trino-keda-smoke.sh',
     'scripts/preload-local-images.sh',
+    'deployments/values/gateway.yaml',
     'examples/postgres-analytics.yaml',
     'examples/xtrinode-real-trino-keda.yaml',
     'examples/xtrinode-prometheus-autoscale.yaml',

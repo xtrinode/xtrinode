@@ -41,6 +41,18 @@ func TestXTrinode_Default(t *testing.T) {
 			},
 		},
 		{
+			name: "sets default autoSuspendAfter to 5 minutes",
+			xtrinode: &XTrinode{
+				Spec: XTrinodeSpec{
+					Size: "s",
+				},
+			},
+			expected: func(tr *XTrinode) {
+				assert.NotNil(t, tr.Spec.AutoSuspendAfter)
+				assert.Equal(t, 5*time.Minute, tr.Spec.AutoSuspendAfter.Duration)
+			},
+		},
+		{
 			name: "sets default nodePool name",
 			xtrinode: &XTrinode{
 				ObjectMeta: metav1.ObjectMeta{

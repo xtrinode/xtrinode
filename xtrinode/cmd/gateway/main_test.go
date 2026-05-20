@@ -64,6 +64,8 @@ func TestParseGatewayOptions_ParsesRuntimeConfig(t *testing.T) {
 		"--read-timeout=0s",
 		"--write-timeout=0s",
 		"--idle-timeout=90s",
+		"--ui-enabled",
+		"--ui-require-auth=false",
 	}, io.Discard)
 
 	require.NoError(t, err)
@@ -92,6 +94,8 @@ func TestParseGatewayOptions_ParsesRuntimeConfig(t *testing.T) {
 	require.Zero(t, options.readTimeout)
 	require.Zero(t, options.writeTimeout)
 	require.Equal(t, 90*time.Second, options.idleTimeout)
+	require.True(t, options.uiEnabled)
+	require.False(t, options.uiRequireAuth)
 }
 
 func TestLoadBearerToken_UsesEnvironmentToken(t *testing.T) {
