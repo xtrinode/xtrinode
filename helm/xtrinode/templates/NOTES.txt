@@ -20,6 +20,9 @@ API Server Ingress:
 {{- range (index .Values "xtrinode-api-server" "ingress" "hosts") }}
   https://{{ .host }}
 {{- end }}
+  Warning: API-server ingress is restricted administrative exposure only.
+  Tenant-aware authorization is not implemented; do not use this as a tenant
+  or direct end-user API.
 {{- end }}
 
 {{- if and (index .Values "xtrinode-gateway" "enabled") (index .Values "xtrinode-gateway" "ingress" "enabled") }}

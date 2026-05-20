@@ -28,6 +28,66 @@ reject_grep() {
   fi
 }
 
+api_server_default="${tmpdir}/api-server-default.yaml"
+helm template xtrinode-api-server helm/xtrinode-api-server > "${api_server_default}"
+reject_grep "kind: Ingress" "${api_server_default}"
+
+if helm template xtrinode-api-server helm/xtrinode-api-server \
+  --set ingress.enabled=true \
+  > "${tmpdir}/api-server-ingress-no-auth.out" 2> "${tmpdir}/api-server-ingress-no-auth.err"; then
+  fail "API server ingress without bearer auth should fail rendering"
+fi
+require_grep "ingress exposure requires apiServer.auth.enabled=true" "${tmpdir}/api-server-ingress-no-auth.err"
+
+if helm template xtrinode-api-server helm/xtrinode-api-server \
+  --set ingress.enabled=true \
+  --set apiServer.auth.enabled=true \
+  --set apiServer.auth.existingSecret=xtrinode-api-server-auth \
+  --set apiServer.cors.allowedOrigins[0]=https://admin.example.com \
+  > "${tmpdir}/api-server-ingress-no-tls.out" 2> "${tmpdir}/api-server-ingress-no-tls.err"; then
+  fail "API server ingress without TLS should fail rendering"
+fi
+require_grep "ingress exposure requires ingress.tls" "${tmpdir}/api-server-ingress-no-tls.err"
+
+if helm template xtrinode-api-server helm/xtrinode-api-server \
+  --set ingress.enabled=true \
+  --set apiServer.auth.enabled=true \
+  --set apiServer.auth.existingSecret=xtrinode-api-server-auth \
+  --set ingress.tls[0].secretName=xtrinode-api-tls \
+  --set ingress.tls[0].hosts[0]=api.example.com \
+  > "${tmpdir}/api-server-ingress-no-cors.out" 2> "${tmpdir}/api-server-ingress-no-cors.err"; then
+  fail "API server ingress without explicit CORS origins should fail rendering"
+fi
+require_grep "requires apiServer.cors.allowedOrigins with exact origins" "${tmpdir}/api-server-ingress-no-cors.err"
+
+if helm template xtrinode-api-server helm/xtrinode-api-server \
+  --set ingress.enabled=true \
+  --set apiServer.auth.enabled=true \
+  --set apiServer.auth.existingSecret=xtrinode-api-server-auth \
+  --set apiServer.cors.allowedOrigins[0]='*' \
+  --set ingress.tls[0].secretName=xtrinode-api-tls \
+  --set ingress.tls[0].hosts[0]=api.example.com \
+  > "${tmpdir}/api-server-ingress-wildcard-cors.out" 2> "${tmpdir}/api-server-ingress-wildcard-cors.err"; then
+  fail "API server ingress with wildcard CORS origins should fail rendering"
+fi
+require_grep "requires exact apiServer.cors.allowedOrigins without wildcards" "${tmpdir}/api-server-ingress-wildcard-cors.err"
+
+api_server_ingress="${tmpdir}/api-server-ingress.yaml"
+helm template xtrinode-api-server helm/xtrinode-api-server \
+  --set ingress.enabled=true \
+  --set apiServer.auth.enabled=true \
+  --set apiServer.auth.existingSecret=xtrinode-api-server-auth \
+  --set apiServer.auth.resume.enabled=true \
+  --set apiServer.auth.resume.existingSecret=xtrinode-api-server-resume-auth \
+  --set apiServer.cors.allowedOrigins[0]=https://admin.example.com \
+  --set ingress.hosts[0].host=api.example.com \
+  --set ingress.tls[0].secretName=xtrinode-api-tls \
+  --set ingress.tls[0].hosts[0]=api.example.com > "${api_server_ingress}"
+require_grep "--auth-enabled=true" "${api_server_ingress}"
+require_grep "--resume-auth-token-file" "${api_server_ingress}"
+require_grep "--cors-allowed-origins=https://admin.example.com" "${api_server_ingress}"
+require_grep "secretName: xtrinode-api-tls" "${api_server_ingress}"
+
 gateway_default="${tmpdir}/gateway-default.yaml"
 helm template xtrinode-gateway helm/xtrinode-gateway > "${gateway_default}"
 require_grep "minAvailable: 0" "${gateway_default}"
@@ -106,6 +166,12 @@ require_grep "--read-header-timeout=5s" "${umbrella_default}"
 require_grep "--read-timeout=0s" "${umbrella_default}"
 require_grep "--write-timeout=0s" "${umbrella_default}"
 require_grep "--idle-timeout=60s" "${umbrella_default}"
+
+if helm template xtrinode helm/xtrinode --set xtrinode-api-server.ingress.enabled=true \
+  > "${tmpdir}/umbrella-api-server-ingress-no-auth.out" 2> "${tmpdir}/umbrella-api-server-ingress-no-auth.err"; then
+  fail "umbrella API server ingress without bearer auth should fail rendering"
+fi
+require_grep "ingress exposure requires apiServer.auth.enabled=true" "${tmpdir}/umbrella-api-server-ingress-no-auth.err"
 
 if helm template xtrinode helm/xtrinode --set xtrinode-gateway.replicaCount=2 \
   > "${tmpdir}/umbrella-replica-no-redis.out" 2> "${tmpdir}/umbrella-replica-no-redis.err"; then
