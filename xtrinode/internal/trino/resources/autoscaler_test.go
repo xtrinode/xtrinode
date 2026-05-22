@@ -207,6 +207,34 @@ func TestBuildHorizontalPodAutoscaler(t *testing.T) {
 			},
 			wantNil: true,
 		},
+		{
+			name: "KEDA active suppresses native HPA",
+			xtrinode: &analyticsv1.XTrinode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-trino",
+					Namespace: "default",
+				},
+				Spec: analyticsv1.XTrinodeSpec{
+					Size: "s",
+					KEDA: &analyticsv1.KEDASpec{
+						Enabled:       func() *bool { b := true; return &b }(),
+						ScalerType:    "prometheus",
+						ScalingMetric: "query",
+					},
+					ValuesOverlay: mustValuesOverlay(map[string]interface{}{
+						"server": map[string]interface{}{
+							"autoscaling": map[string]interface{}{
+								"enabled":                           true,
+								"maxReplicas":                       int64(10),
+								"targetCPUUtilizationPercentage":    int64(70),
+								"targetMemoryUtilizationPercentage": int64(80),
+							},
+						},
+					}),
+				},
+			},
+			wantNil: true,
+		},
 	}
 
 	for _, tt := range tests {

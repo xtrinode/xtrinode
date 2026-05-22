@@ -180,14 +180,13 @@ func ApplyTrinoResources(
 		}
 	}
 
-	// If so, DO NOT manage .spec.replicas field to avoid fighting with KEDA/HPA
+	// If so, DO NOT manage .spec.replicas field to avoid fighting with KEDA/HPA.
 	if resources.WorkerDeployment != nil {
-		// Check if KEDA is enabled (primary autoscaler)
-		autoscalingEnabled := isKEDAEnabled(xtrinode)
+		autoscalingEnabled := isKEDAEnabled(xtrinode) || isNativeHPAEnabled(xtrinode)
 
 		if autoscalingEnabled {
-			// Remove .spec.replicas from the apply to let KEDA/HPA manage it
-			// We still apply everything else (template, selector, etc.)
+			// Remove .spec.replicas from the apply to let the autoscaler manage it.
+			// Everything else (template, selector, etc.) is still applied.
 			resources.WorkerDeployment.Spec.Replicas = nil
 		}
 

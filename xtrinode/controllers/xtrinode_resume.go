@@ -87,7 +87,8 @@ func (r *XTrinodeReconciler) reconcileResume(ctx context.Context, xtrinode *anal
 			}
 		}
 
-		// Scale coordinator, and workers when KEDA is disabled, for resume.
+		// Scale coordinator, and seed workers only when the selected scaler needs
+		// a non-zero target before it can take ownership.
 		if err := r.scaleForResume(ctx, xtrinode, wakeMinWorkers); err != nil {
 			return err
 		}
@@ -203,13 +204,16 @@ func parseWakeParams(xtrinode *analyticsv1.XTrinode, log logr.Logger) (wakeMinWo
 	return wakeMinWorkers, wakeTTL
 }
 
-// scaleForResume scales coordinator (and workers when KEDA is disabled) during a resume transition.
+// scaleForResume scales the coordinator during a resume transition.
+// Worker scale remains externally owned, except that native HPA cannot recover
+// a Deployment whose scale target is already zero, so the operator seeds it to
+// the configured native HPA floor once.
 // Records an error status update and event if scaling fails.
 func (r *XTrinodeReconciler) scaleForResume(ctx context.Context, xtrinode *analyticsv1.XTrinode, wakeMinWorkers int32) error {
 	log := ctrl.LoggerFrom(ctx)
 	const coordReplicas = int32(1)
 	if isKEDAEnabled(xtrinode) {
-		// KEDA enabled — only scale coordinator, NEVER touch workers
+		// Autoscaler enabled - only scale coordinator, never touch workers.
 		if err := r.scaleCoordinatorOnly(ctx, xtrinode, coordReplicas); err != nil {
 			log.Error(err, "failed to scale coordinator for resume")
 			r.EventRecorder.Warningf(xtrinode, events.ReasonResumeFailed, "Failed to resume XTrinode: %v", err)
@@ -220,7 +224,26 @@ func (r *XTrinodeReconciler) scaleForResume(ctx context.Context, xtrinode *analy
 		}
 		return nil
 	}
-	// KEDA disabled — controller scales both coordinator and workers
+	if isNativeHPAEnabled(xtrinode) {
+		if err := r.scaleCoordinatorOnly(ctx, xtrinode, coordReplicas); err != nil {
+			log.Error(err, "failed to scale coordinator for resume")
+			r.EventRecorder.Warningf(xtrinode, events.ReasonResumeFailed, "Failed to resume XTrinode: %v", err)
+			if updateErr := setXTrinodeErrorStatusAndUpdate(ctx, r.Client, r.Status(), xtrinode, log, status.ConditionReasonResumeFailed, fmt.Sprintf("Failed to resume XTrinode: %v", err), r.EventRecorder); updateErr != nil {
+				log.Error(updateErr, "failed to update error status")
+			}
+			return err
+		}
+		if err := r.ensureNativeHPAWorkerFloor(ctx, xtrinode); err != nil {
+			log.Error(err, "failed to seed native HPA worker floor for resume")
+			r.EventRecorder.Warningf(xtrinode, events.ReasonResumeFailed, "Failed to resume XTrinode: %v", err)
+			if updateErr := setXTrinodeErrorStatusAndUpdate(ctx, r.Client, r.Status(), xtrinode, log, status.ConditionReasonResumeFailed, fmt.Sprintf("Failed to resume XTrinode: %v", err), r.EventRecorder); updateErr != nil {
+				log.Error(updateErr, "failed to update error status")
+			}
+			return err
+		}
+		return nil
+	}
+	// No autoscaler - controller scales both coordinator and workers.
 	if err := r.scaleDeployments(ctx, xtrinode, coordReplicas, wakeMinWorkers); err != nil {
 		log.Error(err, "failed to resume XTrinode")
 		r.EventRecorder.Warningf(xtrinode, events.ReasonResumeFailed, "Failed to resume XTrinode: %v", err)
@@ -234,7 +257,8 @@ func (r *XTrinodeReconciler) scaleForResume(ctx context.Context, xtrinode *analy
 
 // ensureResumedInvariants enforces that coordinator is running when not suspended
 // This provides self-healing if deployments drift to 0 replicas
-// IMPORTANT: Only scales coordinator - never touches workers when KEDA owns them
+// IMPORTANT: Only scales coordinator, plus a native HPA worker bootstrap when
+// the target is zero. KEDA can scale from zero and remains untouched.
 func (r *XTrinodeReconciler) ensureResumedInvariants(ctx context.Context, xtrinode *analyticsv1.XTrinode) error {
 	log := ctrl.LoggerFrom(ctx)
 
@@ -275,5 +299,46 @@ func (r *XTrinodeReconciler) ensureResumedInvariants(ctx context.Context, xtrino
 			"Recovered from drift: coordinator scaled from %d to %d", currentReplicas, inv.CoordReplicas)
 	}
 
+	if err := r.ensureNativeHPAWorkerFloor(ctx, xtrinode); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *XTrinodeReconciler) ensureNativeHPAWorkerFloor(ctx context.Context, xtrinode *analyticsv1.XTrinode) error {
+	floor, ok := nativeHPARequiredWorkers(xtrinode)
+	if !ok || floor <= 0 {
+		return nil
+	}
+
+	log := ctrl.LoggerFrom(ctx)
+	workerDeployment := &appsv1.Deployment{}
+	workerKey := client.ObjectKey{
+		Name:      config.BuildWorkerDeploymentName(xtrinode.Name),
+		Namespace: xtrinode.Namespace,
+	}
+	if err := r.Get(ctx, workerKey, workerDeployment); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get worker deployment: %w", err)
+	}
+
+	currentReplicas := int32(0)
+	if workerDeployment.Spec.Replicas != nil {
+		currentReplicas = *workerDeployment.Spec.Replicas
+	}
+	if currentReplicas > 0 {
+		return nil
+	}
+
+	log.Info("Native HPA worker target is zero - seeding configured floor",
+		"xtrinode", xtrinode.Name,
+		"current", currentReplicas,
+		"floor", floor)
+	if err := r.scaleDeployment(ctx, xtrinode, workerDeployment.Name, floor, "worker", log); err != nil {
+		return fmt.Errorf("failed to seed native HPA worker floor: %w", err)
+	}
 	return nil
 }
