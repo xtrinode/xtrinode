@@ -87,11 +87,23 @@ flowchart TB
 | Component | Owns | Notes |
 | --- | --- | --- |
 | Operator | Desired-state reconciliation for `XTrinode` and `XTrinodeCatalog` resources | Creates or updates Trino resources, KEDA `ScaledObject` resources, optional node-pool resources, gateway route ConfigMap entries, status, conditions, and events. |
-| API Server | Control-plane API for lifecycle operations | Exposes runtime list/create/get/delete/status, suspend, resume, unified resume, health, and metrics endpoints. Mutating lifecycle operations are serialized with Kubernetes Lease objects. Health and metrics stay unauthenticated for probes and scraping. |
+| API Server | Internal control-plane API for lifecycle operations | Exposes runtime list/create/get/delete/status, suspend, resume, unified resume, health, and metrics endpoints. Mutating lifecycle operations are serialized with Kubernetes Lease objects. Health and metrics stay unauthenticated for probes and scraping. It is not a tenant-facing or direct end-user API. |
 | Gateway | Trino query entrypoint | Routes by hostname, `X-Trino-XTrinode`, or default route; keeps sticky query routing; load-balances backends; enforces backend state, auth, rate limits, health checks, and circuit breakers. |
 | KEDA | Optional worker autoscaling | Scales worker replicas from metrics when `spec.keda.enabled=true` and a concrete scaler configuration is present. Fixed worker replicas are the default. |
 | Cluster API providers | Optional node-pool provisioning | Create cloud-specific node-pool resources for runtime isolation and cost attribution when `spec.nodePool` is configured. |
 | `XTrinodeCatalog` | Catalog declaration | Renders connector properties into catalog ConfigMaps. XTrinode runtimes select catalogs and inject referenced Secrets into Trino pods. |
+
+## API Server Internal Boundary
+
+The API server is a service-to-service control-plane component. The supported posture is a
+ClusterIP Service reachable from the operator, Gateway, and trusted automation on the cluster
+network. Production paths should enable the admin bearer token for trusted control-plane callers and
+the separate resume-only bearer token for Gateway auto-resume calls.
+
+Do not expose the API server directly to browsers, tenants, or public users. Its bearer tokens are
+coarse control-plane credentials, and tenant-aware authorization is not implemented. Any deliberate
+administrative ingress exposure must use bearer auth, TLS termination, and exact non-wildcard CORS
+origins, and still is not a tenant-safe API surface.
 
 ## Query Plane
 

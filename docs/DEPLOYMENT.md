@@ -25,6 +25,8 @@ flowchart TB
   explicitly before Helm because Helm installs CRDs only on first install and does not upgrade existing CRDs.
 - **Gateway ConfigMap** (`trino-gateway-routes`) is created by a Helm pre-install hook if it doesn't exist. The operator
   populates it when XTrinode CRs exist.
+- **API server exposure** stays internal by default. Cloud deploy scripts keep the API server as a ClusterIP service,
+  enable admin and resume-only bearer tokens, and configure the Gateway with the resume-only token.
 - `make deploy-gcp`, `make deploy-aws`, and `make deploy-azure` run Helm repo setup before chart dependency
   resolution, so a fresh Helm config can resolve KEDA, kube-prometheus-stack, and Trino dependencies. Only the GCP
   path currently has full live smoke coverage.
@@ -35,6 +37,13 @@ flowchart TB
   CAPG managed nodepool smoke coverage, and KEDA/resume smoke coverage.
 - AWS and Azure have Terraform modules, registry-backed deploy scripts, API-server auth wiring, and
   unit-tested nodepool resource generation, but they are experimental and not thoroughly live-smoke validated yet.
+
+### API server exposure posture
+
+The API server is an internal control-plane service for operator, Gateway, and trusted automation
+calls. Do not expose it directly to browsers, tenants, or public users. If an operator deliberately
+adds API-server ingress for restricted administrative access, Helm requires bearer auth, TLS, and
+exact non-wildcard CORS origins, and tenant-aware authorization is still not implemented.
 
 ---
 
