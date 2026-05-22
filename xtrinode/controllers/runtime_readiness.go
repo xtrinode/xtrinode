@@ -186,10 +186,78 @@ func requiredReadyWorkers(xtrinode *analyticsv1.XTrinode, worker *appsv1.Deploym
 	if isKEDAEnabled(xtrinode) {
 		return 0
 	}
+	if hpaMinReplicas, ok := nativeHPARequiredWorkers(xtrinode); ok {
+		return hpaMinReplicas
+	}
 	if worker != nil && worker.Spec.Replicas != nil && *worker.Spec.Replicas > 0 {
 		return *worker.Spec.Replicas
 	}
 	return 0
+}
+
+func nativeHPARequiredWorkers(xtrinode *analyticsv1.XTrinode) (int32, bool) {
+	valuesMap := xtrinode.Spec.GetValuesOverlayMap()
+	if valuesMap == nil {
+		return 0, false
+	}
+	server, ok := valuesMap["server"].(map[string]interface{})
+	if !ok {
+		return 0, false
+	}
+	autoscaling, ok := server["autoscaling"].(map[string]interface{})
+	if !ok {
+		return 0, false
+	}
+	enabled, ok := autoscaling["enabled"].(bool)
+	if !ok || !enabled {
+		return 0, false
+	}
+
+	cpuTarget := int32(config.DefaultHPACPUTargetPercentage)
+	if parsed, ok := parseOverlayInt32(autoscaling["targetCPUUtilizationPercentage"]); ok {
+		cpuTarget = parsed
+	} else if cpuTargetStr, ok := autoscaling["targetCPUUtilizationPercentage"].(string); ok && cpuTargetStr == "" {
+		cpuTarget = 0
+	}
+	memoryTarget := int32(config.DefaultHPAMemoryTargetPercentage)
+	if parsed, ok := parseOverlayInt32(autoscaling["targetMemoryUtilizationPercentage"]); ok {
+		memoryTarget = parsed
+	} else if memoryTargetStr, ok := autoscaling["targetMemoryUtilizationPercentage"].(string); ok && memoryTargetStr == "" {
+		memoryTarget = 0
+	}
+	if cpuTarget <= 0 && memoryTarget <= 0 {
+		return 0, false
+	}
+
+	if minReplicas, ok := parseOverlayInt32(autoscaling["minReplicas"]); ok {
+		return minReplicas, true
+	}
+	if workers, ok := parseOverlayInt32(server["workers"]); ok {
+		return workers, true
+	}
+	return int32(config.DefaultHPAMinReplicas), true
+}
+
+func isNativeHPAEnabled(xtrinode *analyticsv1.XTrinode) bool {
+	_, ok := nativeHPARequiredWorkers(xtrinode)
+	return ok
+}
+
+func parseOverlayInt32(val interface{}) (int32, bool) {
+	switch v := val.(type) {
+	case int:
+		return int32(v), true
+	case int32:
+		return v, true
+	case int64:
+		return int32(v), true
+	case float64:
+		return int32(v), true
+	case float32:
+		return int32(v), true
+	default:
+		return 0, false
+	}
 }
 
 func deploymentRolloutReady(deployment *appsv1.Deployment, component string, requiredUpdatedReplicas int32) (reason, message string, ready bool) {

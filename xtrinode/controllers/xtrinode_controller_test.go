@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1073,6 +1074,43 @@ func TestXTrinodeReconciler_reconcileSuspend_UpdatesGatewayRoutePaused(t *testin
 	}, &routeConfig)
 	assert.NoError(t, err)
 	assert.Contains(t, routeConfig.Data[config.GatewayConfigMapKey], "state: PAUSED")
+}
+
+func TestXTrinodeReconciler_deleteNativeHPAForSuspend(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = analyticsv1.AddToScheme(scheme)
+	_ = autoscalingv2.AddToScheme(scheme)
+
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size:      "s",
+			Suspended: true,
+		},
+	}
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      config.BuildWorkerServiceName(xtrinode.Name),
+			Namespace: xtrinode.Namespace,
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(xtrinode, hpa).
+		Build()
+	reconciler := newTestReconciler(client, scheme)
+
+	err := reconciler.deleteNativeHPAForSuspend(context.Background(), xtrinode, newTestLogger())
+	assert.NoError(t, err)
+
+	var deleted autoscalingv2.HorizontalPodAutoscaler
+	err = client.Get(context.Background(), types.NamespacedName{Name: hpa.Name, Namespace: hpa.Namespace}, &deleted)
+	assert.True(t, k8serrors.IsNotFound(err))
 }
 
 func TestXTrinodeReconciler_reconcileResume(t *testing.T) {

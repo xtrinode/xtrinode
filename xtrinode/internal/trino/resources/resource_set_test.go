@@ -121,6 +121,29 @@ func TestBuildTrinoResourceSetSkipsWorkersWhenFixedWorkerCountIsZero(t *testing.
 	assert.Nil(t, set.WorkerPDB)
 }
 
+func TestBuildTrinoResourceSetKeepsWorkersWhenNativeHPAEnabledWithZeroWorkers(t *testing.T) {
+	xtrinode := resourceCoverageBaseXTrinode()
+	xtrinode.Spec.ValuesOverlay = mustValuesOverlay(map[string]interface{}{
+		"server": map[string]interface{}{
+			"workers": int64(0),
+			"autoscaling": map[string]interface{}{
+				"enabled":                           true,
+				"minReplicas":                       int64(1),
+				"maxReplicas":                       int64(4),
+				"targetCPUUtilizationPercentage":    int64(70),
+				"targetMemoryUtilizationPercentage": "",
+			},
+		},
+	})
+
+	set, err := BuildTrinoResourceSet(context.Background(), resourceCoverageClient(t), xtrinode, nil, "test-version")
+	require.NoError(t, err)
+	require.NotNil(t, set.WorkerDeployment)
+	assert.Nil(t, set.WorkerDeployment.Spec.Replicas, "native HPA owns worker replicas")
+	require.NotNil(t, set.HorizontalPodAutoscaler)
+	assert.Equal(t, int32(1), *set.HorizontalPodAutoscaler.Spec.MinReplicas)
+}
+
 func TestBuildTrinoResourceSetKeepsFixedWorkersForPositiveMinWorkers(t *testing.T) {
 	xtrinode := resourceCoverageBaseXTrinode()
 	disabled := false

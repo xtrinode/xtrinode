@@ -12,6 +12,10 @@ import (
 // BuildHorizontalPodAutoscaler builds a HorizontalPodAutoscaler for worker autoscaling
 // Returns nil if autoscaling is disabled or not configured
 func BuildHorizontalPodAutoscaler(xtrinode *analyticsv1.XTrinode) *autoscalingv2.HorizontalPodAutoscaler {
+	if isKEDAEnabled(xtrinode) {
+		return nil
+	}
+
 	// Check if autoscaling is enabled via valuesOverlay
 	enabled := false
 	maxReplicas := int32(config.DefaultHPAMaxReplicas)

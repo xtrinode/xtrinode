@@ -16,7 +16,8 @@ import (
 // reconcileCatalogs handles catalog discovery and validation
 func (r *XTrinodeReconciler) reconcileCatalogs(ctx context.Context, xtrinode *analyticsv1.XTrinode) ([]string, error) {
 	log := ctrl.LoggerFrom(ctx)
-	// Get effective catalogs from explicit spec.catalogs or auto-discovered ConfigMaps.
+	// Get effective catalogs selected by spec.catalogSelector. Raw catalog ConfigMaps
+	// are watched for drift, but catalog membership is selector-driven.
 	effectiveCatalogs, err := r.CatalogService.GetEffectiveCatalogs(ctx, xtrinode, log)
 	if err != nil {
 		log.Error(err, "failed to get effective catalogs")
@@ -36,8 +37,8 @@ func (r *XTrinodeReconciler) reconcileCatalogs(ctx context.Context, xtrinode *an
 		r.EventRecorder.Normalf(xtrinode, events.ReasonCatalogsDiscovered, "Discovered %d catalog(s): %s", len(effectiveCatalogs), strings.Join(effectiveCatalogs, ", "))
 	}
 
-	// Validate both explicit and auto-discovered catalog ConfigMaps.
-	// Teams create ConfigMaps with catalog properties; the operator only validates they exist.
+	// Validate selected catalog ConfigMaps. Teams create XTrinodeCatalog resources;
+	// that controller owns the generated ConfigMaps and this reconciler only verifies them.
 	if err := r.CatalogService.ValidateCatalogConfigMaps(ctx, xtrinode, effectiveCatalogs, log); err != nil {
 		log.Error(err, "failed to validate catalog ConfigMaps")
 		r.EventRecorder.Warning(xtrinode, events.ReasonCatalogSyncFailed, events.FormatMessage("Failed to validate catalog ConfigMaps: %v", err))

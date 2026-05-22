@@ -201,7 +201,23 @@ func addConfiguredSecretDigests(ctx context.Context, cli client.Client, xtrinode
 	}
 	hasExternalData = secretMountsFound || hasExternalData
 
-	return addAuthSecretRefs(xtrinode.Spec.GetValuesOverlayMap(), d) || hasExternalData, nil
+	authSecretsFound, err := addAuthSecretDigests(ctx, cli, xtrinode.Namespace, xtrinode.Spec.GetValuesOverlayMap(), d)
+	if err != nil {
+		return false, err
+	}
+	hasExternalData = authSecretsFound || hasExternalData
+
+	controlAuthFound, err := addTrinoControlAuthSecretDigest(ctx, cli, xtrinode, d)
+	if err != nil {
+		return false, err
+	}
+	hasExternalData = controlAuthFound || hasExternalData
+
+	envSecretFound, err := addHelmEnvSecretDigests(ctx, cli, xtrinode.Namespace, xtrinode.Spec.HelmChartConfig, d)
+	if err != nil {
+		return false, err
+	}
+	return envSecretFound || hasExternalData, nil
 }
 
 func addTLSSecretDigests(ctx context.Context, cli client.Client, namespace string, tls *analyticsv1.TLSSpec, d *digest.Digest) (bool, error) {
@@ -278,14 +294,14 @@ func addHelmSecretMountDigests(ctx context.Context, cli client.Client, namespace
 	return found, nil
 }
 
-func addAuthSecretRefs(valuesMap map[string]interface{}, d *digest.Digest) bool {
+func addAuthSecretDigests(ctx context.Context, cli client.Client, namespace string, valuesMap map[string]interface{}, d *digest.Digest) (bool, error) {
 	if valuesMap == nil {
-		return false
+		return false, nil
 	}
 
 	auth, ok := valuesMap["auth"].(map[string]interface{})
 	if !ok {
-		return false
+		return false, nil
 	}
 
 	found := false
@@ -298,10 +314,43 @@ func addAuthSecretRefs(valuesMap map[string]interface{}, d *digest.Digest) bool 
 	} {
 		if secretName, ok := auth[ref.key].(string); ok && secretName != "" {
 			d.AddString(ref.digestKey, secretName)
+			if err := hashSecretData(ctx, cli, namespace, secretName, ref.digestKey+"-data", d); err != nil {
+				return false, err
+			}
 			found = true
 		}
 	}
-	return found
+	return found, nil
+}
+
+func addTrinoControlAuthSecretDigest(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XTrinode, d *digest.Digest) (bool, error) {
+	if xtrinode.Spec.TrinoControlAuth == nil || xtrinode.Spec.TrinoControlAuth.PasswordSecret == nil {
+		return false, nil
+	}
+	if err := hashSecretKeyData(ctx, cli, xtrinode.Namespace, "trino-control-auth", xtrinode.Spec.TrinoControlAuth.PasswordSecret, d); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func addHelmEnvSecretDigests(ctx context.Context, cli client.Client, namespace string, cfg *analyticsv1.HelmChartConfigSpec, d *digest.Digest) (bool, error) {
+	if cfg == nil {
+		return false, nil
+	}
+	found := false
+	for _, envVar := range cfg.Env {
+		if envVar.ValueFrom == nil || envVar.ValueFrom.SecretKeyRef == nil {
+			continue
+		}
+		if envVar.ValueFrom.SecretKeyRef.Name == "" {
+			continue
+		}
+		if err := hashSecretKeyData(ctx, cli, namespace, "helm-env-"+envVar.Name, envVar.ValueFrom.SecretKeyRef, d); err != nil {
+			return false, err
+		}
+		found = true
+	}
+	return found, nil
 }
 
 func addMountedResourceDigests(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XTrinode, d *digest.Digest) (bool, error) {
@@ -332,6 +381,7 @@ func externalConfigMapReferences(xtrinode *analyticsv1.XTrinode) []string {
 		refs = append(refs, jmxConfigMap)
 	}
 	refs = append(refs, xtrinode.Spec.CustomConfigMaps...)
+	refs = append(refs, helmEnvConfigMapReferences(xtrinode.Spec.HelmChartConfig)...)
 
 	valuesMap := xtrinode.Spec.GetValuesOverlayMap()
 	if valuesMap == nil {
@@ -339,6 +389,7 @@ func externalConfigMapReferences(xtrinode *analyticsv1.XTrinode) []string {
 	}
 	refs = appendOverlayMountReferences(refs, valuesMap["configMounts"], "configMap")
 	refs = appendOverlayRoleMountReferences(refs, valuesMap, "configMounts", "configMap")
+	refs = appendOverlayEnvValueFromReferences(refs, valuesMap, "configMapKeyRef")
 	refs = appendOverlayEnvFromReferences(refs, valuesMap, "configMapRef")
 	refs = appendOverlayAdditionalVolumeReferences(refs, valuesMap, "configMap", "name")
 	return refs
@@ -354,16 +405,67 @@ func jmxExporterConfigMapReference(xtrinode *analyticsv1.XTrinode) string {
 }
 
 func externalSecretReferences(xtrinode *analyticsv1.XTrinode) []string {
+	refs := helmEnvFromSecretReferences(xtrinode.Spec.HelmChartConfig)
+	refs = append(refs, authSecretReferences(xtrinode.Spec.GetValuesOverlayMap())...)
+
 	valuesMap := xtrinode.Spec.GetValuesOverlayMap()
 	if valuesMap == nil {
-		return nil
+		return refs
 	}
-	refs := make([]string, 0)
 	refs = appendOverlayMountReferences(refs, valuesMap["secretMounts"], "secretName")
 	refs = appendOverlayRoleMountReferences(refs, valuesMap, "secretMounts", "secretName")
+	refs = appendOverlayEnvValueFromReferences(refs, valuesMap, "secretKeyRef")
 	refs = appendOverlayEnvFromReferences(refs, valuesMap, "secretRef")
 	refs = appendOverlayAdditionalVolumeReferences(refs, valuesMap, "secret", "secretName")
 	refs = appendOverlayAdditionalVolumeReferences(refs, valuesMap, "secret", "name")
+	return refs
+}
+
+func helmEnvConfigMapReferences(cfg *analyticsv1.HelmChartConfigSpec) []string {
+	if cfg == nil {
+		return nil
+	}
+	refs := make([]string, 0)
+	for _, envFrom := range cfg.EnvFrom {
+		if envFrom.ConfigMapRef != nil && envFrom.ConfigMapRef.Name != "" {
+			refs = append(refs, envFrom.ConfigMapRef.Name)
+		}
+	}
+	for _, envVar := range cfg.Env {
+		if envVar.ValueFrom != nil && envVar.ValueFrom.ConfigMapKeyRef != nil && envVar.ValueFrom.ConfigMapKeyRef.Name != "" {
+			refs = append(refs, envVar.ValueFrom.ConfigMapKeyRef.Name)
+		}
+	}
+	return refs
+}
+
+func helmEnvFromSecretReferences(cfg *analyticsv1.HelmChartConfigSpec) []string {
+	if cfg == nil {
+		return nil
+	}
+	refs := make([]string, 0)
+	for _, envFrom := range cfg.EnvFrom {
+		if envFrom.SecretRef != nil && envFrom.SecretRef.Name != "" {
+			refs = append(refs, envFrom.SecretRef.Name)
+		}
+	}
+	return refs
+}
+
+func authSecretReferences(valuesMap map[string]interface{}) []string {
+	if valuesMap == nil {
+		return nil
+	}
+	auth, ok := valuesMap["auth"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	refs := make([]string, 0, 2)
+	for _, key := range []string{"passwordAuthSecret", "groupsAuthSecret"} {
+		if secretName, ok := auth[key].(string); ok && secretName != "" {
+			refs = append(refs, secretName)
+		}
+	}
 	return refs
 }
 
@@ -406,6 +508,27 @@ func appendOverlayEnvFromReferences(refs []string, valuesMap map[string]interfac
 			continue
 		}
 		if ref := nestedString(itemMap, refKey, "name"); ref != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+func appendOverlayEnvValueFromReferences(refs []string, valuesMap map[string]interface{}, refKey string) []string {
+	envList, ok := valuesMap["env"].([]interface{})
+	if !ok {
+		return refs
+	}
+	for _, item := range envList {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		valueFrom, ok := itemMap["valueFrom"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if ref := nestedString(valueFrom, refKey, "name"); ref != "" {
 			refs = append(refs, ref)
 		}
 	}

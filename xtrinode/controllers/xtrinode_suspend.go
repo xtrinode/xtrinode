@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -219,6 +220,15 @@ func (r *XTrinodeReconciler) ensureSuspendedInvariants(ctx context.Context, xtri
 		}
 	}
 
+	if err := r.deleteNativeHPAForSuspend(ctx, xtrinode, log); err != nil {
+		msg := fmt.Sprintf("cannot enforce suspended state: failed to delete native HPA: %v", err)
+		log.Error(err, "aborting suspend invariant enforcement - native HPA may still scale workers")
+		r.EventRecorder.Warningf(xtrinode, events.ReasonSuspendFailed, "%s", msg)
+		status.SetCondition(xtrinode, status.ConditionTypeSuspended, metav1.ConditionFalse,
+			"NativeHPADeleteFailed", msg)
+		return fmt.Errorf("%s", msg)
+	}
+
 	// Scale deployments to match invariants.
 	if err := r.scaleDeployments(ctx, xtrinode, inv.CoordReplicas, inv.MinWorkerReplicas); err != nil {
 		log.Error(err, "failed to scale deployments to suspended state")
@@ -237,5 +247,22 @@ func (r *XTrinodeReconciler) ensureSuspendedInvariants(ctx context.Context, xtri
 		}
 	}
 
+	return nil
+}
+
+func (r *XTrinodeReconciler) deleteNativeHPAForSuspend(ctx context.Context, xtrinode *analyticsv1.XTrinode, log logr.Logger) error {
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      config.BuildWorkerServiceName(xtrinode.Name),
+			Namespace: xtrinode.Namespace,
+		},
+	}
+	if err := r.Delete(ctx, hpa); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	log.Info("Deleted native HPA before suspend", "hpa", hpa.Name, "namespace", hpa.Namespace)
 	return nil
 }
