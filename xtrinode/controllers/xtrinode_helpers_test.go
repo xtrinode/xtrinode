@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,6 +56,20 @@ func TestIsKEDAEnabled(t *testing.T) {
 				Spec: analyticsv1.XTrinodeSpec{
 					KEDA: &analyticsv1.KEDASpec{
 						Enabled: func() *bool { b := true; return &b }(),
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "KEDA.Enabled true with blank metric endpoints uses fixed replicas",
+			xtrinode: &analyticsv1.XTrinode{
+				Spec: analyticsv1.XTrinodeSpec{
+					KEDA: &analyticsv1.KEDASpec{
+						Enabled:          func() *bool { b := true; return &b }(),
+						PrometheusServer: func() *string { s := "  "; return &s }(),
+						PrometheusQuery:  func() *string { s := " "; return &s }(),
+						HTTPEndpoint:     func() *string { s := "\t"; return &s }(),
 					},
 				},
 			},
@@ -527,6 +542,60 @@ func TestServiceMonitorToXTrinodes(t *testing.T) {
 	assert.Equal(t, "ServiceMonitor", serviceMonitorGVK().Kind)
 }
 
+func TestEndpointSliceToXTrinodes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, analyticsv1.AddToScheme(scheme))
+
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime", Namespace: "team-a"},
+		Spec:       analyticsv1.XTrinodeSpec{Size: "s"},
+	}
+	other := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "team-a"},
+		Spec:       analyticsv1.XTrinodeSpec{Size: "s"},
+	}
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(xtrinode, other).
+		Build()
+	endpointSlice := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "trino-runtime-abc",
+			Namespace: "team-a",
+			Labels: map[string]string{
+				discoveryv1.LabelServiceName: config.BuildCoordinatorServiceName("runtime"),
+			},
+		},
+	}
+
+	requests := endpointSliceToXTrinodes(cli, context.Background(), endpointSlice, ctrl.Log)
+
+	require.Len(t, requests, 1)
+	assert.Equal(t, "team-a", requests[0].Namespace)
+	assert.Equal(t, "runtime", requests[0].Name)
+}
+
+func TestNodePoolWatchGVKs(t *testing.T) {
+	kinds := map[string]bool{}
+	for _, gvk := range nodePoolWatchGVKs() {
+		kinds[gvk.Kind] = true
+	}
+
+	for _, kind := range []string{
+		"MachineDeployment",
+		"MachinePool",
+		"AzureMachinePool",
+		"AWSMachineTemplate",
+		"GCPMachineTemplate",
+		"AzureManagedMachinePool",
+		"AWSManagedMachinePool",
+		"GCPManagedMachinePool",
+	} {
+		assert.True(t, kinds[kind], "expected node pool watch for %s", kind)
+	}
+}
+
 func TestSecretToXTrinodes(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
@@ -641,6 +710,88 @@ func TestSecretToXTrinodes(t *testing.T) {
 			},
 		},
 	}
+	xtrinode9 := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "xtrinode-9",
+			Namespace: "test-ns",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			ValuesOverlay: controllerValuesOverlay(t, map[string]interface{}{
+				"auth": map[string]interface{}{
+					"passwordAuthSecret": "target-secret",
+				},
+			}),
+		},
+	}
+	xtrinode10 := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "xtrinode-10",
+			Namespace: "test-ns",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			TrinoControlAuth: &analyticsv1.TrinoControlAuthSpec{
+				PasswordSecret: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "target-secret"},
+					Key:                  "password",
+				},
+			},
+		},
+	}
+	xtrinode11 := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "xtrinode-11",
+			Namespace: "test-ns",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			HelmChartConfig: &analyticsv1.HelmChartConfigSpec{
+				Env: []corev1.EnvVar{{
+					Name: "SECRET_VALUE",
+					ValueFrom: &corev1.EnvVarSource{
+						SecretKeyRef: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "target-secret"},
+							Key:                  "value",
+						},
+					},
+				}},
+			},
+		},
+	}
+	xtrinode12 := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "xtrinode-12",
+			Namespace: "test-ns",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			HelmChartConfig: &analyticsv1.HelmChartConfigSpec{
+				EnvFrom: []corev1.EnvFromSource{{
+					SecretRef: &corev1.SecretEnvSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "target-secret"},
+					},
+				}},
+			},
+		},
+	}
+	xtrinode13 := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "xtrinode-13",
+			Namespace: "test-ns",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			ValuesOverlay: controllerValuesOverlay(t, map[string]interface{}{
+				"env": []interface{}{
+					map[string]interface{}{
+						"name": "SECRET_VALUE",
+						"valueFrom": map[string]interface{}{
+							"secretKeyRef": map[string]interface{}{
+								"name": "target-secret",
+								"key":  "value",
+							},
+						},
+					},
+				},
+			}),
+		},
+	}
 	catalog1 := &analyticsv1.XTrinodeCatalog{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "postgres-a",
@@ -682,7 +833,7 @@ func TestSecretToXTrinodes(t *testing.T) {
 
 	cli := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(xtrinode1, xtrinode2, xtrinode3, xtrinode4, xtrinode5, xtrinode6, xtrinode7, xtrinode8, catalog1, catalog2).
+		WithObjects(xtrinode1, xtrinode2, xtrinode3, xtrinode4, xtrinode5, xtrinode6, xtrinode7, xtrinode8, xtrinode9, xtrinode10, xtrinode11, xtrinode12, xtrinode13, catalog1, catalog2).
 		Build()
 
 	secret := &corev1.Secret{
@@ -694,7 +845,7 @@ func TestSecretToXTrinodes(t *testing.T) {
 
 	requests := secretToXTrinodes(cli, context.Background(), secret, ctrl.Log)
 
-	require.Len(t, requests, 6)
+	require.Len(t, requests, 11)
 	names := make(map[string]bool)
 	for _, req := range requests {
 		names[req.Name] = true
@@ -706,6 +857,11 @@ func TestSecretToXTrinodes(t *testing.T) {
 	assert.True(t, names["xtrinode-6"])
 	assert.True(t, names["xtrinode-7"])
 	assert.True(t, names["xtrinode-8"])
+	assert.True(t, names["xtrinode-9"])
+	assert.True(t, names["xtrinode-10"])
+	assert.True(t, names["xtrinode-11"])
+	assert.True(t, names["xtrinode-12"])
+	assert.True(t, names["xtrinode-13"])
 	assert.False(t, names["xtrinode-2"])
 	assert.False(t, names["xtrinode-3"])
 }
@@ -807,10 +963,56 @@ func TestExternalConfigMapToXTrinodes(t *testing.T) {
 			},
 		},
 	}
+	xtrinode10 := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "helm-env-config", Namespace: "test-ns"},
+		Spec: analyticsv1.XTrinodeSpec{
+			HelmChartConfig: &analyticsv1.HelmChartConfigSpec{
+				Env: []corev1.EnvVar{{
+					Name: "CONFIG_VALUE",
+					ValueFrom: &corev1.EnvVarSource{
+						ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "target-config"},
+							Key:                  "value",
+						},
+					},
+				}},
+			},
+		},
+	}
+	xtrinode11 := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "helm-envfrom-config", Namespace: "test-ns"},
+		Spec: analyticsv1.XTrinodeSpec{
+			HelmChartConfig: &analyticsv1.HelmChartConfigSpec{
+				EnvFrom: []corev1.EnvFromSource{{
+					ConfigMapRef: &corev1.ConfigMapEnvSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "target-config"},
+					},
+				}},
+			},
+		},
+	}
+	xtrinode12 := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "overlay-env-config", Namespace: "test-ns"},
+		Spec: analyticsv1.XTrinodeSpec{
+			ValuesOverlay: controllerValuesOverlay(t, map[string]interface{}{
+				"env": []interface{}{
+					map[string]interface{}{
+						"name": "CONFIG_VALUE",
+						"valueFrom": map[string]interface{}{
+							"configMapKeyRef": map[string]interface{}{
+								"name": "target-config",
+								"key":  "value",
+							},
+						},
+					},
+				},
+			}),
+		},
+	}
 
 	cli := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(xtrinode1, xtrinode2, xtrinode3, xtrinode4, xtrinode5, xtrinode6, xtrinode7, xtrinode8, xtrinode9).
+		WithObjects(xtrinode1, xtrinode2, xtrinode3, xtrinode4, xtrinode5, xtrinode6, xtrinode7, xtrinode8, xtrinode9, xtrinode10, xtrinode11, xtrinode12).
 		Build()
 
 	configMap := &corev1.ConfigMap{
@@ -822,7 +1024,7 @@ func TestExternalConfigMapToXTrinodes(t *testing.T) {
 
 	requests := externalConfigMapToXTrinodes(cli, context.Background(), configMap, ctrl.Log)
 
-	require.Len(t, requests, 7)
+	require.Len(t, requests, 10)
 	names := make(map[string]bool)
 	for _, req := range requests {
 		names[req.Name] = true
@@ -835,6 +1037,9 @@ func TestExternalConfigMapToXTrinodes(t *testing.T) {
 	assert.True(t, names["envfrom-overlay"])
 	assert.True(t, names["additional-volume"])
 	assert.True(t, names["jmx-external-config"])
+	assert.True(t, names["helm-env-config"])
+	assert.True(t, names["helm-envfrom-config"])
+	assert.True(t, names["overlay-env-config"])
 	assert.False(t, names["other-namespace"])
 	assert.False(t, names["non-match"])
 }

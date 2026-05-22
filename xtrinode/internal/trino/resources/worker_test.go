@@ -55,6 +55,36 @@ func TestBuildWorkerDeployment_KEDAEnabledOmitsReplicas(t *testing.T) {
 	assert.Nil(t, deployment.Spec.Replicas, "KEDA owns worker replicas when explicitly enabled with metric config")
 }
 
+func TestBuildWorkerDeployment_NativeHPAEnabledOmitsReplicas(t *testing.T) {
+	preset := sizing.Presets["s"]
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-trino",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			ValuesOverlay: mustValuesOverlay(map[string]interface{}{
+				"server": map[string]interface{}{
+					"workers": int64(4),
+					"autoscaling": map[string]interface{}{
+						"enabled":                           true,
+						"minReplicas":                       int64(1),
+						"maxReplicas":                       int64(8),
+						"targetCPUUtilizationPercentage":    int64(70),
+						"targetMemoryUtilizationPercentage": "",
+					},
+				},
+			}),
+		},
+	}
+
+	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	require.NoError(t, err)
+
+	assert.Nil(t, deployment.Spec.Replicas, "native HPA owns worker replicas when enabled")
+}
+
 func TestBuildWorkerDeployment_KEDADisabledUsesWorkersOverlay(t *testing.T) {
 	preset := sizing.Presets["s"]
 	disabled := false
@@ -81,6 +111,37 @@ func TestBuildWorkerDeployment_KEDADisabledUsesWorkersOverlay(t *testing.T) {
 	require.NotNil(t, deployment.Spec.Replicas)
 
 	assert.Equal(t, int32(4), *deployment.Spec.Replicas)
+}
+
+func TestBuildWorkerDeployment_KEDABlankMetricEndpointsUsesFixedReplicas(t *testing.T) {
+	preset := sizing.Presets["s"]
+	enabled := true
+	blank := " "
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-trino",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			KEDA: &analyticsv1.KEDASpec{
+				Enabled:          &enabled,
+				PrometheusServer: &blank,
+				PrometheusQuery:  &blank,
+				HTTPEndpoint:     &blank,
+			},
+			ValuesOverlay: mustValuesOverlay(map[string]interface{}{
+				"server": map[string]interface{}{
+					"workers": int64(3),
+				},
+			}),
+		},
+	}
+
+	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	require.NoError(t, err)
+	require.NotNil(t, deployment.Spec.Replicas)
+	assert.Equal(t, int32(3), *deployment.Spec.Replicas)
 }
 
 func TestBuildWorkerConfigMap_GracefulShutdownAddsWorkerAccessControl(t *testing.T) {
@@ -163,6 +224,126 @@ func TestBuildWorkerDeployment_GracefulShutdownUsesControlAuthSecret(t *testing.
 	assert.Contains(t, command, `-H "X-Trino-User: ${XTRINODE_TRINO_CONTROL_USER}"`)
 	assert.Contains(t, command, `exit $status`)
 	assert.NotContains(t, command, `|| true`)
+}
+
+func TestBuildWorkerDeployment_HelmChartConfigEnvPreservesValueFromAndEnvFrom(t *testing.T) {
+	preset := sizing.Presets["s"]
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-trino",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			HelmChartConfig: &analyticsv1.HelmChartConfigSpec{
+				Env: []corev1.EnvVar{
+					{
+						Name: "CONFIG_VALUE",
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{Name: "runtime-env"},
+								Key:                  "config-value",
+							},
+						},
+					},
+					{
+						Name: "SECRET_VALUE",
+						ValueFrom: &corev1.EnvVarSource{
+							SecretKeyRef: &corev1.SecretKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{Name: "runtime-secret"},
+								Key:                  "secret-value",
+							},
+						},
+					},
+				},
+				EnvFrom: []corev1.EnvFromSource{
+					{
+						ConfigMapRef: &corev1.ConfigMapEnvSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "env-config"},
+						},
+					},
+					{
+						SecretRef: &corev1.SecretEnvSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: "env-secret"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	require.NoError(t, err)
+	container := deployment.Spec.Template.Spec.Containers[0]
+
+	envByName := map[string]corev1.EnvVar{}
+	for _, env := range container.Env {
+		envByName[env.Name] = env
+	}
+	require.NotNil(t, envByName["CONFIG_VALUE"].ValueFrom)
+	require.NotNil(t, envByName["CONFIG_VALUE"].ValueFrom.ConfigMapKeyRef)
+	assert.Equal(t, "runtime-env", envByName["CONFIG_VALUE"].ValueFrom.ConfigMapKeyRef.Name)
+	assert.Equal(t, "config-value", envByName["CONFIG_VALUE"].ValueFrom.ConfigMapKeyRef.Key)
+	require.NotNil(t, envByName["SECRET_VALUE"].ValueFrom)
+	require.NotNil(t, envByName["SECRET_VALUE"].ValueFrom.SecretKeyRef)
+	assert.Equal(t, "runtime-secret", envByName["SECRET_VALUE"].ValueFrom.SecretKeyRef.Name)
+	assert.Equal(t, "secret-value", envByName["SECRET_VALUE"].ValueFrom.SecretKeyRef.Key)
+
+	require.Len(t, container.EnvFrom, 2)
+	assert.Equal(t, "env-config", container.EnvFrom[0].ConfigMapRef.Name)
+	assert.Equal(t, "env-secret", container.EnvFrom[1].SecretRef.Name)
+}
+
+func TestBuildWorkerDeployment_ValuesOverlayEnvPreservesValueFrom(t *testing.T) {
+	preset := sizing.Presets["s"]
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-trino",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			ValuesOverlay: mustValuesOverlay(map[string]interface{}{
+				"env": []interface{}{
+					map[string]interface{}{
+						"name": "CONFIG_VALUE",
+						"valueFrom": map[string]interface{}{
+							"configMapKeyRef": map[string]interface{}{
+								"name": "runtime-env",
+								"key":  "config-value",
+							},
+						},
+					},
+					map[string]interface{}{
+						"name": "SECRET_VALUE",
+						"valueFrom": map[string]interface{}{
+							"secretKeyRef": map[string]interface{}{
+								"name": "runtime-secret",
+								"key":  "secret-value",
+							},
+						},
+					},
+				},
+			}),
+		},
+	}
+
+	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	require.NoError(t, err)
+	container := deployment.Spec.Template.Spec.Containers[0]
+
+	envByName := map[string]corev1.EnvVar{}
+	for _, env := range container.Env {
+		envByName[env.Name] = env
+	}
+	require.NotNil(t, envByName["CONFIG_VALUE"].ValueFrom)
+	require.NotNil(t, envByName["CONFIG_VALUE"].ValueFrom.ConfigMapKeyRef)
+	assert.Equal(t, "runtime-env", envByName["CONFIG_VALUE"].ValueFrom.ConfigMapKeyRef.Name)
+	assert.Equal(t, "config-value", envByName["CONFIG_VALUE"].ValueFrom.ConfigMapKeyRef.Key)
+	require.NotNil(t, envByName["SECRET_VALUE"].ValueFrom)
+	require.NotNil(t, envByName["SECRET_VALUE"].ValueFrom.SecretKeyRef)
+	assert.Equal(t, "runtime-secret", envByName["SECRET_VALUE"].ValueFrom.SecretKeyRef.Name)
+	assert.Equal(t, "secret-value", envByName["SECRET_VALUE"].ValueFrom.SecretKeyRef.Key)
 }
 
 func TestBuildWorkerConfigMap_GracefulShutdownUsesControlUserInAccessControl(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
+	"github.com/xtrinode/xtrinode/internal/config"
 )
 
 func TestScaleDeploymentViaSubresourceUpdatesReplicas(t *testing.T) {
@@ -47,6 +48,160 @@ func TestScaleDeploymentIgnoresMissingDeployment(t *testing.T) {
 
 	err := reconciler.scaleDeployment(context.Background(), xtrinode, "missing-worker", 0, "worker", newTestLogger())
 	require.NoError(t, err)
+}
+
+func TestScaleForResumeSeedsWorkersWhenNativeHPAEnabledAndTargetIsZero(t *testing.T) {
+	scheme := newTestScheme()
+	workerReplicas := int32(0)
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			ValuesOverlay: controllerValuesOverlay(t, map[string]interface{}{
+				"server": map[string]interface{}{
+					"workers": int64(0),
+					"autoscaling": map[string]interface{}{
+						"enabled":                           true,
+						"minReplicas":                       int64(2),
+						"maxReplicas":                       int64(4),
+						"targetCPUUtilizationPercentage":    int64(70),
+						"targetMemoryUtilizationPercentage": "",
+					},
+				},
+			}),
+		},
+	}
+	coordinator := testScaleDeployment(config.BuildCoordinatorDeploymentName(xtrinode.Name), xtrinode.Namespace, 0)
+	worker := testScaleDeployment(config.BuildWorkerDeploymentName(xtrinode.Name), xtrinode.Namespace, workerReplicas)
+	cli := newTestClient(scheme, xtrinode, coordinator, worker)
+	reconciler := newTestReconciler(cli, scheme)
+
+	err := reconciler.scaleForResume(context.Background(), xtrinode, 3)
+	require.NoError(t, err)
+
+	updatedCoordinator := &appsv1.Deployment{}
+	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: coordinator.Name, Namespace: coordinator.Namespace}, updatedCoordinator))
+	require.NotNil(t, updatedCoordinator.Spec.Replicas)
+	assert.Equal(t, int32(1), *updatedCoordinator.Spec.Replicas)
+
+	updatedWorker := &appsv1.Deployment{}
+	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: worker.Name, Namespace: worker.Namespace}, updatedWorker))
+	require.NotNil(t, updatedWorker.Spec.Replicas)
+	assert.Equal(t, int32(2), *updatedWorker.Spec.Replicas)
+}
+
+func TestScaleForResumeDoesNotScaleWorkersWhenKEDAEnabled(t *testing.T) {
+	scheme := newTestScheme()
+	workerReplicas := int32(0)
+	enabled := true
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			KEDA: &analyticsv1.KEDASpec{
+				Enabled:       &enabled,
+				ScalerType:    "prometheus",
+				ScalingMetric: "query",
+			},
+		},
+	}
+	coordinator := testScaleDeployment(config.BuildCoordinatorDeploymentName(xtrinode.Name), xtrinode.Namespace, 0)
+	worker := testScaleDeployment(config.BuildWorkerDeploymentName(xtrinode.Name), xtrinode.Namespace, workerReplicas)
+	cli := newTestClient(scheme, xtrinode, coordinator, worker)
+	reconciler := newTestReconciler(cli, scheme)
+
+	err := reconciler.scaleForResume(context.Background(), xtrinode, 3)
+	require.NoError(t, err)
+
+	updatedCoordinator := &appsv1.Deployment{}
+	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: coordinator.Name, Namespace: coordinator.Namespace}, updatedCoordinator))
+	require.NotNil(t, updatedCoordinator.Spec.Replicas)
+	assert.Equal(t, int32(1), *updatedCoordinator.Spec.Replicas)
+
+	updatedWorker := &appsv1.Deployment{}
+	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: worker.Name, Namespace: worker.Namespace}, updatedWorker))
+	require.NotNil(t, updatedWorker.Spec.Replicas)
+	assert.Equal(t, workerReplicas, *updatedWorker.Spec.Replicas)
+}
+
+func TestEnsureResumedInvariantsSeedsNativeHPAWorkerFloor(t *testing.T) {
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			ValuesOverlay: controllerValuesOverlay(t, map[string]interface{}{
+				"server": map[string]interface{}{
+					"workers": int64(0),
+					"autoscaling": map[string]interface{}{
+						"enabled":                           true,
+						"minReplicas":                       int64(2),
+						"maxReplicas":                       int64(4),
+						"targetCPUUtilizationPercentage":    int64(70),
+						"targetMemoryUtilizationPercentage": "",
+					},
+				},
+			}),
+		},
+	}
+	coordinator := testScaleDeployment(config.BuildCoordinatorDeploymentName(xtrinode.Name), xtrinode.Namespace, 1)
+	worker := testScaleDeployment(config.BuildWorkerDeploymentName(xtrinode.Name), xtrinode.Namespace, 0)
+	cli := newTestClient(scheme, xtrinode, coordinator, worker)
+	reconciler := newTestReconciler(cli, scheme)
+
+	err := reconciler.ensureResumedInvariants(context.Background(), xtrinode)
+	require.NoError(t, err)
+
+	updatedWorker := &appsv1.Deployment{}
+	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: worker.Name, Namespace: worker.Namespace}, updatedWorker))
+	require.NotNil(t, updatedWorker.Spec.Replicas)
+	assert.Equal(t, int32(2), *updatedWorker.Spec.Replicas)
+}
+
+func TestEnsureResumedInvariantsDoesNotLowerNativeHPAWorkerScale(t *testing.T) {
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			ValuesOverlay: controllerValuesOverlay(t, map[string]interface{}{
+				"server": map[string]interface{}{
+					"workers": int64(0),
+					"autoscaling": map[string]interface{}{
+						"enabled":                           true,
+						"minReplicas":                       int64(2),
+						"maxReplicas":                       int64(4),
+						"targetCPUUtilizationPercentage":    int64(70),
+						"targetMemoryUtilizationPercentage": "",
+					},
+				},
+			}),
+		},
+	}
+	coordinator := testScaleDeployment(config.BuildCoordinatorDeploymentName(xtrinode.Name), xtrinode.Namespace, 1)
+	worker := testScaleDeployment(config.BuildWorkerDeploymentName(xtrinode.Name), xtrinode.Namespace, 3)
+	cli := newTestClient(scheme, xtrinode, coordinator, worker)
+	reconciler := newTestReconciler(cli, scheme)
+
+	err := reconciler.ensureResumedInvariants(context.Background(), xtrinode)
+	require.NoError(t, err)
+
+	updatedWorker := &appsv1.Deployment{}
+	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: worker.Name, Namespace: worker.Namespace}, updatedWorker))
+	require.NotNil(t, updatedWorker.Spec.Replicas)
+	assert.Equal(t, int32(3), *updatedWorker.Spec.Replicas)
 }
 
 func testScaleDeployment(name, namespace string, replicas int32) *appsv1.Deployment {

@@ -26,16 +26,16 @@ func BuildWorkerDeployment(
 	catalogSecretEnvVars []corev1.EnvVar,
 ) (*appsv1.Deployment, error) {
 	// Worker replica ownership:
-	// - If KEDA enabled: set to nil (KEDA controls scaling, we don't manage this field)
+	// - If KEDA or native HPA is enabled: set to nil (autoscaler owns scaling)
 	// - Else if server.workers specified: use that value
 	// - Else: use preset default (typically 2)
 	var replicas *int32
-	kedaEnabled := isKEDAEnabled(xtrinode)
+	autoscalerEnabled := isKEDAEnabled(xtrinode) || isNativeHPAEnabled(xtrinode)
 
 	if xtrinode.Spec.GetValuesOverlayMap() != nil {
 		if server, ok := xtrinode.Spec.GetValuesOverlayMap()["server"].(map[string]interface{}); ok {
-			// Check for explicit workers count (only if KEDA not enabled)
-			if !kedaEnabled {
+			// Check for explicit workers count only when no autoscaler owns replicas.
+			if !autoscalerEnabled {
 				if workers, ok := ParseInt32(server["workers"]); ok {
 					replicas = &workers
 				}
@@ -43,20 +43,20 @@ func BuildWorkerDeployment(
 		}
 	}
 
-	// Set default replicas if KEDA not enabled and no explicit count
-	if !kedaEnabled && replicas == nil {
+	// Set default replicas if autoscaling is not enabled and no explicit count exists.
+	if !autoscalerEnabled && replicas == nil {
 		defaultReplicas := int32(config.DefaultWorkerReplicas)
 		replicas = &defaultReplicas
 	}
 
-	if !kedaEnabled && xtrinode.Spec.MinWorkers != nil && *xtrinode.Spec.MinWorkers > 0 {
+	if !autoscalerEnabled && xtrinode.Spec.MinWorkers != nil && *xtrinode.Spec.MinWorkers > 0 {
 		if replicas == nil || *replicas < *xtrinode.Spec.MinWorkers {
 			minWorkers := *xtrinode.Spec.MinWorkers
 			replicas = &minWorkers
 		}
 	}
 
-	// If KEDA enabled, replicas stays nil (KEDA owns this field)
+	// If an autoscaler is enabled, replicas stays nil so the autoscaler owns this field.
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

@@ -277,11 +277,15 @@ func (s *reconcileKEDAStep) Name() string {
 
 func (s *reconcileKEDAStep) Execute(ctx context.Context, xtrinode *analyticsv1.XTrinode, state *ReconciliationState) (result ctrl.Result, shouldContinue bool, err error) {
 	if !isKEDAEnabled(xtrinode) {
-		state.Log.V(1).Info("KEDA disabled - using fixed worker replicas and cleaning up any stale ScaledObject", "step", s.Name())
+		kedaDisabledMessage := "KEDA disabled; fixed worker replicas are used"
+		if isNativeHPAEnabled(xtrinode) {
+			kedaDisabledMessage = "KEDA disabled; native HPA worker autoscaling is configured"
+		}
+		state.Log.V(1).Info("KEDA disabled - cleaning up any stale ScaledObject", "step", s.Name(), "workerScaling", kedaDisabledMessage)
 		if cleanupErr := s.reconciler.KEDAService.DeleteScaledObject(ctx, xtrinode, state.Log); cleanupErr != nil {
 			state.Log.V(1).Info("Ignored stale KEDA cleanup error while KEDA is disabled", "error", cleanupErr)
 		}
-		status.SetCondition(xtrinode, status.ConditionTypeKEDAReady, metav1.ConditionFalse, "KEDADisabled", "KEDA disabled; fixed worker replicas are used")
+		status.SetCondition(xtrinode, status.ConditionTypeKEDAReady, metav1.ConditionFalse, "KEDADisabled", kedaDisabledMessage)
 		return ctrl.Result{}, true, nil
 	}
 
