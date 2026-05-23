@@ -17,7 +17,7 @@ import (
 
 // RolloutInputs contains all inputs for computing rollout hashes
 type RolloutInputs struct {
-	BaseRevision string
+	RenderRevision string
 
 	// Content digests from external dependencies
 	CatalogDigest       string
@@ -34,7 +34,7 @@ type RolloutInputs struct {
 // Includes catalog digest since coordinator serves catalog metadata
 func CoordinatorRolloutHash(in RolloutInputs) string { //nolint:gocritic // hugeParam: passing by pointer would break callers that construct RolloutInputs inline
 	d := digest.New()
-	d.AddString("base", in.BaseRevision)
+	d.AddString("render", in.RenderRevision)
 	d.AddJSON("coordCfg", in.CoordConfig)
 	d.AddString("access", in.AccessControlDigest)
 	d.AddString("session", in.SessionPropsDigest)
@@ -48,7 +48,7 @@ func CoordinatorRolloutHash(in RolloutInputs) string { //nolint:gocritic // huge
 // Set rollWorkersOnCatalogChange=true to include catalog digest
 func WorkerRolloutHash(in RolloutInputs, rollWorkersOnCatalogChange bool) string { //nolint:gocritic // hugeParam: passing by pointer would break callers that construct RolloutInputs inline
 	d := digest.New()
-	d.AddString("base", in.BaseRevision)
+	d.AddString("render", in.RenderRevision)
 	d.AddJSON("workerCfg", in.WorkerConfig)
 	d.AddString("access", in.AccessControlDigest)
 	d.AddString("session", in.SessionPropsDigest)

@@ -747,9 +747,9 @@ type XTrinodeStatus struct {
 	// LastActivity is the timestamp of the last query
 	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
 
-	// CurrentRevision is the hash of the desired state (computed from spec)
-	// This revision is stamped on all resources (Deployments, ConfigMaps, etc.)
-	// When spec changes, a new revision is computed and all resources converge to it
+	// CurrentRevision is the broad desired-state hash computed from spec and operatorVersion.
+	// It is stamped on resource metadata for convergence and debugging.
+	// Pod rollouts are controlled by the component rollout hashes below.
 	// +optional
 	CurrentRevision string `json:"currentRevision,omitempty"`
 
@@ -764,15 +764,16 @@ type XTrinodeStatus struct {
 	// +optional
 	BaseRevision string `json:"baseRevision,omitempty"`
 
-	// CoordinatorRolloutHash is the hash that triggers coordinator pod rollouts
-	// Includes: baseRevision + coordinatorConfig + catalogDigest + accessControl + sessionProps + secrets
+	// CoordinatorRolloutHash is the rendered-content hash that triggers coordinator pod rollouts.
+	// Includes the rendered coordinator pod template plus catalog, access control,
+	// session property, and Secret content digests.
 	// Changes to this hash trigger coordinator Deployment rollout
 	// +optional
 	CoordinatorRolloutHash string `json:"coordinatorRolloutHash,omitempty"`
 
-	// WorkerRolloutHash is the hash that triggers worker pod rollouts
-	// Includes: baseRevision + workerConfig + accessControl + sessionProps + secrets
-	// Excludes catalogDigest by default (workers don't roll on catalog changes)
+	// WorkerRolloutHash is the rendered-content hash that triggers worker pod rollouts.
+	// Includes the rendered worker pod template plus access control, session property,
+	// Secret content, and mounted catalog content digests.
 	// Changes to this hash trigger worker Deployment rollout
 	// +optional
 	WorkerRolloutHash string `json:"workerRolloutHash,omitempty"`

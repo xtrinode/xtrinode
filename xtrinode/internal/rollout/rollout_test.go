@@ -93,7 +93,7 @@ func TestRolloutHashesUseExpectedInputs(t *testing.T) {
 	t.Parallel()
 
 	inputs := RolloutInputs{
-		BaseRevision:        "base-a",
+		RenderRevision:      "render-a",
 		CatalogDigest:       "catalog-a",
 		AccessControlDigest: "access-a",
 		SessionPropsDigest:  "session-a",

@@ -23,6 +23,17 @@ func CleanupOldConfigMapRevisions(
 	xtrinode *analyticsv1.XTrinode,
 	currentRevision string,
 ) error {
+	return CleanupOldConfigMapRevisionsForRoles(ctx, c, xtrinode, currentRevision, currentRevision)
+}
+
+// CleanupOldConfigMapRevisionsForRoles removes old revisioned ConfigMaps, keeping each role's current revision.
+func CleanupOldConfigMapRevisionsForRoles(
+	ctx context.Context,
+	c client.Client,
+	xtrinode *analyticsv1.XTrinode,
+	currentCoordinatorRevision string,
+	currentWorkerRevision string,
+) error {
 	// List all ConfigMaps owned by this XTrinode
 	configMapList := &corev1.ConfigMapList{}
 	listOpts := &client.ListOptions{
@@ -42,8 +53,8 @@ func CleanupOldConfigMapRevisions(
 	coordinatorCMs := make(map[string]*corev1.ConfigMap)
 	workerCMs := make(map[string]*corev1.ConfigMap)
 
-	coordinatorPrefix := fmt.Sprintf("trino-%s-coordinator-", xtrinode.Name)
-	workerPrefix := fmt.Sprintf("trino-%s-worker-", xtrinode.Name)
+	coordinatorPrefix := coordinatorConfigMapName(xtrinode, "")
+	workerPrefix := workerConfigMapName(xtrinode, "")
 
 	for i := range configMapList.Items {
 		cm := &configMapList.Items[i]
@@ -52,13 +63,13 @@ func CleanupOldConfigMapRevisions(
 		if strings.HasPrefix(name, coordinatorPrefix) {
 			// Extract revision from name
 			revision := strings.TrimPrefix(name, coordinatorPrefix)
-			if revision != "" && revision != currentRevision {
+			if revision != "" && revision != currentCoordinatorRevision {
 				coordinatorCMs[revision] = cm
 			}
 		} else if strings.HasPrefix(name, workerPrefix) {
 			// Extract revision from name
 			revision := strings.TrimPrefix(name, workerPrefix)
-			if revision != "" && revision != currentRevision {
+			if revision != "" && revision != currentWorkerRevision {
 				workerCMs[revision] = cm
 			}
 		}
@@ -75,6 +86,22 @@ func CleanupOldConfigMapRevisions(
 	}
 
 	return nil
+}
+
+func configMapRevisionFromName(xtrinode *analyticsv1.XTrinode, role, name string) string {
+	var prefix string
+	switch role {
+	case "coordinator":
+		prefix = coordinatorConfigMapName(xtrinode, "")
+	case "worker":
+		prefix = workerConfigMapName(xtrinode, "")
+	default:
+		return ""
+	}
+	if !strings.HasPrefix(name, prefix) {
+		return ""
+	}
+	return strings.TrimPrefix(name, prefix)
 }
 
 // cleanupOldRevisions deletes old ConfigMap revisions, keeping only the last N
