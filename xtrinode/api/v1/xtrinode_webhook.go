@@ -6,11 +6,13 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/sizing"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -245,6 +247,11 @@ func (t *XTrinode) Default() {
 		t.Spec.MinWorkers = &defaultMin
 	}
 
+	// Set default auto-suspend threshold if not specified.
+	if t.Spec.AutoSuspendAfter == nil {
+		t.Spec.AutoSuspendAfter = &metav1.Duration{Duration: 5 * time.Minute}
+	}
+
 	// Set default node pool name if not specified
 	if t.Spec.NodePool != nil && t.Spec.NodePool.Name == "" {
 		t.Spec.NodePool.Name = fmt.Sprintf("%s-pool", t.Name)
@@ -441,6 +448,7 @@ func (t *XTrinode) validateXTrinode() error {
 	if t.Spec.TrinoControlAuth != nil {
 		allErrs = append(allErrs, t.validateTrinoControlAuth(field.NewPath("spec.trinoControlAuth"))...)
 	}
+	allErrs = append(allErrs, t.validateAutoscalerOwnership(field.NewPath("spec"))...)
 	allErrs = append(allErrs, t.validateTrinoLifecycleAuthCompatibility(field.NewPath("spec"))...)
 	allErrs = append(allErrs, t.validateTrinoLifecycleHTTPCompatibility(field.NewPath("spec"))...)
 
@@ -722,6 +730,44 @@ func (t *XTrinode) validateKEDA(fldPath *field.Path) field.ErrorList {
 	}
 
 	return allErrs
+}
+
+func (t *XTrinode) validateAutoscalerOwnership(fldPath *field.Path) field.ErrorList {
+	if !kedaAutoscalingActive(t.Spec.KEDA) || !nativeHPAEnabled(t.Spec.GetValuesOverlayMap()) {
+		return nil
+	}
+	return field.ErrorList{
+		field.Forbidden(
+			fldPath.Child("valuesOverlay").Child("server").Child("autoscaling").Child("enabled"),
+			"native HPA and spec.keda cannot both manage worker replicas; choose one autoscaler"),
+	}
+}
+
+func kedaAutoscalingActive(k *KEDASpec) bool {
+	if k == nil || k.Enabled == nil || !*k.Enabled {
+		return false
+	}
+	return k.ScalerType != "" ||
+		k.ScalingMetric != "" ||
+		(k.PrometheusServer != nil && strings.TrimSpace(*k.PrometheusServer) != "") ||
+		(k.PrometheusQuery != nil && strings.TrimSpace(*k.PrometheusQuery) != "") ||
+		(k.HTTPEndpoint != nil && strings.TrimSpace(*k.HTTPEndpoint) != "")
+}
+
+func nativeHPAEnabled(valuesMap map[string]interface{}) bool {
+	if valuesMap == nil {
+		return false
+	}
+	server, ok := valuesMap["server"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	autoscaling, ok := server["autoscaling"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	enabled, ok := autoscaling["enabled"].(bool)
+	return ok && enabled
 }
 
 // validateTLS validates TLS configuration

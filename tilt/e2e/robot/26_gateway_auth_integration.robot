@@ -39,6 +39,13 @@ Gateway Accepts Valid API Key And Proxies Trino
     Authenticated Gateway Statement Should Return Status    ${body}    SELECT 1    200
     Drain Authenticated Trino Query    ${body}
 
+Gateway Admin UI Requires API Key When Configured
+    Gateway Admin UI Request Should Return Status    missing    ${EMPTY}    401
+    Gateway Admin UI Request Should Return Status    valid    ${GATEWAY_AUTH_VALID_KEY}    200
+    ${status}=    HTTP Request To File    GET    http://127.0.0.1:${GATEWAY_PORT}/ui/admin/api/gateway/status    /tmp/xtrinode-gateway-auth-admin-status.json    ${EMPTY}    X-API-Key: ${GATEWAY_AUTH_VALID_KEY}
+    Should Be Equal    ${status}    200
+    JQ Should Match    /tmp/xtrinode-gateway-auth-admin-status.json    .ui.enabled == true and .ui.requireAuth == true
+
 *** Keywords ***
 Setup Gateway API Key Auth Suite
     Save Original Gateway Args
@@ -79,7 +86,7 @@ Create Gateway Auth RBAC
 
 Enable Gateway API Key Auth
     Create File    /tmp/xtrinode-gateway-auth-original-args.json    ${ORIGINAL_GATEWAY_ARGS}
-    Create File    /tmp/xtrinode-gateway-auth-filter.jq    map(select((startswith("--auth-enabled") or startswith("--auth-type=") or startswith("--auth-secret-name=") or startswith("--auth-secret-key=") or startswith("--auth-namespace=") or startswith("--auth-oauth-")) | not)) + ["--auth-enabled=true","--auth-type=api-key","--auth-secret-name=" + $secret,"--auth-secret-key=" + $key,"--auth-namespace=" + $namespace]
+    Create File    /tmp/xtrinode-gateway-auth-filter.jq    map(select((startswith("--auth-enabled") or startswith("--auth-type=") or startswith("--auth-secret-name=") or startswith("--auth-secret-key=") or startswith("--auth-namespace=") or startswith("--auth-oauth-") or startswith("--ui-enabled=") or startswith("--ui-require-auth=")) | not)) + ["--auth-enabled=true","--auth-type=api-key","--auth-secret-name=" + $secret,"--auth-secret-key=" + $key,"--auth-namespace=" + $namespace,"--ui-enabled=true","--ui-require-auth=true"]
     ${patched_args}=    Run Process    jq    -c    --arg    secret    ${GATEWAY_AUTH_SECRET_NAME}    --arg    key    ${GATEWAY_AUTH_SECRET_KEY}    --arg    namespace    ${GATEWAY_NAMESPACE}    -f    /tmp/xtrinode-gateway-auth-filter.jq    /tmp/xtrinode-gateway-auth-original-args.json    stderr=STDOUT
     Should Be Equal As Integers    ${patched_args.rc}    0    msg=${patched_args.stdout}
     Patch Gateway Args From JSON    ${patched_args.stdout}
@@ -110,6 +117,25 @@ Gateway API Key Request Should Return Status
     IF    '${expected_status}' == '401'
         ${response_headers}=    Get File    ${headers}
         Should Contain    ${response_headers}    Authenticate: X-API-Key
+    END
+
+Gateway Admin UI Request Should Return Status
+    [Arguments]    ${name}    ${api_key}    ${expected_status}
+    ${body}=    Set Variable    /tmp/xtrinode-gateway-auth-admin-${name}.html
+    ${headers}=    Set Variable    /tmp/xtrinode-gateway-auth-admin-${name}.headers
+    ${status}=    Set Variable    ${EMPTY}
+    IF    '${api_key}' == ''
+        ${status}=    HTTP Request With Headers To File    GET    http://127.0.0.1:${GATEWAY_PORT}/ui/admin/    ${body}    ${headers}
+    ELSE
+        ${status}=    HTTP Request With Headers To File    GET    http://127.0.0.1:${GATEWAY_PORT}/ui/admin/    ${body}    ${headers}    ${EMPTY}    X-API-Key: ${api_key}
+    END
+    Should Be Equal    ${status}    ${expected_status}
+    IF    '${expected_status}' == '401'
+        ${response_headers}=    Get File    ${headers}
+        Should Contain    ${response_headers}    Authenticate: X-API-Key
+    ELSE
+        ${response_body}=    Get File    ${body}
+        Should Contain    ${response_body}    XTrinode Gateway
     END
 
 Authenticated Gateway Statement Should Return Status

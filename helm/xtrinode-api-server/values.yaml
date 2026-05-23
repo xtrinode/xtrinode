@@ -2,7 +2,8 @@
 #
 # NAMESPACE STRATEGY:
 # Deploy this API server in the same namespace as the operator/control plane.
-# It provides REST API for runtime lifecycle management.
+# It is an internal service-to-service control-plane API for runtime lifecycle
+# management, not a public tenant or end-user API.
 # See docs/ARCHITECTURE.md#namespace-and-isolation-model for complete architecture details.
 #
 # Architecture:
@@ -14,6 +15,7 @@
 # - Manages K8s Lease objects in its release namespace for resume/suspend gating
 # - Provides REST API for runtime operations (resume, suspend, status)
 # - Exposes API-server Prometheus self-metrics
+# - Stays ClusterIP/internal by default; use the Gateway as the external Trino entrypoint
 
 replicaCount: 2
 
@@ -54,6 +56,7 @@ apiServer:
 
   # Bearer authentication for API endpoints under apiPath.
   # Health and Prometheus metrics endpoints remain unauthenticated.
+  # Enable this for shared and production deployments.
   auth:
     enabled: false
     # Prefer existingSecret in shared or production deployments.
@@ -63,7 +66,8 @@ apiServer:
     secretKey: "token"
     token: ""
     # Optional least-privilege token for Gateway -> API Server resume calls.
-    # This token can only call resume endpoints.
+    # This token can only call resume endpoints. Configure Gateway with this
+    # token, not the admin token.
     resume:
       enabled: false
       existingSecret: ""
@@ -71,8 +75,11 @@ apiServer:
       secretKey: "token"
       token: ""
 
-  # Browser CORS is disabled by default. Add exact origins only when exposing
-  # the API server through a browser-facing ingress.
+  # Browser CORS is disabled by default. Direct browser or public ingress access
+  # remains unsupported for tenants and end users because tenant-aware
+  # authorization is not implemented. If an operator deliberately enables
+  # ingress for restricted administrative access, chart rendering requires
+  # bearer auth, TLS, and exact non-wildcard origins here.
   cors:
     allowedOrigins: []
 
@@ -108,7 +115,10 @@ service:
   type: ClusterIP
   port: 8081
 
-# Ingress configuration
+# Ingress configuration.
+# Keep disabled for the supported internal-only posture. Enabling it is treated
+# as exposed-mode administrative access and requires apiServer.auth.enabled=true,
+# apiServer.cors.allowedOrigins, and ingress.tls.
 ingress:
   enabled: false
   className: "" # e.g., "nginx", "traefik", "istio"

@@ -132,6 +132,7 @@ func (s *Server) handleUnifiedResume(w http.ResponseWriter, r *http.Request) {
 	leaseResult, err := s.leaseManager.AcquireLease(r.Context(), key, keyType)
 	if err != nil {
 		result = "error"
+		recordK8sLeaseError(string(keyType))
 		s.log.Error(err, "Failed to acquire lease", "key", key, "keyType", keyType)
 		s.writeError(w, http.StatusInternalServerError, "Failed to acquire lease", "LEASE_ERROR")
 		return
@@ -155,6 +156,7 @@ func (s *Server) tryPoolGate(w http.ResponseWriter, r *http.Request, routingGrou
 	// Try acquire pool lease FIRST (before expensive checks)
 	leaseResult, err := s.leaseManager.AcquireLease(r.Context(), key, keyType)
 	if err != nil {
+		recordK8sLeaseError(string(keyType))
 		s.log.Error(err, "Failed to acquire pool lease", "key", key)
 		s.writeError(w, http.StatusInternalServerError, "Failed to acquire lease", "LEASE_ERROR")
 		return true, "error"

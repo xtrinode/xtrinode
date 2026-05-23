@@ -109,12 +109,12 @@ func BuildTrinoResourceSet(
 		return nil, fmt.Errorf("failed to build coordinator ConfigMap: %w", err)
 	}
 
-	// Render workers unless workers=0 and KEDA is explicitly disabled.
+	// Render workers unless workers=0 and no autoscaler owns worker scale.
 	shouldRenderWorker := true // Default to rendering workers
 	valuesOverlay := xtrinode.Spec.GetValuesOverlayMap()
 	if valuesOverlay != nil {
 		if server, ok := valuesOverlay["server"].(map[string]interface{}); ok {
-			kedaEnabled := isKEDAEnabled(xtrinode)
+			autoscalerEnabled := isKEDAEnabled(xtrinode) || isNativeHPAEnabled(xtrinode)
 			workersCount := -1 // -1 means not specified
 
 			// Check workers count
@@ -127,8 +127,8 @@ func BuildTrinoResourceSet(
 				minWorkers = *xtrinode.Spec.MinWorkers
 			}
 
-			// Only disable if BOTH conditions: workers=0 AND keda disabled
-			if workersCount == 0 && !kedaEnabled && minWorkers == 0 {
+			// Only disable if workers=0, no autoscaler owns replicas, and no fixed floor is set.
+			if workersCount == 0 && !autoscalerEnabled && minWorkers == 0 {
 				shouldRenderWorker = false
 			}
 		}

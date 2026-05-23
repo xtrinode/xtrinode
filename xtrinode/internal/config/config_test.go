@@ -278,6 +278,21 @@ func TestConstants(t *testing.T) {
 	if GatewayAPIServerTimeout != 5*time.Second {
 		t.Errorf("Expected GatewayAPIServerTimeout to be 5s, got %v", GatewayAPIServerTimeout)
 	}
+	if GatewayDrainDuration != 5*time.Minute {
+		t.Errorf("Expected GatewayDrainDuration to be 5m, got %v", GatewayDrainDuration)
+	}
+	if GatewayDrainRequeueInterval != 30*time.Second {
+		t.Errorf("Expected GatewayDrainRequeueInterval to be 30s, got %v", GatewayDrainRequeueInterval)
+	}
+	if DrainStartedAtAnnotation != "xtrinode.analytics.xtrinode.io/drain-started-at" {
+		t.Errorf("Expected DrainStartedAtAnnotation to be xtrinode analytics key, got %s", DrainStartedAtAnnotation)
+	}
+	if DrainCompletedAtAnnotation != "xtrinode.analytics.xtrinode.io/drain-completed-at" {
+		t.Errorf("Expected DrainCompletedAtAnnotation to be xtrinode analytics key, got %s", DrainCompletedAtAnnotation)
+	}
+	if DrainResultAnnotation != "xtrinode.analytics.xtrinode.io/drain-result" {
+		t.Errorf("Expected DrainResultAnnotation to be xtrinode analytics key, got %s", DrainResultAnnotation)
+	}
 
 	// Test HTTP paths
 	if HealthPath != "/health" {

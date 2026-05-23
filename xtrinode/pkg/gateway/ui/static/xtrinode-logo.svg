@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="XTrinode">
+  <rect width="64" height="64" rx="12" fill="#07120f"/>
+  <path d="M14 16h13l6 9 6-9h11L39 31l12 17H38l-7-10-7 10H13l12-17L14 16Z" fill="#bfffd4"/>
+  <path d="M31 7h8l-6 18h-8l6-18Z" fill="#60d9ff"/>
+</svg>

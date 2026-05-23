@@ -41,6 +41,18 @@ func TestXTrinode_Default(t *testing.T) {
 			},
 		},
 		{
+			name: "sets default autoSuspendAfter to 5 minutes",
+			xtrinode: &XTrinode{
+				Spec: XTrinodeSpec{
+					Size: "s",
+				},
+			},
+			expected: func(tr *XTrinode) {
+				assert.NotNil(t, tr.Spec.AutoSuspendAfter)
+				assert.Equal(t, 5*time.Minute, tr.Spec.AutoSuspendAfter.Duration)
+			},
+		},
+		{
 			name: "sets default nodePool name",
 			xtrinode: &XTrinode{
 				ObjectMeta: metav1.ObjectMeta{
@@ -329,6 +341,34 @@ func TestXTrinode_ValidateCreate(t *testing.T) {
 				assert.NoError(t, err)
 			}
 		})
+	}
+}
+
+func TestXTrinode_ValidateCreate_RejectsKEDAAndNativeHPA(t *testing.T) {
+	enabled := true
+	xtrinode := &XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-dummy"},
+		Spec: XTrinodeSpec{
+			Size: "s",
+			KEDA: &KEDASpec{
+				Enabled:       &enabled,
+				ScalerType:    "prometheus",
+				ScalingMetric: "query",
+			},
+			ValuesOverlay: valuesOverlayFromMap(map[string]interface{}{
+				"server": map[string]interface{}{
+					"autoscaling": map[string]interface{}{
+						"enabled": true,
+					},
+				},
+			}),
+		},
+	}
+
+	_, err := xtrinode.ValidateCreate()
+
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "native HPA and spec.keda cannot both manage worker replicas")
 	}
 }
 

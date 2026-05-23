@@ -9,7 +9,7 @@ import (
 	"github.com/xtrinode/xtrinode/internal/config"
 )
 
-func buildEnvVars(xtrinode *analyticsv1.XTrinode) []corev1.EnvVar {
+func buildEnvVars(xtrinode *analyticsv1.XTrinode) ([]corev1.EnvVar, error) {
 	envVars := []corev1.EnvVar{}
 
 	// Add environment variables from valuesOverlay
@@ -17,12 +17,9 @@ func buildEnvVars(xtrinode *analyticsv1.XTrinode) []corev1.EnvVar {
 		if env, ok := xtrinode.Spec.GetValuesOverlayMap()["env"].([]interface{}); ok {
 			for _, envItem := range env {
 				if envMap, ok := envItem.(map[string]interface{}); ok {
-					envVar := corev1.EnvVar{}
-					if name, ok := envMap["name"].(string); ok {
-						envVar.Name = name
-					}
-					if value, ok := envMap["value"].(string); ok {
-						envVar.Value = value
+					envVar, err := buildEnvVarFromMap(envMap)
+					if err != nil {
+						return nil, fmt.Errorf("failed to build env var: %w", err)
 					}
 					envVars = append(envVars, envVar)
 				}
@@ -30,7 +27,7 @@ func buildEnvVars(xtrinode *analyticsv1.XTrinode) []corev1.EnvVar {
 		}
 	}
 
-	return envVars
+	return envVars, nil
 }
 
 func getTrinoImage(xtrinode *analyticsv1.XTrinode) string {

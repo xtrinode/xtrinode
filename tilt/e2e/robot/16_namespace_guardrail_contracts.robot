@@ -12,8 +12,11 @@ ${GUARDRAIL_A}               guardrail-a
 ${GUARDRAIL_B}               guardrail-b
 ${GUARDRAIL_QUOTA}           xtrinode-namespace-quota
 ${GUARDRAIL_LIMITRANGE}      xtrinode-namespace-limits
+${XTRINODE_FINALIZER}        xtrinode.analytics.xtrinode.io/finalizer
+${DRAIN_OBSERVER_FINALIZER}  e2e.xtrinode.io/observe-drain
 ${DRAIN_STARTED_ANNOTATION}  xtrinode.analytics.xtrinode.io/drain-started-at
-${DRAIN_ELAPSED_TIMESTAMP}   2000-01-01T00:00:00Z
+${DRAIN_COMPLETED_ANNOTATION}    xtrinode.analytics.xtrinode.io/drain-completed-at
+${DRAIN_RESULT_ANNOTATION}   xtrinode.analytics.xtrinode.io/drain-result
 
 *** Test Cases ***
 Shared Namespace Guardrails Recalculate Through Deletion Finalizers
@@ -70,16 +73,53 @@ Namespace Guardrail Resource Should Not Exist
 
 Delete Guardrail XTrinode Through Finalizer
     [Arguments]    ${name}
+    Add Guardrail Drain Observation Finalizer    ${name}
     Command Should Succeed    kubectl    delete    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    --wait=false
-    Wait Until Keyword Succeeds    60s    2s    Guardrail XTrinode Drain Annotation Should Exist    ${name}
-    ${patch}=    Set Variable    {"metadata":{"annotations":{"${DRAIN_STARTED_ANNOTATION}":"${DRAIN_ELAPSED_TIMESTAMP}"}}}
-    Command Should Succeed    kubectl    patch    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    --type=merge    -p    ${patch}
+    Wait Until Keyword Succeeds    60s    2s    Guardrail XTrinode Annotation Should Exist    ${name}    ${DRAIN_STARTED_ANNOTATION}
+    Wait Until Keyword Succeeds    180s    2s    Guardrail XTrinode Drain Completion Should Match    ${name}    query_complete
+    Wait Until Keyword Succeeds    180s    2s    Guardrail XTrinode Operator Finalizer Should Be Removed    ${name}
+    Remove Guardrail Drain Observation Finalizer    ${name}
     Command Should Succeed    kubectl    wait    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    --for=delete    --timeout=180s
 
-Guardrail XTrinode Drain Annotation Should Exist
+Add Guardrail Drain Observation Finalizer
     [Arguments]    ${name}
-    ${annotation}=    Kubectl Output    get    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    -o    jsonpath={.metadata.annotations.xtrinode\\.analytics\\.xtrinode\\.io/drain-started-at}
-    Should Not Be Empty    ${annotation}
+    Wait Until Keyword Succeeds    60s    2s    Guardrail XTrinode Operator Finalizer Should Exist    ${name}
+    ${patch}=    Set Variable    [{"op":"add","path":"/metadata/finalizers/-","value":"${DRAIN_OBSERVER_FINALIZER}"}]
+    Command Should Succeed    kubectl    patch    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    --type=json    -p    ${patch}
+
+Remove Guardrail Drain Observation Finalizer
+    [Arguments]    ${name}
+    Command Should Succeed    kubectl    patch    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    --type=merge    -p    {"metadata":{"finalizers":[]}}
+
+Guardrail XTrinode Operator Finalizer Should Exist
+    [Arguments]    ${name}
+    ${finalizers}=    Kubectl Output    get    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    -o    jsonpath={.metadata.finalizers}
+    Should Contain    ${finalizers}    ${XTRINODE_FINALIZER}
+
+Guardrail XTrinode Operator Finalizer Should Be Removed
+    [Arguments]    ${name}
+    ${finalizers}=    Kubectl Output    get    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    -o    jsonpath={.metadata.finalizers}
+    Should Not Contain    ${finalizers}    ${XTRINODE_FINALIZER}
+    Should Contain    ${finalizers}    ${DRAIN_OBSERVER_FINALIZER}
+
+Guardrail XTrinode Annotation Value
+    [Arguments]    ${name}    ${annotation}
+    ${output_format}=    Set Variable    go-template={{ with index .metadata.annotations "${annotation}" }}{{ . }}{{ end }}
+    ${value}=    Kubectl Output    get    xtrinode/${name}    -n    ${GUARDRAIL_NAMESPACE}    -o    ${output_format}
+    RETURN    ${value}
+
+Guardrail XTrinode Annotation Should Exist
+    [Arguments]    ${name}    ${annotation}
+    ${value}=    Guardrail XTrinode Annotation Value    ${name}    ${annotation}
+    Should Not Be Empty    ${value}
+
+Guardrail XTrinode Drain Completion Should Match
+    [Arguments]    ${name}    ${expected_result}
+    ${completed_at}=    Guardrail XTrinode Annotation Value    ${name}    ${DRAIN_COMPLETED_ANNOTATION}
+    Should Not Be Empty    ${completed_at}
+    Should Match Regexp    ${completed_at}    ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})$
+    ${result}=    Guardrail XTrinode Annotation Value    ${name}    ${DRAIN_RESULT_ANNOTATION}
+    Should Be Equal    ${result}    ${expected_result}
 
 Cleanup Namespace Guardrail Contract Objects
     Run Command Allow Failure    kubectl    patch    xtrinode/${GUARDRAIL_A}    -n    ${GUARDRAIL_NAMESPACE}    --type=merge    -p    {"metadata":{"finalizers":[]}}

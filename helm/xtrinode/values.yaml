@@ -112,6 +112,11 @@ xtrinode-operator:
     gateway:
       baseURL: "http://xtrinode-gateway.xtrinode-gateway.svc.cluster.local:8080"
 
+    # Lifecycle drain configuration
+    lifecycle:
+      drainDuration: "5m"
+      drainRequeueInterval: "30s"
+
     # CAPI provider (azure, aws, gcp)
     capiProvider: "azure"
 
@@ -128,7 +133,10 @@ xtrinode-api-server:
     pullPolicy: IfNotPresent
     tag: ""
 
-  # API Server configuration
+  # API Server configuration.
+  # The API server is an internal service-to-service control-plane API, not a
+  # public tenant or end-user API. Keep it ClusterIP/internal by default and use
+  # the Gateway as the external Trino entrypoint.
   apiServer:
     # API server HTTP port
     port: 8081
@@ -151,12 +159,15 @@ xtrinode-api-server:
     shutdownTimeout: "5s"
 
     auth:
+      # Enable bearer auth for shared and production deployments.
       enabled: false
       existingSecret: ""
       secretName: ""
       secretKey: "token"
       token: ""
       resume:
+        # Optional least-privilege token for Gateway -> API Server resume calls.
+        # Configure Gateway with this token, not the admin token.
         enabled: false
         existingSecret: ""
         secretName: ""
@@ -164,6 +175,11 @@ xtrinode-api-server:
         token: ""
 
     cors:
+      # Browser CORS is disabled by default. Direct browser or public ingress
+      # access remains unsupported for tenants and end users because
+      # tenant-aware authorization is not implemented. If an operator
+      # deliberately enables ingress for restricted administrative access, chart
+      # rendering requires exact non-wildcard origins here.
       allowedOrigins: []
 
   # RBAC configuration
@@ -198,7 +214,10 @@ xtrinode-api-server:
     type: ClusterIP
     port: 8081
 
-  # Ingress configuration
+  # Ingress configuration.
+  # Keep disabled for the supported internal-only posture. Enabling it is
+  # treated as exposed-mode administrative access and requires
+  # apiServer.auth.enabled=true, apiServer.cors.allowedOrigins, and ingress.tls.
   ingress:
     enabled: false
     className: "" # e.g., "nginx", "traefik", "istio"
@@ -331,6 +350,7 @@ xtrinode-gateway:
     apiServerURL: "http://xtrinode-api-server.xtrinode-system.svc.cluster.local:8081/api/v1"
 
     apiServerAuth:
+      # Use the API server resume-only bearer token for Gateway calls.
       enabled: false
       existingSecret: ""
       secretName: ""
@@ -348,6 +368,10 @@ xtrinode-gateway:
 
     # Log level (debug, info, error)
     logLevel: "info"
+
+    ui:
+      enabled: false
+      requireAuth: true
 
     # Authentication configuration
     auth:
@@ -415,6 +439,8 @@ xtrinode-gateway:
   # RBAC configuration
   rbac:
     create: true
+    # Only rendered when gateway.ui.enabled=true.
+    xtrinodeRead: true
 
   # Service account configuration
   serviceAccount:

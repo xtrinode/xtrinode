@@ -34,7 +34,8 @@ gateway:
   apiServerURL: "http://xtrinode-api-server.xtrinode-system.svc.cluster.local:8081/api/v1"
 
   # Bearer token used for Gateway -> API Server control-plane calls.
-  # Configure this with the same token as xtrinode-api-server.apiServer.auth.
+  # Configure this with the resume-only token from
+  # xtrinode-api-server.apiServer.auth.resume, not the admin token.
   apiServerAuth:
     enabled: false
     existingSecret: ""
@@ -56,6 +57,12 @@ gateway:
 
   # Log level (debug, info, error)
   logLevel: "info"
+
+  # Embedded read-only operator UI.
+  # Disabled by default. When exposed through ingress, keep TLS and gateway auth enabled.
+  ui:
+    enabled: false
+    requireAuth: true
 
   # Authentication configuration
   auth:
@@ -145,6 +152,10 @@ redis:
 # RBAC configuration
 rbac:
   create: true
+  # When Gateway UI is enabled, grants read-only access to XTrinode CRs so
+  # lifecycle fields such as auto-suspend duration, last activity, and suspend
+  # ETA can be shown.
+  xtrinodeRead: true
 
 # Service account configuration
 serviceAccount:

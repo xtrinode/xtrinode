@@ -139,6 +139,7 @@ robot_deps = [
     'e2e/robot/30_real_trino_lifecycle.robot',
     'e2e/robot/35_real_trino_wake_ttl.robot',
     'e2e/robot/36_trino_password_lifecycle_auth.robot',
+    'e2e/robot/38_lifecycle_cleanup_interruptions.robot',
     'e2e/robot/40_real_trino_scaleout.robot',
     'e2e/robot/45_prometheus_autoscaler.robot',
     'e2e/robot/50_postgres_catalog.robot',
@@ -149,6 +150,7 @@ robot_deps = [
     'e2e/fixtures/gateway-process-backends.yaml',
     'e2e/helpers/local-trino-keda-smoke.sh',
     'scripts/preload-local-images.sh',
+    'deployments/values/gateway.yaml',
     'examples/postgres-analytics.yaml',
     'examples/xtrinode-real-trino-keda.yaml',
     'examples/xtrinode-prometheus-autoscale.yaml',
@@ -197,6 +199,14 @@ local_resource(
     robot_cmd('--outputdir tilt/e2e/results --include scaleout --variable TRINO_IMAGE_TAG:%s tilt/e2e/robot' % trino_tag),
     deps=robot_deps,
     resource_deps=['xtrinode-operator', 'xtrinode-api-server', 'xtrinode-gateway', 'xtrinode-observability-pro-operator'],
+    auto_init=False,
+)
+
+local_resource(
+    'local-e2e-lifecycle-cleanup',
+    robot_cmd('--outputdir tilt/e2e/results --include lifecycle-cleanup --variable TRINO_IMAGE_TAG:%s tilt/e2e/robot' % trino_tag),
+    deps=robot_deps,
+    resource_deps=['xtrinode-operator', 'xtrinode-api-server', 'xtrinode-gateway', 'postgres'],
     auto_init=False,
 )
 

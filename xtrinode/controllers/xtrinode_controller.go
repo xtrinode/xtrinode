@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
+	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/events"
 	"github.com/xtrinode/xtrinode/internal/status"
 	"github.com/xtrinode/xtrinode/pkg/metrics"
@@ -40,6 +41,8 @@ type XTrinodeReconciler struct {
 	AutosuspendService      AutosuspendServiceInterface      // Autosuspend service for auto-suspend logic (injected)
 	GracefulShutdownService GracefulShutdownServiceInterface // Graceful shutdown service for query checks (injected)
 	OperatorVersion         string                           // Operator version for resource revisioning
+	DrainDuration           time.Duration                    // Maximum route-drain fallback window
+	DrainRequeueInterval    time.Duration                    // Interval for query-aware drain rechecks
 }
 
 // +kubebuilder:rbac:groups=analytics.xtrinode.io,resources=xtrinodes,verbs=get;list;watch;create;update;patch;delete
@@ -101,7 +104,7 @@ func (r *XTrinodeReconciler) reconcile(ctx context.Context, req ctrl.Request) (c
 	if xtrinode.DeletionTimestamp != nil {
 		// The drain annotation is set during the first pass of finalize(), so its
 		// absence indicates the first deletion pass.
-		if xtrinode.Annotations == nil || xtrinode.Annotations["xtrinode.analytics.xtrinode.io/drain-started-at"] == "" {
+		if xtrinode.Annotations == nil || xtrinode.Annotations[config.DrainStartedAtAnnotation] == "" {
 			r.EventRecorder.Normal(&xtrinode, events.ReasonDeleted, events.FormatMessage("XTrinode deletion started, finalizing resources"))
 			metrics.XTrinodeDeleted.WithLabelValues(xtrinode.Namespace, xtrinode.Name).Inc()
 		}

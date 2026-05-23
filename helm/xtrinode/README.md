@@ -16,12 +16,12 @@ helm install xtrinode ./helm/xtrinode \
   --namespace xtrinode-system \
   --create-namespace
 
-# Or with custom values
+# Or with Gateway ingress for Trino clients. The API server remains internal.
 helm install xtrinode ./helm/xtrinode \
   --namespace xtrinode-system \
   --create-namespace \
-  --set xtrinode-api-server.ingress.enabled=true \
-  --set xtrinode-api-server.ingress.hosts[0].host=api.example.com
+  --set xtrinode-gateway.ingress.enabled=true \
+  --set xtrinode-gateway.ingress.hosts[0].host=gateway.example.com
 ```
 
 ### Deploy Selected Components
@@ -61,22 +61,33 @@ xtrinode-gateway:
 All component configurations are nested under their component name:
 
 ```yaml
-# API Server configuration
+# API Server configuration. Keep this service internal; use Gateway ingress for
+# Trino client traffic.
 xtrinode-api-server:
   replicaCount: 2
   apiServer:
     port: 8081
     apiPath: "/api/v1"
+    auth:
+      enabled: true
+      existingSecret: xtrinode-api-server-auth
+      resume:
+        enabled: true
+        existingSecret: xtrinode-api-server-resume-auth
   ingress:
-    enabled: true
-    hosts:
-      - host: api.example.com
+    enabled: false
 
 # Gateway configuration
 xtrinode-gateway:
   replicaCount: 2
   gateway:
     apiServerURL: "http://xtrinode-api-server.xtrinode-system.svc.cluster.local:8081/api/v1"
+    apiServerAuth:
+      enabled: true
+      existingSecret: xtrinode-api-server-resume-auth
+    redis:
+      enabled: true
+      url: "redis://redis.example:6379/0"
   ingress:
     enabled: true
     hosts:
@@ -85,8 +96,10 @@ xtrinode-gateway:
 
 ### API Server Authentication And Authorization
 
-API server control-plane endpoints under `/api/v1` support bearer-token authentication. Health and
-Prometheus `/metrics` endpoints remain unauthenticated for probes and scraping.
+The API server is an internal control-plane service for operator, Gateway, and trusted automation
+calls. It is not a tenant-facing or direct end-user API. API server control-plane endpoints under
+`/api/v1` support bearer-token authentication. Health and Prometheus `/metrics` endpoints remain
+unauthenticated for probes and scraping.
 
 When enabling it, configure an admin token for direct API access and a separate resume-only token
 for the gateway. In production, prefer pre-created Secrets in each component namespace and use
@@ -113,7 +126,14 @@ The resume-only token can call `/api/v1/resume` and direct runtime resume endpoi
 `403 FORBIDDEN` for read, create, delete, and suspend actions.
 
 Browser CORS is disabled by default; set `xtrinode-api-server.apiServer.cors.allowedOrigins` only
-for exact browser origins that should call the control-plane API.
+for exact browser origins that should call the control-plane API. Direct browser or public ingress
+access is unsupported for tenants and end users because tenant-aware authorization is not
+implemented.
+
+If an operator deliberately enables API-server ingress for restricted administrative access, Helm
+requires bearer auth, TLS, and exact non-wildcard CORS origins. This does not make the API
+tenant-safe; an exposed-mode design must add tenant-aware authorization before direct user access is
+supported.
 
 ### XTrinode Privileged Overlay And Trino Control Auth
 
@@ -238,10 +258,34 @@ runtime-specific through `XTrinode.spec.nodePool` and, when needed, coordinator/
 
 ## Ingress Configuration
 
-### API Server Ingress
+### API Server Internal Boundary
+
+Keep API-server ingress disabled for the supported deployment posture. The API server should be
+reachable through its ClusterIP Service from the operator namespace, Gateway namespace, and trusted
+automation running on the cluster network.
+
+If you deliberately enable ingress for restricted administrative access, chart rendering requires
+all of the following:
+
+- `xtrinode-api-server.apiServer.auth.enabled=true`
+- `xtrinode-api-server.apiServer.cors.allowedOrigins` with exact non-wildcard browser origins
+- `xtrinode-api-server.ingress.tls` for TLS termination
+
+Tenant-aware authorization is not implemented, so this path is not supported for direct tenant or
+end-user access.
 
 ```yaml
 xtrinode-api-server:
+  apiServer:
+    auth:
+      enabled: true
+      existingSecret: xtrinode-api-server-auth
+      resume:
+        enabled: true
+        existingSecret: xtrinode-api-server-resume-auth
+    cors:
+      allowedOrigins:
+        - https://admin.example.com
   ingress:
     enabled: true
     className: "nginx"  # or "traefik", "istio", etc.
@@ -280,17 +324,56 @@ xtrinode-gateway:
           - trino-gateway.example.com
 ```
 
+### Gateway UI
+
+The Gateway can serve an embedded read-only admin UI at `/ui/admin` and a dynamic status API at
+`/ui/admin/api/gateway/status`. This UI shows the Gateway's current routing view, backend
+lifecycle states, auto-suspend metadata, health check state, circuit-breaker state, and route reload
+status. The summary includes the number of draining backends, and backend details show the drain
+deadline and remaining fallback time. Trino's own web UI is exposed per backend at
+`/ui/<namespace>/<backend>/`.
+
+The operator's deletion drain timing is configurable through the operator chart values:
+
+```yaml
+xtrinode-operator:
+  operator:
+    lifecycle:
+      drainDuration: "5m"
+      drainRequeueInterval: "30s"
+```
+
+The UI is disabled by default. If it is enabled behind public ingress, the chart requires Gateway
+auth and TLS:
+
+```yaml
+xtrinode-gateway:
+  gateway:
+    ui:
+      enabled: true
+      requireAuth: true
+    auth:
+      enabled: true
+      type: oidc
+      oauth:
+        issuer: "https://issuer.example"
+        audience: "trino-gateway"
+  ingress:
+    enabled: true
+    tls:
+      - secretName: trino-gateway-tls
+        hosts:
+          - trino-gateway.example.com
+```
+
 ## Examples
 
-### Full Deployment with Ingress
+### Full Deployment with Gateway Ingress
 
 ```bash
 helm install xtrinode ./helm/xtrinode \
   --namespace xtrinode-system \
   --create-namespace \
-  --set xtrinode-api-server.ingress.enabled=true \
-  --set xtrinode-api-server.ingress.className=nginx \
-  --set xtrinode-api-server.ingress.hosts[0].host=api.example.com \
   --set xtrinode-gateway.ingress.enabled=true \
   --set xtrinode-gateway.ingress.className=nginx \
   --set xtrinode-gateway.ingress.hosts[0].host=gateway.example.com
@@ -318,7 +401,15 @@ helm install xtrinode ./helm/xtrinode \
   --set xtrinode-operator.replicaCount=3 \
   --set xtrinode-api-server.replicaCount=3 \
   --set xtrinode-gateway.replicaCount=3 \
-  --set xtrinode-api-server.ingress.enabled=true \
+  --set xtrinode-api-server.apiServer.auth.enabled=true \
+  --set xtrinode-api-server.apiServer.auth.existingSecret=xtrinode-api-server-auth \
+  --set xtrinode-api-server.apiServer.auth.resume.enabled=true \
+  --set xtrinode-api-server.apiServer.auth.resume.existingSecret=xtrinode-api-server-resume-auth \
+  --set xtrinode-gateway.gateway.apiServerAuth.enabled=true \
+  --set xtrinode-gateway.gateway.apiServerAuth.existingSecret=xtrinode-api-server-resume-auth \
+  --set xtrinode-gateway.gateway.redis.enabled=true \
+  --set xtrinode-gateway.gateway.redis.url=redis://redis.example:6379/0 \
+  --set xtrinode-api-server.ingress.enabled=false \
   --set xtrinode-gateway.ingress.enabled=true \
   --set global.imageRegistry=your-registry.io
 ```
@@ -376,4 +467,6 @@ xtrinode-gateway:
 - All components are enabled by default
 - Component configurations override their respective subchart defaults
 - Use `helm dependency update` after modifying subchart versions
-- Ingress is disabled by default (enable per component as needed)
+- API-server ingress is disabled by default and should stay internal unless a restricted
+  administrative exposure path is deliberately configured.
+- Gateway ingress is the supported external entrypoint for Trino clients.

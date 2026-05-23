@@ -52,6 +52,14 @@ XTrinode Admission Webhook Rejects Invalid Min Max
     Should Not Be Equal As Integers    ${apply.rc}    0
     Should Contain    ${apply.stdout}    minWorkers must be less than or equal to maxWorkers
 
+XTrinode Admission Webhook Rejects KEDA And Native HPA
+    ${manifest}=    Set Variable    /tmp/xtrinode-invalid-keda-native-hpa.json
+    ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"invalid-keda-native-hpa-contract","namespace":"${NAMESPACE}"},"spec":{"size":"xs","keda":{"enabled":true,"scalerType":"prometheus","scalingMetric":"query"},"valuesOverlay":{"server":{"autoscaling":{"enabled":true,"targetCPUUtilizationPercentage":70}}}}}
+    Create File    ${manifest}    ${json}
+    ${apply}=    Run Command Allow Failure    kubectl    apply    --validate=false    -f    ${manifest}
+    Should Not Be Equal As Integers    ${apply.rc}    0
+    Should Contain    ${apply.stdout}    native HPA and spec.keda cannot both manage worker replicas
+
 XTrinodeCatalog Admission Webhook Rejects Multiple Connectors
     [Teardown]    Cleanup XTrinodeCatalog Admission Contract Objects
     Cleanup XTrinodeCatalog Admission Contract Objects

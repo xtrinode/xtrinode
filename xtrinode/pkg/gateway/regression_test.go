@@ -504,6 +504,37 @@ func TestDrainRoute_WithExistingConfigMap(t *testing.T) {
 	require.False(t, routes[0].Backends[0].Active)
 }
 
+func TestDrainRouteWithDuration_UsesConfiguredDrainUntil(t *testing.T) {
+	ctx := context.Background()
+	cli := fake.NewClientBuilder().Build()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-runtime",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size:    "m",
+			Routing: &analyticsv1.RoutingSpec{RoutingGroup: "test-runtime"},
+		},
+	}
+	require.NoError(t, RegisterRoute(ctx, cli, xtrinode))
+
+	beforeDrain := time.Now()
+	require.NoError(t, DrainRouteWithDuration(ctx, cli, xtrinode, 2*time.Minute))
+
+	configMap := &corev1.ConfigMap{}
+	key := client.ObjectKey{Name: GatewayConfigMapName, Namespace: GatewayConfigMapNamespace}
+	require.NoError(t, cli.Get(ctx, key, configMap))
+	routes, err := parseRoutes(configMap.Data[GatewayConfigMapKey])
+	require.NoError(t, err)
+	require.Len(t, routes, 1)
+	require.Len(t, routes[0].Backends, 1)
+
+	drainUntil, err := time.Parse(time.RFC3339, routes[0].Backends[0].DrainUntil)
+	require.NoError(t, err)
+	require.WithinDuration(t, beforeDrain.Add(2*time.Minute), drainUntil, 2*time.Second)
+}
+
 func TestParseRoutes_DefaultsOmittedActiveToTrue(t *testing.T) {
 	routes, err := parseRoutes(`
 routes:

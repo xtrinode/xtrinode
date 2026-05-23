@@ -1,5 +1,6 @@
 apiVersion: apps/v1
 kind: Deployment
+{{- $operatorLifecycle := .Values.operator.lifecycle | default dict }}
 metadata:
   name: {{ include "xtrinode-operator.fullname" . }}
   namespace: {{ .Release.Namespace }}
@@ -41,6 +42,8 @@ spec:
         args:
         - --leader-elect
         - --max-concurrent-reconciles={{ .Values.operator.workers | default 3 }}
+        - --gateway-drain-duration={{ $operatorLifecycle.drainDuration | default "5m" }}
+        - --gateway-drain-requeue-interval={{ $operatorLifecycle.drainRequeueInterval | default "30s" }}
         - --webhook-enabled={{ .Values.webhook.enabled }}
         {{- if .Values.webhook.enabled }}
         - --webhook-port={{ .Values.webhook.port }}

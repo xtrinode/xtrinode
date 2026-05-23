@@ -137,6 +137,57 @@ kubectl get endpoints trino-<runtime> -n <namespace>
 - Verify the `X-Trino-XTrinode` header, hostname, or default route matches the routing rule
 - Check gateway logs for routing errors
 
+## Runtime Deletion Stuck Draining
+
+**Symptoms**: A deleted XTrinode keeps its finalizer and the Gateway route shows the backend as
+`DRAINING`.
+
+**Diagnosis**:
+
+```bash
+kubectl describe xtrinode <runtime> -n <namespace>
+kubectl get configmap trino-gateway-routes -n xtrinode-gateway -o yaml
+kubectl logs -n xtrinode-system -l app.kubernetes.io/name=xtrinode-operator -f
+
+# If the coordinator is still reachable, inspect Trino's query endpoint.
+kubectl run trino-query-check -n <namespace> --rm -it --image=curlimages/curl -- \
+  curl -sS http://trino-<runtime>.<namespace>.svc.cluster.local:8080/v1/query \
+  -H 'X-Trino-User: xtrinode-operator'
+```
+
+**Behavior**:
+
+- The operator marks the Gateway backend `DRAINING` so new queries are not selected.
+- Each reconcile checks the coordinator `/v1/query` endpoint. If no `QUEUED` or `RUNNING` queries
+  remain, cleanup can start before the fallback window ends.
+- If the query endpoint is unavailable, the operator waits for the configured drain window
+  (`xtrinode-operator.operator.lifecycle.drainDuration`, `5m` by default) and then uses that
+  elapsed time as the fallback.
+- If the query endpoint reports active queries, the operator keeps waiting rather than removing the
+  backend.
+- The query-aware recheck interval is configured with
+  `xtrinode-operator.operator.lifecycle.drainRequeueInterval` and defaults to `30s`.
+- Drain progress is tracked on the XTrinode with `drain-started-at`, `drain-completed-at`, and
+  `drain-result` annotations under the `xtrinode.analytics.xtrinode.io/` prefix.
+
+**Useful metrics**:
+
+- `xtrinode_drain_active{namespace,name}` shows runtimes currently draining.
+- `xtrinode_drain_duration_seconds{namespace,name,result}` records completed drain duration. The
+  `result` label is `query_complete` or `time_fallback`.
+- `xtrinode_drain_failures_total{namespace,name,reason}` records failed drain starts, bad
+  annotations, or query-check failures.
+- `xtrinode_api_k8s_lease_acquired_total`, `xtrinode_api_k8s_lease_gated_total`, and
+  `xtrinode_api_k8s_lease_errors_total` show API server lifecycle gate outcomes.
+
+**Emergency override policy**:
+
+Do not hand-edit the shared Gateway route ConfigMap during ordinary operations. Any future manual
+state override must be an explicit emergency-only path with admin authentication, Kubernetes events
+or equivalent audit records, a clear target runtime, bounded cleanup or expiry behavior, and
+operator-owned reconciliation back to the normal state. Capture `kubectl describe`, events, and
+operator logs before considering a break-glass action.
+
 ## KEDA ScaledObject Not Triggering
 
 **Symptoms**: KEDA shows "unknown" status or not scaling

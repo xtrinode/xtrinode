@@ -1,4 +1,18 @@
 {{- if .Values.ingress.enabled -}}
+{{- if not .Values.apiServer.auth.enabled -}}
+{{- fail "xtrinode-api-server ingress exposure requires apiServer.auth.enabled=true; tenant-aware authorization is not implemented" }}
+{{- end }}
+{{- if eq (len .Values.ingress.tls) 0 -}}
+{{- fail "xtrinode-api-server ingress exposure requires ingress.tls; tenant-aware authorization is not implemented" }}
+{{- end }}
+{{- if eq (len .Values.apiServer.cors.allowedOrigins) 0 -}}
+{{- fail "xtrinode-api-server ingress exposure requires apiServer.cors.allowedOrigins with exact origins; tenant-aware authorization is not implemented" }}
+{{- end }}
+{{- range .Values.apiServer.cors.allowedOrigins }}
+{{- if contains "*" . }}
+{{- fail "xtrinode-api-server ingress exposure requires exact apiServer.cors.allowedOrigins without wildcards; tenant-aware authorization is not implemented" }}
+{{- end }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

@@ -265,15 +265,16 @@ func buildTrinoContainer(
 	}
 
 	// Add environment variables
-	container.Env = buildEnvVars(xtrinode)
+	envVars, err := buildEnvVars(xtrinode)
+	if err != nil {
+		return corev1.Container{}, fmt.Errorf("failed to build environment variables: %w", err)
+	}
+	container.Env = envVars
 
-	// Add environment variables from valuesOverlay
+	// Add environment variables from typed HelmChartConfig.
 	if xtrinode.Spec.HelmChartConfig != nil && len(xtrinode.Spec.HelmChartConfig.Env) > 0 {
 		for _, envVar := range xtrinode.Spec.HelmChartConfig.Env {
-			container.Env = append(container.Env, corev1.EnvVar{
-				Name:  envVar.Name,
-				Value: envVar.Value,
-			})
+			container.Env = append(container.Env, *envVar.DeepCopy())
 		}
 	}
 	container.Env = appendTrinoControlAuthEnv(container.Env, xtrinode, role)
@@ -338,6 +339,13 @@ func buildTrinoContainer(
 					container.Ports = append(container.Ports, port)
 				}
 			}
+		}
+	}
+
+	// Add envFrom from typed HelmChartConfig.
+	if xtrinode.Spec.HelmChartConfig != nil && len(xtrinode.Spec.HelmChartConfig.EnvFrom) > 0 {
+		for _, envFrom := range xtrinode.Spec.HelmChartConfig.EnvFrom {
+			container.EnvFrom = append(container.EnvFrom, *envFrom.DeepCopy())
 		}
 	}
 

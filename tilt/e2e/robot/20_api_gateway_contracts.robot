@@ -67,8 +67,30 @@ Gateway Proxies Real Trino Statement Contract
     ${body}=    Set Variable    /tmp/xtrinode-gateway-statement.json
     ${status}=    HTTP Request To File    POST    http://127.0.0.1:${GATEWAY_PORT}/v1/statement    ${body}    SELECT 1    X-Trino-User: local-e2e-contracts    X-Trino-XTrinode: ${XTRINODE_NAME}
     Should Be Equal    ${status}    200
-    JQ Should Match    ${body}    (.id | test("^[0-9]{8}_[0-9]{6}_[0-9]{5}_[a-z0-9]+$")) and (.infoUri | type == "string") and (.stats.state | type == "string")
+    JQ Should Match    ${body}    (.id | test("^[0-9]{8}_[0-9]{6}_[0-9]{5}_[a-z0-9]+$")) and (.infoUri | type == "string" and contains("/ui/" + $namespace + "/" + $name + "/query.html?")) and (.nextUri | type == "string" and contains("/v1/statement/") and (contains("/ui/") | not)) and (.stats.state | type == "string")    --arg    namespace    ${NAMESPACE}    --arg    name    ${XTRINODE_NAME}
     Drain Trino Query    ${body}
+
+Gateway Admin UI Serves Status And Route Inventory
+    ${args}=    Kubectl Output    get    deployment    ${GATEWAY_SERVICE}    -n    ${GATEWAY_NAMESPACE}    -o    jsonpath={.spec.template.spec.containers[0].args}
+    Should Contain    ${args}    --ui-enabled=true
+    Should Contain    ${args}    --ui-require-auth=false
+    ${root_status}=    HTTP Request With Headers To File    GET    http://127.0.0.1:${GATEWAY_PORT}/ui    /tmp/xtrinode-gateway-ui-root.txt    /tmp/xtrinode-gateway-ui-root.headers
+    Should Be Equal    ${root_status}    307
+    ${root_headers}=    Get File    /tmp/xtrinode-gateway-ui-root.headers
+    Should Contain    ${root_headers}    Location: /ui/admin/
+    ${shell_status}=    HTTP Request To File    GET    http://127.0.0.1:${GATEWAY_PORT}/ui/admin/    /tmp/xtrinode-gateway-admin-ui.html
+    Should Be Equal    ${shell_status}    200
+    ${shell}=    Get File    /tmp/xtrinode-gateway-admin-ui.html
+    Should Contain    ${shell}    XTrinode Gateway
+    ${status}=    HTTP Request To File    GET    http://127.0.0.1:${GATEWAY_PORT}/ui/admin/api/gateway/status    /tmp/xtrinode-gateway-admin-status.json
+    Should Be Equal    ${status}    200
+    JQ Should Match    /tmp/xtrinode-gateway-admin-status.json    .ui.enabled == true and .ui.requireAuth == false and .summary.routes >= 1 and any(.routes[]; any(.backends[]; .name == $name and .namespace == $namespace and .trinoUiPath == ("/ui/" + $namespace + "/" + $name + "/")))    --arg    namespace    ${NAMESPACE}    --arg    name    ${XTRINODE_NAME}
+
+Gateway Trino UI Proxy Uses Backend-Specific Path
+    ${status}=    HTTP Request With Headers To File    GET    http://127.0.0.1:${GATEWAY_PORT}/ui/${NAMESPACE}/${XTRINODE_NAME}/    /tmp/xtrinode-gateway-trino-ui.txt    /tmp/xtrinode-gateway-trino-ui.headers
+    Should Be Equal    ${status}    303
+    ${headers}=    Get File    /tmp/xtrinode-gateway-trino-ui.headers
+    Should Contain    ${headers}    Location: /ui/${NAMESPACE}/${XTRINODE_NAME}/login.html
 
 Gateway Stores Sticky Query Route In Redis
     ${body}=    Set Variable    /tmp/xtrinode-gateway-sticky-redis.json
