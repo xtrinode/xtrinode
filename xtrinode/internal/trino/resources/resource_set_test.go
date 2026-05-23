@@ -158,6 +158,91 @@ func TestBuildTrinoResourceSetDoesNotRollPodsForRoutingOnlyChange(t *testing.T) 
 	)
 }
 
+func TestBuildTrinoResourceSetDoesNotRollPodsForBaseRevisionOnlyChange(t *testing.T) {
+	ctx := context.Background()
+	xtrinode := resourceCoverageBaseXTrinode()
+
+	buildSet := func(operatorVersion string) *TrinoResourceSet {
+		t.Helper()
+		set, err := BuildTrinoResourceSet(ctx, resourceCoverageClient(t), xtrinode.DeepCopy(), nil, operatorVersion)
+		require.NoError(t, err)
+		require.NotNil(t, set.CoordinatorDeployment)
+		require.NotNil(t, set.WorkerDeployment)
+		require.NotNil(t, set.CoordinatorConfigMap)
+		require.NotNil(t, set.WorkerConfigMap)
+		return set
+	}
+
+	first := buildSet("operator-a")
+	second := buildSet("operator-b")
+
+	assert.NotEqual(
+		t,
+		first.CoordinatorDeployment.Annotations[config.RevisionAnnotationKey],
+		second.CoordinatorDeployment.Annotations[config.RevisionAnnotationKey],
+		"resource metadata should keep tracking broad base revision changes",
+	)
+	assert.Equal(t, first.CoordinatorConfigMap.Name, second.CoordinatorConfigMap.Name)
+	assert.Equal(t, first.WorkerConfigMap.Name, second.WorkerConfigMap.Name)
+	assert.Equal(
+		t,
+		first.CoordinatorDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+		second.CoordinatorDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+	)
+	assert.Equal(
+		t,
+		first.WorkerDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+		second.WorkerDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+	)
+	assert.Equal(
+		t,
+		first.CoordinatorDeployment.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey],
+		second.CoordinatorDeployment.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey],
+	)
+	assert.Equal(
+		t,
+		first.WorkerDeployment.Spec.Template.Annotations[rollout.WorkerRolloutHashKey],
+		second.WorkerDeployment.Spec.Template.Annotations[rollout.WorkerRolloutHashKey],
+	)
+}
+
+func TestPodRolloutHashIgnoresSelfAnnotations(t *testing.T) {
+	template := &corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				"checksum/config":                 "config-a",
+				config.RevisionAnnotationKey:      "revision-a",
+				rollout.CoordinatorRolloutHashKey: "coordinator-a",
+				rollout.WorkerRolloutHashKey:      "worker-a",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "trino",
+				Image: "trinodb/trino:480",
+			}},
+		},
+	}
+	digests := roleRolloutDigests{
+		Catalog:       "catalog-a",
+		AccessControl: "access-a",
+		SessionProps:  "session-a",
+		Secret:        "secret-a",
+	}
+
+	first := coordinatorPodRolloutHash(template, digests)
+	template.Annotations[config.RevisionAnnotationKey] = "revision-b"
+	template.Annotations[rollout.CoordinatorRolloutHashKey] = "coordinator-b"
+	template.Annotations[rollout.WorkerRolloutHashKey] = "worker-b"
+	second := coordinatorPodRolloutHash(template, digests)
+
+	require.Equal(t, first, second, "rollout hash must ignore annotations it owns")
+
+	template.Annotations["checksum/config"] = "config-b"
+	third := coordinatorPodRolloutHash(template, digests)
+	require.NotEqual(t, first, third, "rollout hash must still include rendered pod-template inputs")
+}
+
 func TestBuildTrinoResourceSetRollsPodsForRenderedTemplateChange(t *testing.T) {
 	ctx := context.Background()
 	base := resourceCoverageBaseXTrinode()
