@@ -25,6 +25,23 @@ func BuildWorkerDeployment(
 	rolloutHash string,
 	catalogSecretEnvVars []corev1.EnvVar,
 ) (*appsv1.Deployment, error) {
+	podTemplateRevision := rolloutHash
+	if podTemplateRevision == "" {
+		podTemplateRevision = revision
+	}
+	return buildWorkerDeployment(xtrinode, preset, configMapName, catalogs, revision, podTemplateRevision, rolloutHash, catalogSecretEnvVars)
+}
+
+func buildWorkerDeployment(
+	xtrinode *analyticsv1.XTrinode,
+	preset *sizing.SizePreset,
+	configMapName string,
+	catalogs []string,
+	resourceRevision string,
+	podTemplateRevision string,
+	rolloutHash string,
+	catalogSecretEnvVars []corev1.EnvVar,
+) (*appsv1.Deployment, error) {
 	// Worker replica ownership:
 	// - If KEDA or native HPA is enabled: set to nil (autoscaler owns scaling)
 	// - Else if server.workers specified: use that value
@@ -300,13 +317,18 @@ func BuildWorkerDeployment(
 	}
 
 	// Stamp revision on Deployment (enables self-healing reconciliation)
-	StampRevision(deployment, revision)
+	StampRevision(deployment, resourceRevision)
 
-	// Stamp revision on PodTemplate (forces rollout when revision changes)
-	StampRevisionOnPodTemplate(&deployment.Spec.Template, revision)
+	if podTemplateRevision != "" {
+		// Stamp the rendered pod revision on the PodTemplate. Kubernetes
+		// rolls pods only when this rendered revision changes.
+		StampRevisionOnPodTemplate(&deployment.Spec.Template, podTemplateRevision)
+	}
 
-	// Stamp the worker-specific rollout hash.
-	rollout.StampRolloutHash(&deployment.Spec.Template, rollout.WorkerRolloutHashKey, rolloutHash)
+	if rolloutHash != "" {
+		// Stamp the worker-specific rollout hash.
+		rollout.StampRolloutHash(&deployment.Spec.Template, rollout.WorkerRolloutHashKey, rolloutHash)
+	}
 
 	return deployment, nil
 }

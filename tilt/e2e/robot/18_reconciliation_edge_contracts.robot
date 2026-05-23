@@ -21,6 +21,31 @@ Manual Gateway Route ConfigMap Drift Is Reconciled
     Command Should Succeed    kubectl    patch    configmap/trino-gateway-routes    -n    ${GATEWAY_NAMESPACE}    --type=merge    -p    ${patch}
     Wait Until Keyword Succeeds    180s    ${POLL_INTERVAL}    Gateway Route Should Be Registered
 
+Routing Metadata Change Does Not Roll Runtime Pods
+    ${coordinator_hash}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-coordinator    -n    ${NAMESPACE}    -o    ${COORDINATOR_ROLLOUT_HASH_OUTPUT}
+    ${worker_hash}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-worker    -n    ${NAMESPACE}    -o    ${WORKER_ROLLOUT_HASH_OUTPUT}
+    ${coordinator_revision}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-coordinator    -n    ${NAMESPACE}    -o    ${COORDINATOR_TEMPLATE_REVISION_OUTPUT}
+    ${worker_revision}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-worker    -n    ${NAMESPACE}    -o    ${WORKER_TEMPLATE_REVISION_OUTPUT}
+    ${coordinator_deployment_revision}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-coordinator    -n    ${NAMESPACE}    -o    ${COORDINATOR_DEPLOYMENT_REVISION_OUTPUT}
+    ${worker_deployment_revision}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-worker    -n    ${NAMESPACE}    -o    ${WORKER_DEPLOYMENT_REVISION_OUTPUT}
+    ${coordinator_config}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-coordinator    -n    ${NAMESPACE}    -o    ${COORDINATOR_CONFIG_CHECKSUM_OUTPUT}
+    ${worker_config}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-worker    -n    ${NAMESPACE}    -o    ${WORKER_CONFIG_CHECKSUM_OUTPUT}
+
+    ${routing_group}=    Set Variable    ${XTRINODE_NAME}-shared
+    Command Should Succeed    kubectl    annotate    xtrinode/${XTRINODE_NAME}    -n    ${NAMESPACE}    xtrinode.analytics.xtrinode.io/allow-breaking-spec-update=true    --overwrite
+    ${patch}=    Set Variable    {"spec":{"routing":{"routingGroup":"${routing_group}"}}}
+    Command Should Succeed    kubectl    patch    xtrinode/${XTRINODE_NAME}    -n    ${NAMESPACE}    --type=merge    -p    ${patch}
+    Wait Until Keyword Succeeds    180s    ${POLL_INTERVAL}    Gateway Route Should Have Routing Group    ${routing_group}
+
+    Deployment Pod Template Annotation Should Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-coordinator    ${COORDINATOR_ROLLOUT_HASH_OUTPUT}    ${coordinator_hash}
+    Deployment Pod Template Annotation Should Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-worker    ${WORKER_ROLLOUT_HASH_OUTPUT}    ${worker_hash}
+    Deployment Pod Template Annotation Should Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-coordinator    ${COORDINATOR_TEMPLATE_REVISION_OUTPUT}    ${coordinator_revision}
+    Deployment Pod Template Annotation Should Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-worker    ${WORKER_TEMPLATE_REVISION_OUTPUT}    ${worker_revision}
+    Deployment Annotation Should Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-coordinator    ${COORDINATOR_DEPLOYMENT_REVISION_OUTPUT}    ${coordinator_deployment_revision}
+    Deployment Annotation Should Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-worker    ${WORKER_DEPLOYMENT_REVISION_OUTPUT}    ${worker_deployment_revision}
+    Deployment Pod Template Annotation Should Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-coordinator    ${COORDINATOR_CONFIG_CHECKSUM_OUTPUT}    ${coordinator_config}
+    Deployment Pod Template Annotation Should Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-worker    ${WORKER_CONFIG_CHECKSUM_OUTPUT}    ${worker_config}
+
 External Mounted ConfigMap And Secret Changes Roll Runtime
     Ensure External Mounted Resources
     Patch XTrinode With External Mounts
@@ -48,14 +73,8 @@ External Mounted ConfigMap And Secret Changes Roll Runtime
 External Env ValueFrom And EnvFrom Changes Roll Runtime
     Ensure External Mounted Resources
     Patch XTrinode With External Env Refs
-    ${coordinator_file}=    Set Variable    /tmp/xtrinode-external-env-coordinator.json
-    ${worker_file}=    Set Variable    /tmp/xtrinode-external-env-worker.json
-    ${coordinator_json}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-coordinator    -n    ${NAMESPACE}    -o    json
-    ${worker_json}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-worker    -n    ${NAMESPACE}    -o    json
-    Create File    ${coordinator_file}    ${coordinator_json}
-    Create File    ${worker_file}    ${worker_json}
-    Deployment Should Have External Env Refs    ${coordinator_file}
-    Deployment Should Have External Env Refs    ${worker_file}
+    Wait Until Keyword Succeeds    180s    ${POLL_INTERVAL}    Deployment Should Have External Env Refs In Cluster    ${NAMESPACE}    trino-${XTRINODE_NAME}-coordinator
+    Wait Until Keyword Succeeds    180s    ${POLL_INTERVAL}    Deployment Should Have External Env Refs In Cluster    ${NAMESPACE}    trino-${XTRINODE_NAME}-worker
 
     ${coordinator_before_config}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-coordinator    -n    ${NAMESPACE}    -o    ${COORDINATOR_ROLLOUT_HASH_OUTPUT}
     ${worker_before_config}=    Kubectl Output    get    deployment    trino-${XTRINODE_NAME}-worker    -n    ${NAMESPACE}    -o    ${WORKER_ROLLOUT_HASH_OUTPUT}
@@ -103,8 +122,16 @@ Deployment Should Have External Env Refs
     JQ Should Match    ${deployment_file}    any(.spec.template.spec.containers[0].envFrom[]?; .configMapRef.name == $config)    --arg    config    ${MOUNTED_CONFIG}
     JQ Should Match    ${deployment_file}    any(.spec.template.spec.containers[0].envFrom[]?; .secretRef.name == $secret)    --arg    secret    ${MOUNTED_SECRET}
 
+Deployment Should Have External Env Refs In Cluster
+    [Arguments]    ${namespace}    ${deployment}
+    ${deployment_json}=    Kubectl Output    get    deployment    ${deployment}    -n    ${namespace}    -o    json
+    ${deployment_file}=    Set Variable    /tmp/${deployment}-external-env.json
+    Create File    ${deployment_file}    ${deployment_json}
+    Deployment Should Have External Env Refs    ${deployment_file}
+
 Cleanup Reconciliation Edge Contracts
-    ${patch}=    Set Variable    {"spec":{"valuesOverlay":{"configMounts":null,"secretMounts":null},"helmChartConfig":{"env":null,"envFrom":null}}}
+    ${patch}=    Set Variable    {"spec":{"routing":{"header":"X-Trino-XTrinode=${XTRINODE_NAME}","routingGroup":"${XTRINODE_NAME}","hostnameDomain":null,"hostname":null,"default":false},"valuesOverlay":{"configMounts":null,"secretMounts":null},"helmChartConfig":{"env":null,"envFrom":null}}}
     Run Command Allow Failure    kubectl    patch    xtrinode/${XTRINODE_NAME}    -n    ${NAMESPACE}    --type=merge    -p    ${patch}
+    Run Command Allow Failure    kubectl    annotate    xtrinode/${XTRINODE_NAME}    -n    ${NAMESPACE}    xtrinode.analytics.xtrinode.io/allow-breaking-spec-update-
     Run Command Allow Failure    kubectl    delete    configmap/${MOUNTED_CONFIG}    -n    ${NAMESPACE}    --ignore-not-found=true
     Run Command Allow Failure    kubectl    delete    secret/${MOUNTED_SECRET}    -n    ${NAMESPACE}    --ignore-not-found=true

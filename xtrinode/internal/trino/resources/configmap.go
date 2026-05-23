@@ -11,6 +11,7 @@ import (
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
+	"github.com/xtrinode/xtrinode/internal/digest"
 	"github.com/xtrinode/xtrinode/internal/sizing"
 	"github.com/xtrinode/xtrinode/internal/trino/controlauth"
 )
@@ -22,6 +23,15 @@ func BuildCoordinatorConfigMap(
 	catalogs []string,
 	revision string,
 ) (*corev1.ConfigMap, error) {
+	data := buildCoordinatorConfigMapData(xtrinode, preset, catalogs)
+	return buildCoordinatorConfigMapFromData(xtrinode, data, revision, revision), nil
+}
+
+func buildCoordinatorConfigMapData(
+	xtrinode *analyticsv1.XTrinode,
+	preset *sizing.SizePreset,
+	catalogs []string,
+) map[string]string {
 	data := map[string]string{
 		"node.properties":   buildNodeProperties(xtrinode),
 		"jvm.config":        buildJVMConfig(xtrinode, preset, "coordinator"),
@@ -88,9 +98,18 @@ func BuildCoordinatorConfigMap(
 	addAuthenticationConfigFiles(xtrinode, data)
 	addSessionPropertiesConfigFiles(xtrinode, data)
 
+	return data
+}
+
+func buildCoordinatorConfigMapFromData(
+	xtrinode *analyticsv1.XTrinode,
+	data map[string]string,
+	nameRevision string,
+	resourceRevision string,
+) *corev1.ConfigMap {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            coordinatorConfigMapName(xtrinode, revision),
+			Name:            coordinatorConfigMapName(xtrinode, nameRevision),
 			Namespace:       xtrinode.Namespace,
 			Labels:          TrinoLabels(xtrinode),
 			OwnerReferences: []metav1.OwnerReference{OwnerReference(xtrinode)},
@@ -99,9 +118,9 @@ func BuildCoordinatorConfigMap(
 	}
 
 	// Stamp revision on ConfigMap
-	StampRevision(configMap, revision)
+	StampRevision(configMap, resourceRevision)
 
-	return configMap, nil
+	return configMap
 }
 
 // BuildWorkerConfigMap builds the worker ConfigMap with revisioned name
@@ -111,6 +130,15 @@ func BuildWorkerConfigMap(
 	catalogs []string,
 	revision string,
 ) (*corev1.ConfigMap, error) {
+	data := buildWorkerConfigMapData(xtrinode, preset, catalogs)
+	return buildWorkerConfigMapFromData(xtrinode, data, revision, revision), nil
+}
+
+func buildWorkerConfigMapData(
+	xtrinode *analyticsv1.XTrinode,
+	preset *sizing.SizePreset,
+	catalogs []string,
+) map[string]string {
 	data := map[string]string{
 		"node.properties":   buildNodeProperties(xtrinode),
 		"jvm.config":        buildJVMConfig(xtrinode, preset, "worker"),
@@ -148,9 +176,18 @@ func BuildWorkerConfigMap(
 	// they need the same authenticator config as coordinators for preStop calls.
 	addAuthenticationConfigFiles(xtrinode, data)
 
+	return data
+}
+
+func buildWorkerConfigMapFromData(
+	xtrinode *analyticsv1.XTrinode,
+	data map[string]string,
+	nameRevision string,
+	resourceRevision string,
+) *corev1.ConfigMap {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            workerConfigMapName(xtrinode, revision),
+			Name:            workerConfigMapName(xtrinode, nameRevision),
 			Namespace:       xtrinode.Namespace,
 			Labels:          TrinoLabels(xtrinode),
 			OwnerReferences: []metav1.OwnerReference{OwnerReference(xtrinode)},
@@ -159,9 +196,15 @@ func BuildWorkerConfigMap(
 	}
 
 	// Stamp revision on ConfigMap
-	StampRevision(configMap, revision)
+	StampRevision(configMap, resourceRevision)
 
-	return configMap, nil
+	return configMap
+}
+
+func configMapDataRevision(data map[string]string) string {
+	d := digest.New()
+	d.AddJSON("data", data)
+	return d.Sum12()
 }
 
 // Helper functions

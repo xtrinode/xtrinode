@@ -29,6 +29,12 @@ ${CATALOG_PROPERTIES_OUTPUT}    go-template={{ index .data "local-tpch.propertie
 ${POSTGRES_CATALOG_PROPERTIES_OUTPUT}    go-template={{ index .data "postgres.properties" }}
 ${COORDINATOR_ROLLOUT_HASH_OUTPUT}    go-template={{ index .spec.template.metadata.annotations "trino.io/rollout-hash-coordinator" }}
 ${WORKER_ROLLOUT_HASH_OUTPUT}    go-template={{ index .spec.template.metadata.annotations "trino.io/rollout-hash-worker" }}
+${COORDINATOR_TEMPLATE_REVISION_OUTPUT}    go-template={{ index .spec.template.metadata.annotations "xtrinode.io/revision" }}
+${WORKER_TEMPLATE_REVISION_OUTPUT}    go-template={{ index .spec.template.metadata.annotations "xtrinode.io/revision" }}
+${COORDINATOR_DEPLOYMENT_REVISION_OUTPUT}    go-template={{ index .metadata.annotations "deployment.kubernetes.io/revision" }}
+${WORKER_DEPLOYMENT_REVISION_OUTPUT}    go-template={{ index .metadata.annotations "deployment.kubernetes.io/revision" }}
+${COORDINATOR_CONFIG_CHECKSUM_OUTPUT}    go-template={{ index .spec.template.metadata.annotations "checksum/coordinator-config" }}
+${WORKER_CONFIG_CHECKSUM_OUTPUT}    go-template={{ index .spec.template.metadata.annotations "checksum/worker-config" }}
 ${CURL_HTTP_CODE_FORMAT}     \%{http_code}
 
 *** Keywords ***
@@ -129,6 +135,11 @@ Deployment Pod Template Annotation Should Equal
     ${value}=    Kubectl Output    get    deployment    ${deployment}    -n    ${namespace}    -o    ${output_format}
     Should Be Equal    ${value}    ${expected}
 
+Deployment Annotation Should Equal
+    [Arguments]    ${namespace}    ${deployment}    ${output_format}    ${expected}
+    ${value}=    Kubectl Output    get    deployment    ${deployment}    -n    ${namespace}    -o    ${output_format}
+    Should Be Equal    ${value}    ${expected}
+
 Scale Deployment And Wait Available
     [Arguments]    ${namespace}    ${deployment}    ${replicas}
     Command Should Succeed    kubectl    scale    deployment/${deployment}    -n    ${namespace}    --replicas=${replicas}
@@ -137,6 +148,13 @@ Scale Deployment And Wait Available
 Gateway Route Should Be Registered
     ${routes}=    Kubectl Output    get    configmap    trino-gateway-routes    -n    ${GATEWAY_NAMESPACE}    -o    ${GATEWAY_ROUTES_OUTPUT}
     Should Contain    ${routes}    name: ${XTRINODE_NAME}
+    Should Contain    ${routes}    state: RUNNING
+
+Gateway Route Should Have Routing Group
+    [Arguments]    ${routing_group}
+    ${routes}=    Kubectl Output    get    configmap    trino-gateway-routes    -n    ${GATEWAY_NAMESPACE}    -o    ${GATEWAY_ROUTES_OUTPUT}
+    Should Contain    ${routes}    name: ${XTRINODE_NAME}
+    Should Contain    ${routes}    routingGroup: ${routing_group}
     Should Contain    ${routes}    state: RUNNING
 
 Start Local Port Forwards

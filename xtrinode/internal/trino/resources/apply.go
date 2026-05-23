@@ -246,23 +246,23 @@ func ApplyTrinoResources(
 	}
 
 	// Clean up old ConfigMap revisions to prevent accumulation.
-	// Extract current revision from ConfigMap name
-	var currentRevision string
+	// Coordinator and worker ConfigMaps can have different rendered-data revisions.
+	var currentCoordinatorRevision string
 	if resources.CoordinatorConfigMap != nil {
-		// Extract revision from name: trino-{name}-coordinator-{revision}
-		name := resources.CoordinatorConfigMap.Name
-		parts := strings.Split(name, "-")
-		if len(parts) > 0 {
-			currentRevision = parts[len(parts)-1]
-		}
+		currentCoordinatorRevision = configMapRevisionFromName(xtrinode, "coordinator", resources.CoordinatorConfigMap.Name)
+	}
+	var currentWorkerRevision string
+	if resources.WorkerConfigMap != nil {
+		currentWorkerRevision = configMapRevisionFromName(xtrinode, "worker", resources.WorkerConfigMap.Name)
 	}
 
-	if currentRevision != "" {
-		if err := CleanupOldConfigMapRevisions(ctx, c, xtrinode, currentRevision); err != nil {
+	if currentCoordinatorRevision != "" || currentWorkerRevision != "" {
+		if err := CleanupOldConfigMapRevisionsForRoles(ctx, c, xtrinode, currentCoordinatorRevision, currentWorkerRevision); err != nil {
 			log.FromContext(ctx).V(1).Info("ConfigMap revision cleanup failed",
 				"namespace", xtrinode.Namespace,
 				"name", xtrinode.Name,
-				"revision", currentRevision,
+				"coordinatorRevision", currentCoordinatorRevision,
+				"workerRevision", currentWorkerRevision,
 				"error", err)
 		}
 	}

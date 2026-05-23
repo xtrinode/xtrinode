@@ -23,6 +23,23 @@ func BuildCoordinatorDeployment(
 	rolloutHash string,
 	catalogSecretEnvVars []corev1.EnvVar,
 ) (*appsv1.Deployment, error) {
+	podTemplateRevision := rolloutHash
+	if podTemplateRevision == "" {
+		podTemplateRevision = revision
+	}
+	return buildCoordinatorDeployment(xtrinode, preset, configMapName, catalogs, revision, podTemplateRevision, rolloutHash, catalogSecretEnvVars)
+}
+
+func buildCoordinatorDeployment(
+	xtrinode *analyticsv1.XTrinode,
+	preset *sizing.SizePreset,
+	configMapName string,
+	catalogs []string,
+	resourceRevision string,
+	podTemplateRevision string,
+	rolloutHash string,
+	catalogSecretEnvVars []corev1.EnvVar,
+) (*appsv1.Deployment, error) {
 	replicas := getCoordinatorReplicas(xtrinode)
 
 	deployment := &appsv1.Deployment{
@@ -246,13 +263,18 @@ func BuildCoordinatorDeployment(
 	}
 
 	// Stamp revision on Deployment (enables self-healing reconciliation)
-	StampRevision(deployment, revision)
+	StampRevision(deployment, resourceRevision)
 
-	// Stamp revision on PodTemplate (forces rollout when revision changes)
-	StampRevisionOnPodTemplate(&deployment.Spec.Template, revision)
+	if podTemplateRevision != "" {
+		// Stamp the rendered pod revision on the PodTemplate. Kubernetes
+		// rolls pods only when this rendered revision changes.
+		StampRevisionOnPodTemplate(&deployment.Spec.Template, podTemplateRevision)
+	}
 
-	// Stamp the coordinator rollout hash; it includes the catalog digest.
-	rollout.StampRolloutHash(&deployment.Spec.Template, rollout.CoordinatorRolloutHashKey, rolloutHash)
+	if rolloutHash != "" {
+		// Stamp the coordinator rollout hash; it includes mounted external content.
+		rollout.StampRolloutHash(&deployment.Spec.Template, rollout.CoordinatorRolloutHashKey, rolloutHash)
+	}
 
 	return deployment, nil
 }

@@ -64,29 +64,15 @@ func BuildTrinoResourceSet(
 		return nil, fmt.Errorf("failed to compute secret digest: %w", err)
 	}
 
-	// Extract component-specific configs for separate rollout hashes
-	// This ensures coordinator and worker roll independently based on their actual config
-	coordConfig := extractCoordinatorConfig(xtrinode)
-	workerConfig := extractWorkerConfig(xtrinode)
-
-	// Build rollout inputs
-	rolloutInputs := rollout.RolloutInputs{
-		BaseRevision:        baseRevision,
-		CatalogDigest:       catalogDigest,
-		AccessControlDigest: accessControlDigest,
-		SessionPropsDigest:  sessionPropsDigest,
-		SecretDigest:        secretDigest,
-		CoordConfig:         coordConfig,
-		WorkerConfig:        workerConfig,
-	}
-
-	// Compute per-component rollout hashes
-	coordRolloutHash := rollout.CoordinatorRolloutHash(rolloutInputs)
-
 	// Catalog files and catalog-backed Secret env vars are present on workers too,
 	// so catalog content changes must roll both roles.
 	rollWorkersOnCatalogChange := true
-	workerRolloutHash := rollout.WorkerRolloutHash(rolloutInputs, rollWorkersOnCatalogChange)
+	rolloutDigests := roleRolloutDigests{
+		Catalog:       catalogDigest,
+		AccessControl: accessControlDigest,
+		SessionProps:  sessionPropsDigest,
+		Secret:        secretDigest,
+	}
 
 	// Keep the resource revision tied to the caller-provided base revision.
 	revision := baseRevision
@@ -103,11 +89,12 @@ func BuildTrinoResourceSet(
 		return nil, fmt.Errorf("failed to extract catalog secret references: %w", err)
 	}
 
-	// Build ConfigMaps (with revisioned names)
-	coordinatorConfigMap, err := BuildCoordinatorConfigMap(xtrinode, &preset, sortedCatalogs, revision)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build coordinator ConfigMap: %w", err)
-	}
+	// Build ConfigMaps with names derived from rendered ConfigMap data. The
+	// resource revision remains the broad base revision for convergence/debugging,
+	// but ConfigMap volume references only change when rendered config changes.
+	coordinatorConfigMapData := buildCoordinatorConfigMapData(xtrinode, &preset, sortedCatalogs)
+	coordinatorConfigMapRevision := configMapDataRevision(coordinatorConfigMapData)
+	coordinatorConfigMap := buildCoordinatorConfigMapFromData(xtrinode, coordinatorConfigMapData, coordinatorConfigMapRevision, revision)
 
 	// Render workers unless workers=0 and no autoscaler owns worker scale.
 	shouldRenderWorker := true // Default to rendering workers
@@ -142,19 +129,34 @@ func BuildTrinoResourceSet(
 	var workerPDB *policyv1.PodDisruptionBudget
 	var workerServiceMonitor runtime.Object
 	var workerJMXExporterConfigMap *corev1.ConfigMap
+	var workerRolloutHash string
 
 	if shouldRenderWorker {
-		workerConfigMap, err = BuildWorkerConfigMap(xtrinode, &preset, sortedCatalogs, revision)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build worker ConfigMap: %w", err)
-		}
+		workerConfigMapData := buildWorkerConfigMapData(xtrinode, &preset, sortedCatalogs)
+		workerConfigMapRevision := configMapDataRevision(workerConfigMapData)
+		workerConfigMap = buildWorkerConfigMapFromData(xtrinode, workerConfigMapData, workerConfigMapRevision, revision)
 
-		workerDeployment, err = BuildWorkerDeployment(
+		draftWorkerDeployment, err := buildWorkerDeployment(
 			xtrinode,
 			&preset,
 			workerConfigMap.Name,
 			sortedCatalogs,
 			revision,
+			"",
+			"",
+			catalogSecretEnvVars,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build worker Deployment: %w", err)
+		}
+		workerRolloutHash = workerPodRolloutHash(&draftWorkerDeployment.Spec.Template, rollWorkersOnCatalogChange, rolloutDigests)
+		workerDeployment, err = buildWorkerDeployment(
+			xtrinode,
+			&preset,
+			workerConfigMap.Name,
+			sortedCatalogs,
+			revision,
+			workerRolloutHash,
 			workerRolloutHash,
 			catalogSecretEnvVars,
 		)
@@ -173,12 +175,27 @@ func BuildTrinoResourceSet(
 	}
 
 	// Build Deployments (with revision stamping and rollout hashes)
-	coordinatorDeployment, err := BuildCoordinatorDeployment(
+	draftCoordinatorDeployment, err := buildCoordinatorDeployment(
 		xtrinode,
 		&preset,
 		coordinatorConfigMap.Name,
 		sortedCatalogs,
 		revision,
+		"",
+		"",
+		catalogSecretEnvVars,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build coordinator Deployment: %w", err)
+	}
+	coordRolloutHash := coordinatorPodRolloutHash(&draftCoordinatorDeployment.Spec.Template, rolloutDigests)
+	coordinatorDeployment, err := buildCoordinatorDeployment(
+		xtrinode,
+		&preset,
+		coordinatorConfigMap.Name,
+		sortedCatalogs,
+		revision,
+		coordRolloutHash,
 		coordRolloutHash,
 		catalogSecretEnvVars,
 	)
