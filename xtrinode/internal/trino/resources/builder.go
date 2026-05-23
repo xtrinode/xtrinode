@@ -136,7 +136,8 @@ func BuildTrinoResourceSet(
 		workerConfigMapRevision := configMapDataRevision(workerConfigMapData)
 		workerConfigMap = buildWorkerConfigMapFromData(xtrinode, workerConfigMapData, workerConfigMapRevision, revision)
 
-		draftWorkerDeployment, err := buildWorkerDeployment(
+		var draftWorkerDeployment *appsv1.Deployment
+		draftWorkerDeployment, err = buildWorkerDeployment(
 			xtrinode,
 			&preset,
 			workerConfigMap.Name,

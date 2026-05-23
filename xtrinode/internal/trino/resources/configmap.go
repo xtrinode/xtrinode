@@ -304,12 +304,12 @@ func buildJVMConfig(xtrinode *analyticsv1.XTrinode, preset *sizing.SizePreset, r
 	if reg, ok := image["registry"].(string); ok {
 		registry = reg
 	}
-	digest := ""
+	imageDigest := ""
 	if dig, ok := image["digest"].(string); ok {
-		digest = dig
+		imageDigest = dig
 	}
 
-	if repository == config.DefaultTrinoImageRepository && !useRepositoryAsSoleImageReference && registry == "" && digest == "" {
+	if repository == config.DefaultTrinoImageRepository && !useRepositoryAsSoleImageReference && registry == "" && imageDigest == "" {
 		tag := config.DefaultTrinoImageTag
 		if overlayTag, ok := image["tag"].(string); ok && overlayTag != "" {
 			tag = overlayTag
