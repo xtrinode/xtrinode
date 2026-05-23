@@ -47,6 +47,7 @@ operator/API server/gateway images, installs the Helm charts, applies
 - suspend through the API server
 - gateway-triggered resume
 - lease-gated duplicate resume requests
+- interrupted lifecycle cleanup for gateway routes, KEDA handoff, suspend, and resume
 - opt-in query-driven KEDA scale-out above one worker
 
 Run only the faster contract suites when you want to check the deployed XTrinode stack without forcing a full suspend/resume
@@ -76,6 +77,17 @@ make test-e2e-local-scaleout
 This patches the local XTrinode to `maxWorkers: 2`, switches KEDA to query-based `metrics-api` scaling, starts a long
 TPCH query, waits for the worker Deployment to scale from 1 to 2, cancels the query, and waits for KEDA to return the
 Deployment to 1 worker.
+
+Run the live interrupted lifecycle cleanup suite:
+
+```bash
+make test-e2e-local-lifecycle-cleanup
+```
+
+This suite is tagged `lifecycle-cleanup`. It requires the local k3d stack with the operator, API server, gateway, KEDA,
+Redis, Postgres, and the usual Robot prerequisites (`kubectl`, `curl`, and `jq`). It intentionally scales the operator
+deployment to zero around route, KEDA, suspend, and resume transitions, then verifies reconciliation repairs stale route
+state, restores the KEDA `ScaledObject`, clears lifecycle command annotations, and leaves the backend routable.
 
 Run only the local PostgreSQL catalog integration suite:
 
@@ -152,6 +164,7 @@ Manual Tilt e2e resources:
 - `local-e2e-contracts`
 - `local-e2e-smoke`
 - `local-e2e-scaleout`
+- `local-e2e-lifecycle-cleanup`
 - `local-e2e-all`
 - `local-loadtest`
 - `local-operator-stress`
@@ -173,6 +186,7 @@ behavior:
 - `30_real_trino_lifecycle.robot`
 - `35_real_trino_wake_ttl.robot`
 - `36_trino_password_lifecycle_auth.robot`
+- `38_lifecycle_cleanup_interruptions.robot`
 - `40_real_trino_scaleout.robot`
 - `45_prometheus_autoscaler.robot`
 - `50_postgres_catalog.robot`
