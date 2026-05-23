@@ -34,7 +34,8 @@ gateway:
   apiServerURL: "http://xtrinode-api-server.xtrinode-system.svc.cluster.local:8081/api/v1"
 
   # Bearer token used for Gateway -> API Server control-plane calls.
-  # Configure this with the same token as xtrinode-api-server.apiServer.auth.
+  # Configure this with the resume-only token from
+  # xtrinode-api-server.apiServer.auth.resume, not the admin token.
   apiServerAuth:
     enabled: false
     existingSecret: ""

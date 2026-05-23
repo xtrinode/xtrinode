@@ -2,6 +2,7 @@ package resources
 
 import (
 	"fmt"
+	"strings"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
@@ -15,12 +16,47 @@ func isKEDAEnabled(xtrinode *analyticsv1.XTrinode) bool {
 	return *xtrinode.Spec.KEDA.Enabled && hasKEDAMetricConfig(xtrinode.Spec.KEDA)
 }
 
+func isNativeHPAEnabled(xtrinode *analyticsv1.XTrinode) bool {
+	valuesMap := xtrinode.Spec.GetValuesOverlayMap()
+	if valuesMap == nil {
+		return false
+	}
+	server, ok := valuesMap["server"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	autoscaling, ok := server["autoscaling"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	enabled, ok := autoscaling["enabled"].(bool)
+	if !ok || !enabled {
+		return false
+	}
+
+	cpuTarget := int32(config.DefaultHPACPUTargetPercentage)
+	if parsed, ok := ParseInt32(autoscaling["targetCPUUtilizationPercentage"]); ok {
+		cpuTarget = parsed
+	} else if cpuTargetStr, ok := autoscaling["targetCPUUtilizationPercentage"].(string); ok && cpuTargetStr == "" {
+		cpuTarget = 0
+	}
+
+	memoryTarget := int32(config.DefaultHPAMemoryTargetPercentage)
+	if parsed, ok := ParseInt32(autoscaling["targetMemoryUtilizationPercentage"]); ok {
+		memoryTarget = parsed
+	} else if memoryTargetStr, ok := autoscaling["targetMemoryUtilizationPercentage"].(string); ok && memoryTargetStr == "" {
+		memoryTarget = 0
+	}
+
+	return cpuTarget > 0 || memoryTarget > 0
+}
+
 func hasKEDAMetricConfig(k *analyticsv1.KEDASpec) bool {
 	return k.ScalerType != "" ||
 		k.ScalingMetric != "" ||
-		(k.PrometheusServer != nil && *k.PrometheusServer != "") ||
-		(k.PrometheusQuery != nil && *k.PrometheusQuery != "") ||
-		(k.HTTPEndpoint != nil && *k.HTTPEndpoint != "")
+		(k.PrometheusServer != nil && strings.TrimSpace(*k.PrometheusServer) != "") ||
+		(k.PrometheusQuery != nil && strings.TrimSpace(*k.PrometheusQuery) != "") ||
+		(k.HTTPEndpoint != nil && strings.TrimSpace(*k.HTTPEndpoint) != "")
 }
 
 func roleValuesOverlay(xtrinode *analyticsv1.XTrinode, role string) map[string]interface{} {

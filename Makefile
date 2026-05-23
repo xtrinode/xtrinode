@@ -807,6 +807,14 @@ test-e2e-local-smoke: ensure-robot dev-up ## Run local real-Trino lifecycle smok
 test-e2e-local-scaleout: ensure-robot dev-up ## Run local real-Trino KEDA scale-out Robot suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include scaleout tilt/e2e/robot
 
+.PHONY: test-e2e-local-lifecycle-cleanup
+test-e2e-local-lifecycle-cleanup: ensure-robot dev-up ## Run local interrupted lifecycle cleanup Robot suite
+	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include lifecycle-cleanup tilt/e2e/robot
+
+.PHONY: test-e2e-local-native-hpa
+test-e2e-local-native-hpa: ensure-robot dev-up ## Run local native-HPA XTrinode lifecycle Robot suite
+	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include native-hpa tilt/e2e/robot
+
 .PHONY: test-e2e-local-postgres
 test-e2e-local-postgres: ensure-robot dev-up ## Run local Postgres catalog integration Robot suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include postgres tilt/e2e/robot

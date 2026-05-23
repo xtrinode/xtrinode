@@ -93,7 +93,7 @@ func TestRolloutHashesUseExpectedInputs(t *testing.T) {
 	t.Parallel()
 
 	inputs := RolloutInputs{
-		BaseRevision:        "base-a",
+		RenderRevision:      "render-a",
 		CatalogDigest:       "catalog-a",
 		AccessControlDigest: "access-a",
 		SessionPropsDigest:  "session-a",
@@ -260,6 +260,164 @@ func TestComputeSecretDigestIncludesConfiguredSecretSources(t *testing.T) {
 	missingOnly, err := ComputeSecretDigest(context.Background(), cli, xtrinode)
 	require.NoError(t, err)
 	require.NotEmpty(t, missingOnly, "secret names and TLS classes still affect the digest even before Secret objects exist")
+}
+
+func TestComputeSecretDigestIncludesAuthAndControlSecretValues(t *testing.T) {
+	t.Parallel()
+
+	xtrinode := rolloutXTrinode()
+	xtrinode.Spec.TrinoControlAuth = &analyticsv1.TrinoControlAuthSpec{
+		PasswordSecret: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "control-secret"},
+			Key:                  "password",
+		},
+	}
+	xtrinode.Spec.ValuesOverlay = rolloutValuesOverlay(t, map[string]interface{}{
+		"auth": map[string]interface{}{
+			"passwordAuthSecret": "password-secret",
+			"groupsAuthSecret":   "groups-secret",
+		},
+	})
+
+	digestFor := func(passwordAuth, groupsAuth, controlPassword, unrelatedControl string) string {
+		t.Helper()
+		_, cli := rolloutFakeClient(t,
+			rolloutSecret("password-secret", passwordAuth),
+			rolloutSecret("groups-secret", groupsAuth),
+			&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "control-secret", Namespace: "team-a"},
+				Data: map[string][]byte{
+					"password":  []byte(controlPassword),
+					"unrelated": []byte(unrelatedControl),
+				},
+			},
+		)
+		result, err := ComputeSecretDigest(context.Background(), cli, xtrinode)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+		return result
+	}
+
+	first := digestFor("password-a", "groups-a", "control-a", "same")
+	require.NotEqual(t, first, digestFor("password-b", "groups-a", "control-a", "same"))
+	require.NotEqual(t, first, digestFor("password-a", "groups-b", "control-a", "same"))
+	require.NotEqual(t, first, digestFor("password-a", "groups-a", "control-b", "same"))
+	require.Equal(t, first, digestFor("password-a", "groups-a", "control-a", "changed"), "unreferenced control Secret keys should not roll workers")
+}
+
+func TestComputeSecretDigestIncludesHelmEnvSources(t *testing.T) {
+	t.Parallel()
+
+	xtrinode := rolloutXTrinode()
+	xtrinode.Spec.HelmChartConfig = &analyticsv1.HelmChartConfigSpec{
+		Env: []corev1.EnvVar{
+			{
+				Name: "CONFIG_VALUE",
+				ValueFrom: &corev1.EnvVarSource{
+					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "helm-env-config"},
+						Key:                  "value",
+					},
+				},
+			},
+			{
+				Name: "SECRET_VALUE",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "helm-env-secret"},
+						Key:                  "password",
+					},
+				},
+			},
+		},
+		EnvFrom: []corev1.EnvFromSource{
+			{
+				ConfigMapRef: &corev1.ConfigMapEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "helm-envfrom-config"},
+				},
+			},
+			{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "helm-envfrom-secret"},
+				},
+			},
+		},
+	}
+
+	require.ElementsMatch(t, []string{"helm-envfrom-config", "helm-env-config"}, externalConfigMapReferences(xtrinode))
+	require.ElementsMatch(t, []string{"helm-envfrom-secret"}, externalSecretReferences(xtrinode))
+
+	digestFor := func(configValue, envSecretValue, envFromSecretValue string) string {
+		t.Helper()
+		_, cli := rolloutFakeClient(t,
+			rolloutConfigMap("helm-env-config", configValue),
+			rolloutConfigMap("helm-envfrom-config", "envfrom"),
+			&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "helm-env-secret", Namespace: "team-a"},
+				Data: map[string][]byte{
+					"password": []byte(envSecretValue),
+					"ignored":  []byte("same"),
+				},
+			},
+			rolloutSecret("helm-envfrom-secret", envFromSecretValue),
+		)
+		result, err := ComputeSecretDigest(context.Background(), cli, xtrinode)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+		return result
+	}
+
+	first := digestFor("config-a", "secret-a", "envfrom-a")
+	require.NotEqual(t, first, digestFor("config-b", "secret-a", "envfrom-a"))
+	require.NotEqual(t, first, digestFor("config-a", "secret-b", "envfrom-a"))
+	require.NotEqual(t, first, digestFor("config-a", "secret-a", "envfrom-b"))
+}
+
+func TestComputeSecretDigestIncludesValuesOverlayEnvValueFrom(t *testing.T) {
+	t.Parallel()
+
+	xtrinode := rolloutXTrinode()
+	xtrinode.Spec.ValuesOverlay = rolloutValuesOverlay(t, map[string]interface{}{
+		"env": []interface{}{
+			map[string]interface{}{
+				"name": "CONFIG_VALUE",
+				"valueFrom": map[string]interface{}{
+					"configMapKeyRef": map[string]interface{}{
+						"name": "overlay-env-config",
+						"key":  "value",
+					},
+				},
+			},
+			map[string]interface{}{
+				"name": "SECRET_VALUE",
+				"valueFrom": map[string]interface{}{
+					"secretKeyRef": map[string]interface{}{
+						"name": "overlay-env-secret",
+						"key":  "value",
+					},
+				},
+			},
+		},
+	})
+
+	require.ElementsMatch(t, []string{"overlay-env-config"}, externalConfigMapReferences(xtrinode))
+	require.ElementsMatch(t, []string{"overlay-env-secret"}, externalSecretReferences(xtrinode))
+
+	digestFor := func(configValue, secretValue string) string {
+		t.Helper()
+		_, cli := rolloutFakeClient(t,
+			rolloutConfigMap("overlay-env-config", configValue),
+			rolloutSecret("overlay-env-secret", secretValue),
+		)
+		result, err := ComputeSecretDigest(context.Background(), cli, xtrinode)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+		return result
+	}
+
+	first := digestFor("config-a", "secret-a")
+	require.NotEqual(t, first, digestFor("config-b", "secret-a"))
+	require.NotEqual(t, first, digestFor("config-a", "secret-b"))
 }
 
 func TestComputeSecretDigestIncludesTLSSecretBytes(t *testing.T) {

@@ -23,6 +23,19 @@ func buildContainerFromMap(containerMap map[string]interface{}) (corev1.Containe
 	return container, nil
 }
 
+func buildEnvVarFromMap(envMap map[string]interface{}) (corev1.EnvVar, error) {
+	yamlBytes, err := yaml.Marshal(envMap)
+	if err != nil {
+		return corev1.EnvVar{}, fmt.Errorf("failed to marshal env var map: %w", err)
+	}
+
+	var envVar corev1.EnvVar
+	if err := yaml.Unmarshal(yamlBytes, &envVar); err != nil {
+		return corev1.EnvVar{}, fmt.Errorf("failed to unmarshal env var: %w", err)
+	}
+	return envVar, nil
+}
+
 // buildVolumeFromMap converts a Helm values volume map to corev1.Volume
 // Uses YAML marshaling/unmarshaling for full passthrough support
 func buildVolumeFromMap(volumeMap map[string]interface{}) (corev1.Volume, error) {

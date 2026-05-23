@@ -14,6 +14,7 @@ import (
 	"github.com/xtrinode/xtrinode/internal/retry"
 	"github.com/xtrinode/xtrinode/internal/status"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -31,9 +32,9 @@ func isKEDAEnabled(xtrinode *analyticsv1.XTrinode) bool {
 func hasKEDAMetricConfig(k *analyticsv1.KEDASpec) bool {
 	return k.ScalerType != "" ||
 		k.ScalingMetric != "" ||
-		(k.PrometheusServer != nil && *k.PrometheusServer != "") ||
-		(k.PrometheusQuery != nil && *k.PrometheusQuery != "") ||
-		(k.HTTPEndpoint != nil && *k.HTTPEndpoint != "")
+		(k.PrometheusServer != nil && strings.TrimSpace(*k.PrometheusServer) != "") ||
+		(k.PrometheusQuery != nil && strings.TrimSpace(*k.PrometheusQuery) != "") ||
+		(k.HTTPEndpoint != nil && strings.TrimSpace(*k.HTTPEndpoint) != "")
 }
 
 func nodePoolProvisionedMessage(xtrinode *analyticsv1.XTrinode) string {
@@ -110,9 +111,8 @@ func getNodePoolProvisioningTimeout(nodePool *analyticsv1.NodePoolSpec) time.Dur
 	return config.NodePoolProvisioningTimeout
 }
 
-// catalogConfigMapToXTrinodes maps a catalog ConfigMap to all XTrinodes in the same namespace
-// This allows dynamic catalog discovery - when a catalog ConfigMap is created/updated/deleted,
-// all XTrinodes in that namespace are reconciled to pick up the change
+// catalogConfigMapToXTrinodes maps a catalog ConfigMap to all XTrinodes in the same namespace.
+// Catalog membership is selector-driven, and ConfigMap changes refresh the selected catalog data.
 func catalogConfigMapToXTrinodes(cli client.Client, ctx context.Context, obj client.Object, log logr.Logger) []reconcile.Request {
 	// Find all XTrinodes in the same namespace and enqueue them for reconciliation
 	xtrinodeList := &analyticsv1.XTrinodeList{}
@@ -186,19 +186,8 @@ func isNamespaceLimitRange(obj client.Object) bool {
 	return obj.GetName() == namespaceLimitRangeName
 }
 
-func serviceMonitorToXTrinodes(_ client.Client, _ context.Context, obj client.Object, _ logr.Logger) []reconcile.Request {
-	for _, owner := range obj.GetOwnerReferences() {
-		if owner.APIVersion != analyticsv1.GroupVersion.String() || owner.Kind != "XTrinode" || owner.Name == "" {
-			continue
-		}
-		return []reconcile.Request{{
-			NamespacedName: client.ObjectKey{
-				Name:      owner.Name,
-				Namespace: obj.GetNamespace(),
-			},
-		}}
-	}
-	return []reconcile.Request{}
+func serviceMonitorToXTrinodes(cli client.Client, ctx context.Context, obj client.Object, log logr.Logger) []reconcile.Request {
+	return xtrinodeOwnerReferenceToXTrinodes(cli, ctx, obj, log)
 }
 
 // externalConfigMapToXTrinodes maps user-provided ConfigMaps that are mounted
@@ -237,6 +226,9 @@ func xtrinodeReferencesConfigMap(xtrinode *analyticsv1.XTrinode, configMapName s
 			return true
 		}
 	}
+	if helmChartConfigReferencesConfigMap(xtrinode.Spec.HelmChartConfig, configMapName) {
+		return true
+	}
 
 	valuesMap := xtrinode.Spec.GetValuesOverlayMap()
 	if valuesMap == nil {
@@ -244,6 +236,7 @@ func xtrinodeReferencesConfigMap(xtrinode *analyticsv1.XTrinode, configMapName s
 	}
 	return overlayMountsReferenceName(valuesMap, "configMounts", "configMap", configMapName) ||
 		overlayRoleMountsReferenceName(valuesMap, "configMounts", "configMap", configMapName) ||
+		overlayEnvValueFromReferencesName(valuesMap, "configMapKeyRef", configMapName) ||
 		overlayEnvFromReferencesName(valuesMap, "configMapRef", configMapName) ||
 		overlayAdditionalVolumesReferenceName(valuesMap, "configMap", "name", configMapName)
 }
@@ -267,7 +260,7 @@ func secretToXTrinodes(cli client.Client, ctx context.Context, obj client.Object
 	requests := make([]reconcile.Request, 0, len(xtrinodeList.Items))
 	for i := range xtrinodeList.Items {
 		xtrinode := &xtrinodeList.Items[i]
-		if tlsReferencesSecret(xtrinode, obj.GetName()) || secretMountsReferenceSecret(xtrinode, obj.GetName()) {
+		if xtrinodeReferencesSecret(xtrinode, obj.GetName()) {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: client.ObjectKeyFromObject(xtrinode),
 			})
@@ -290,6 +283,15 @@ func secretToXTrinodes(cli client.Client, ctx context.Context, obj client.Object
 	}
 
 	return requests
+}
+
+func xtrinodeReferencesSecret(xtrinode *analyticsv1.XTrinode, secretName string) bool {
+	return tlsReferencesSecret(xtrinode, secretName) ||
+		secretMountsReferenceSecret(xtrinode, secretName) ||
+		helmChartConfigReferencesSecret(xtrinode.Spec.HelmChartConfig, secretName) ||
+		valuesOverlayAuthReferencesSecret(xtrinode.Spec.GetValuesOverlayMap(), secretName) ||
+		overlayEnvValueFromReferencesName(xtrinode.Spec.GetValuesOverlayMap(), "secretKeyRef", secretName) ||
+		trinoControlAuthReferencesSecret(xtrinode, secretName)
 }
 
 func tlsReferencesSecret(xtrinode *analyticsv1.XTrinode, secretName string) bool {
@@ -322,6 +324,66 @@ func secretMountsReferenceSecret(xtrinode *analyticsv1.XTrinode, secretName stri
 		overlayEnvFromReferencesName(valuesMap, "secretRef", secretName) ||
 		overlayAdditionalVolumesReferenceName(valuesMap, "secret", "secretName", secretName) ||
 		overlayAdditionalVolumesReferenceName(valuesMap, "secret", "name", secretName)
+}
+
+func helmChartConfigReferencesConfigMap(cfg *analyticsv1.HelmChartConfigSpec, configMapName string) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, envFrom := range cfg.EnvFrom {
+		if envFrom.ConfigMapRef != nil && envFrom.ConfigMapRef.Name == configMapName {
+			return true
+		}
+	}
+	for _, envVar := range cfg.Env {
+		if envVar.ValueFrom != nil &&
+			envVar.ValueFrom.ConfigMapKeyRef != nil &&
+			envVar.ValueFrom.ConfigMapKeyRef.Name == configMapName {
+			return true
+		}
+	}
+	return false
+}
+
+func helmChartConfigReferencesSecret(cfg *analyticsv1.HelmChartConfigSpec, secretName string) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, envFrom := range cfg.EnvFrom {
+		if envFrom.SecretRef != nil && envFrom.SecretRef.Name == secretName {
+			return true
+		}
+	}
+	for _, envVar := range cfg.Env {
+		if envVar.ValueFrom != nil &&
+			envVar.ValueFrom.SecretKeyRef != nil &&
+			envVar.ValueFrom.SecretKeyRef.Name == secretName {
+			return true
+		}
+	}
+	return false
+}
+
+func valuesOverlayAuthReferencesSecret(valuesMap map[string]interface{}, secretName string) bool {
+	if valuesMap == nil {
+		return false
+	}
+	auth, ok := valuesMap["auth"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	for _, key := range []string{"passwordAuthSecret", "groupsAuthSecret"} {
+		if ref, ok := auth[key].(string); ok && ref == secretName {
+			return true
+		}
+	}
+	return false
+}
+
+func trinoControlAuthReferencesSecret(xtrinode *analyticsv1.XTrinode, secretName string) bool {
+	return xtrinode.Spec.TrinoControlAuth != nil &&
+		xtrinode.Spec.TrinoControlAuth.PasswordSecret != nil &&
+		xtrinode.Spec.TrinoControlAuth.PasswordSecret.Name == secretName
 }
 
 func secretMountListReferencesSecret(secretMounts []analyticsv1.SecretMountSpec, secretName string) bool {
@@ -378,6 +440,30 @@ func overlayEnvFromReferencesName(valuesMap map[string]interface{}, refKey, targ
 			continue
 		}
 		if nestedMapReferencesName(itemMap, refKey, "name", targetName) {
+			return true
+		}
+	}
+	return false
+}
+
+func overlayEnvValueFromReferencesName(valuesMap map[string]interface{}, refKey, targetName string) bool {
+	if valuesMap == nil {
+		return false
+	}
+	envList, ok := valuesMap["env"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, item := range envList {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		valueFrom, ok := itemMap["valueFrom"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if nestedMapReferencesName(valueFrom, refKey, "name", targetName) {
 			return true
 		}
 	}
@@ -448,6 +534,48 @@ func catalogEnvVarsReferenceSecret(envVars []corev1.EnvVar, secretName string) b
 		}
 	}
 	return false
+}
+
+func xtrinodeOwnerReferenceToXTrinodes(_ client.Client, _ context.Context, obj client.Object, _ logr.Logger) []reconcile.Request {
+	for _, owner := range obj.GetOwnerReferences() {
+		if owner.APIVersion != analyticsv1.GroupVersion.String() || owner.Kind != "XTrinode" || owner.Name == "" {
+			continue
+		}
+		return []reconcile.Request{{
+			NamespacedName: client.ObjectKey{
+				Name:      owner.Name,
+				Namespace: obj.GetNamespace(),
+			},
+		}}
+	}
+	return []reconcile.Request{}
+}
+
+func endpointSliceToXTrinodes(cli client.Client, ctx context.Context, obj client.Object, log logr.Logger) []reconcile.Request {
+	serviceName := obj.GetLabels()[discoveryv1.LabelServiceName]
+	if serviceName == "" {
+		return []reconcile.Request{}
+	}
+
+	xtrinodeList := &analyticsv1.XTrinodeList{}
+	if err := cli.List(ctx, xtrinodeList, client.InNamespace(obj.GetNamespace())); err != nil {
+		log.Error(err, "failed to list XTrinodes for EndpointSlice watch",
+			"endpointSlice", obj.GetName(),
+			"namespace", obj.GetNamespace())
+		return []reconcile.Request{}
+	}
+
+	requests := make([]reconcile.Request, 0, 1)
+	for i := range xtrinodeList.Items {
+		xtrinode := &xtrinodeList.Items[i]
+		if serviceName != config.BuildCoordinatorServiceName(xtrinode.Name) {
+			continue
+		}
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKeyFromObject(xtrinode),
+		})
+	}
+	return requests
 }
 
 // updateStatusWithRetry updates the status of any Kubernetes object with retry logic for conflict handling

@@ -144,6 +144,38 @@ func TestCheckTrinoRuntimeReadyIgnoresKEDATransientScaleUpReplicaCount(t *testin
 	require.Equal(t, int32(1), readiness.WorkerReadyReplicas)
 }
 
+func TestCheckTrinoRuntimeReadyRequiresNativeHPAFloor(t *testing.T) {
+	xtrinode := testRuntimeReadinessXTrinode(nil)
+	xtrinode.Spec.ValuesOverlay = controllerValuesOverlay(t, map[string]interface{}{
+		"server": map[string]interface{}{
+			"workers": int64(0),
+			"autoscaling": map[string]interface{}{
+				"enabled":                           true,
+				"minReplicas":                       int64(2),
+				"maxReplicas":                       int64(4),
+				"targetCPUUtilizationPercentage":    int64(70),
+				"targetMemoryUtilizationPercentage": "",
+			},
+		},
+	})
+	worker := testRuntimeReadinessDeployment(config.BuildWorkerDeploymentName(xtrinode.Name), xtrinode.Namespace, 1, 1, 1, nil)
+	worker.Status.UpdatedReplicas = 2
+	reconciler := newRuntimeReadinessReconciler(
+		t,
+		testRuntimeReadinessDeployment(config.BuildCoordinatorDeploymentName(xtrinode.Name), xtrinode.Namespace, 1, 1, 1, int32Ptr(1)),
+		testRuntimeReadinessEndpoint(xtrinode),
+		worker,
+	)
+
+	readiness, err := reconciler.checkTrinoRuntimeReady(context.Background(), xtrinode)
+
+	require.NoError(t, err)
+	require.False(t, readiness.Ready)
+	require.Equal(t, "WorkerDeploymentNotReady", readiness.Reason)
+	require.Equal(t, int32(2), readiness.RequiredWorkers)
+	require.Equal(t, int32(1), readiness.WorkerReadyReplicas)
+}
+
 func TestCheckTrinoRuntimeReadyReadyWhenNoWorkersRequired(t *testing.T) {
 	xtrinode := testRuntimeReadinessXTrinode(nil)
 	reconciler := newRuntimeReadinessReconciler(

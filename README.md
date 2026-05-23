@@ -32,6 +32,7 @@ XTrinode is a Kubernetes-native control plane for
 - An API server that handles lifecycle operations such as suspend, resume,
   status, health, and metrics.
 - Optional KEDA worker autoscaling and per-runtime node-pool isolation.
+- Optional Cluster API node-pool management for provider-backed runtime compute.
 
 XTrinode is pronounced **ex-TRY-node**. The name joins:
 
@@ -64,7 +65,8 @@ XTrinode wraps Trino in a declarative Kubernetes control plane:
 - Fixed worker counts by default, with optional KEDA worker autoscaling.
 - Reusable `XTrinodeCatalog` resources with Secret-backed catalog credentials.
 - Optional Trino fault-tolerant execution and exchange-manager configuration.
-- Optional per-runtime node pools for stronger isolation and chargeback.
+- Optional per-runtime node pools for stronger isolation, chargeback, and
+  provider-backed compute lifecycle through Cluster API.
 
 The goal is not to replace Trino. XTrinode uses Trino as the query engine and
 adds the operational layer needed to make many Trino runtimes feel like an
@@ -72,6 +74,10 @@ internal analytics product instead of a collection of manually operated
 clusters.
 
 ## Architecture
+
+<p align="center">
+  <img src="misc/xtrinode-flow.gif" alt="Animated XTrinode resume and query flow" width="900">
+</p>
 
 ```mermaid
 flowchart TB
@@ -81,6 +87,7 @@ flowchart TB
   api["API Server<br/>resume, suspend, status, metrics"]
   operator["Operator<br/>XTrinode and XTrinodeCatalog reconciliation"]
   kube["Kubernetes API"]
+  capi["Cluster API providers<br/>managed runtime node pools"]
   routes["Gateway routes ConfigMap"]
   catalogs["XTrinodeCatalog resources<br/>catalog ConfigMaps and Secrets"]
   keda["KEDA<br/>optional worker autoscaling"]
@@ -99,8 +106,11 @@ flowchart TB
 
   api --> kube
   operator --> kube
+  operator --> capi
   kube --> routes --> gateway
   catalogs --> operator
+  capi --> runtimeA
+  capi --> runtimeB
   kube --> runtimeA
   kube --> runtimeB
   kube --> shared
@@ -108,13 +118,34 @@ flowchart TB
   keda --> runtimeB
 ```
 
+## Scaling And Node Pools
+
+XTrinode separates Trino worker scaling from infrastructure capacity:
+
+- **Worker scaling**: fixed worker counts by default, or KEDA-managed worker
+  replicas when `spec.keda.enabled=true` and a scaler is configured.
+- **Horizontal node-pool scaling**: `spec.nodePool.minNodes` and
+  `spec.nodePool.maxNodes` set the runtime node-pool bounds. When Cluster
+  Autoscaler owns the pool, XTrinode updates autoscaler annotations and leaves
+  replica count ownership to the autoscaler; without autoscaler ownership, the
+  operator can patch replicas directly.
+- **Vertical node-pool shape**: provider-specific fields choose the node shape,
+  such as GCP `machineType`, AWS `instanceType`, Azure `vmSize`, disk type or
+  size, spot settings, zones, labels, and taints. Shape changes are
+  infrastructure changes and can trigger node replacement or re-provisioning.
+
+Cluster API integration lets the operator create or update runtime node-pool
+resources for managed GKE, EKS, and AKS-style providers when `spec.nodePool` is
+configured. GCP/CAPG is the most exercised live path today; AWS/CAPA and
+Azure/CAPZ examples exist for provider validation.
+
 ## Gateway Admin UI
 
 The gateway includes an optional read-only admin UI at `/ui/admin` for route and
 backend visibility. It shows route selectors, lifecycle state, health, circuit
 breaker stats, reload metadata, and query examples.
 
-![XTrinode Gateway admin UI](misc/gateway_ui.png)
+![XTrinode Gateway admin UI](misc/gateway-ui.png)
 
 ## Comparison
 
@@ -132,6 +163,7 @@ the operational platform layer around Trino runtimes.
 | GitOps-friendly runtime config | Partial, via Helm values | Partial, gateway config plus backend database/API state | Yes, declarative CRDs |
 | Per-runtime worker scaling | Manual | External to the gateway | Yes, fixed replicas or KEDA |
 | Catalog management | Per-cluster configuration | Does not manage catalogs; routing can inspect query metadata | `XTrinodeCatalog` CRDs |
+| Node-pool lifecycle | Manual node groups | External to the gateway | Optional CAPI-backed per-runtime node pools with min/max bounds and provider shapes |
 | Isolation and chargeback | Manual namespaces or node pools | External to the gateway | Optional per-runtime node pools |
 
 There are also open-source Trino operators with different control-plane models.

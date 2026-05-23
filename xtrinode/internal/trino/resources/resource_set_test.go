@@ -2,13 +2,13 @@ package resources
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
+	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/rollout"
 	"github.com/xtrinode/xtrinode/internal/sizing"
 	appsv1 "k8s.io/api/apps/v1"
@@ -101,6 +101,201 @@ func TestBuildTrinoResourceSetRollsBothRolesOnCatalogConfigMapChange(t *testing.
 	require.NotEqual(t, firstWorker, secondWorker, "worker must roll on catalog ConfigMap data changes because catalogs are mounted there")
 }
 
+func TestBuildTrinoResourceSetDoesNotRollPodsForRoutingOnlyChange(t *testing.T) {
+	ctx := context.Background()
+	base := resourceCoverageBaseXTrinode()
+	base.Spec.Routing = &analyticsv1.RoutingSpec{
+		RoutingGroup: "dedicated",
+	}
+	routed := base.DeepCopy()
+	routed.Spec.Routing = &analyticsv1.RoutingSpec{
+		RoutingGroup:   "shared",
+		HostnameDomain: "trino.example.com",
+		Header:         "X-Trino-XTrinode=coverage",
+	}
+
+	buildSet := func(xtrinode *analyticsv1.XTrinode) *TrinoResourceSet {
+		t.Helper()
+		set, err := BuildTrinoResourceSet(ctx, resourceCoverageClient(t), xtrinode, nil, "test-version")
+		require.NoError(t, err)
+		require.NotNil(t, set.CoordinatorDeployment)
+		require.NotNil(t, set.WorkerDeployment)
+		require.NotNil(t, set.CoordinatorConfigMap)
+		require.NotNil(t, set.WorkerConfigMap)
+		return set
+	}
+
+	first := buildSet(base)
+	second := buildSet(routed)
+
+	assert.NotEqual(
+		t,
+		first.CoordinatorDeployment.Annotations[config.RevisionAnnotationKey],
+		second.CoordinatorDeployment.Annotations[config.RevisionAnnotationKey],
+		"resource revision should still track the full CR spec for convergence/debugging",
+	)
+	assert.Equal(t, first.CoordinatorConfigMap.Name, second.CoordinatorConfigMap.Name)
+	assert.Equal(t, first.WorkerConfigMap.Name, second.WorkerConfigMap.Name)
+	assert.Equal(
+		t,
+		first.CoordinatorDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+		second.CoordinatorDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+	)
+	assert.Equal(
+		t,
+		first.WorkerDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+		second.WorkerDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+	)
+	assert.Equal(
+		t,
+		first.CoordinatorDeployment.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey],
+		second.CoordinatorDeployment.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey],
+	)
+	assert.Equal(
+		t,
+		first.WorkerDeployment.Spec.Template.Annotations[rollout.WorkerRolloutHashKey],
+		second.WorkerDeployment.Spec.Template.Annotations[rollout.WorkerRolloutHashKey],
+	)
+}
+
+func TestBuildTrinoResourceSetDoesNotRollPodsForBaseRevisionOnlyChange(t *testing.T) {
+	ctx := context.Background()
+	xtrinode := resourceCoverageBaseXTrinode()
+
+	buildSet := func(operatorVersion string) *TrinoResourceSet {
+		t.Helper()
+		set, err := BuildTrinoResourceSet(ctx, resourceCoverageClient(t), xtrinode.DeepCopy(), nil, operatorVersion)
+		require.NoError(t, err)
+		require.NotNil(t, set.CoordinatorDeployment)
+		require.NotNil(t, set.WorkerDeployment)
+		require.NotNil(t, set.CoordinatorConfigMap)
+		require.NotNil(t, set.WorkerConfigMap)
+		return set
+	}
+
+	first := buildSet("operator-a")
+	second := buildSet("operator-b")
+
+	assert.NotEqual(
+		t,
+		first.CoordinatorDeployment.Annotations[config.RevisionAnnotationKey],
+		second.CoordinatorDeployment.Annotations[config.RevisionAnnotationKey],
+		"resource metadata should keep tracking broad base revision changes",
+	)
+	assert.Equal(t, first.CoordinatorConfigMap.Name, second.CoordinatorConfigMap.Name)
+	assert.Equal(t, first.WorkerConfigMap.Name, second.WorkerConfigMap.Name)
+	assert.Equal(
+		t,
+		first.CoordinatorDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+		second.CoordinatorDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+	)
+	assert.Equal(
+		t,
+		first.WorkerDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+		second.WorkerDeployment.Spec.Template.Annotations[config.RevisionAnnotationKey],
+	)
+	assert.Equal(
+		t,
+		first.CoordinatorDeployment.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey],
+		second.CoordinatorDeployment.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey],
+	)
+	assert.Equal(
+		t,
+		first.WorkerDeployment.Spec.Template.Annotations[rollout.WorkerRolloutHashKey],
+		second.WorkerDeployment.Spec.Template.Annotations[rollout.WorkerRolloutHashKey],
+	)
+}
+
+func TestPodRolloutHashIgnoresSelfAnnotations(t *testing.T) {
+	template := &corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				"checksum/config":                 "config-a",
+				config.RevisionAnnotationKey:      "revision-a",
+				rollout.CoordinatorRolloutHashKey: "coordinator-a",
+				rollout.WorkerRolloutHashKey:      "worker-a",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "trino",
+				Image: "trinodb/trino:480",
+			}},
+		},
+	}
+	digests := roleRolloutDigests{
+		Catalog:       "catalog-a",
+		AccessControl: "access-a",
+		SessionProps:  "session-a",
+		Secret:        "secret-a",
+	}
+
+	first := coordinatorPodRolloutHash(template, digests)
+	template.Annotations[config.RevisionAnnotationKey] = "revision-b"
+	template.Annotations[rollout.CoordinatorRolloutHashKey] = "coordinator-b"
+	template.Annotations[rollout.WorkerRolloutHashKey] = "worker-b"
+	second := coordinatorPodRolloutHash(template, digests)
+
+	require.Equal(t, first, second, "rollout hash must ignore annotations it owns")
+
+	template.Annotations["checksum/config"] = "config-b"
+	third := coordinatorPodRolloutHash(template, digests)
+	require.NotEqual(t, first, third, "rollout hash must still include rendered pod-template inputs")
+}
+
+func TestBuildTrinoResourceSetRollsPodsForRenderedTemplateChange(t *testing.T) {
+	ctx := context.Background()
+	base := resourceCoverageBaseXTrinode()
+	changed := base.DeepCopy()
+	changed.Spec.ValuesOverlay = mustValuesOverlay(map[string]interface{}{
+		"image": map[string]interface{}{
+			"repository": "trinodb/trino",
+			"tag":        "481",
+			"pullPolicy": "IfNotPresent",
+		},
+	})
+
+	buildSet := func(xtrinode *analyticsv1.XTrinode) *TrinoResourceSet {
+		t.Helper()
+		set, err := BuildTrinoResourceSet(ctx, resourceCoverageClient(t), xtrinode, nil, "test-version")
+		require.NoError(t, err)
+		require.NotNil(t, set.CoordinatorDeployment)
+		require.NotNil(t, set.WorkerDeployment)
+		return set
+	}
+
+	first := buildSet(base)
+	second := buildSet(changed)
+
+	assert.NotEqual(
+		t,
+		first.CoordinatorDeployment.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey],
+		second.CoordinatorDeployment.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey],
+	)
+	assert.NotEqual(
+		t,
+		first.WorkerDeployment.Spec.Template.Annotations[rollout.WorkerRolloutHashKey],
+		second.WorkerDeployment.Spec.Template.Annotations[rollout.WorkerRolloutHashKey],
+	)
+}
+
+func TestBuildDeploymentsStampPodTemplateRevisionFromRolloutHash(t *testing.T) {
+	xtrinode := resourceCoverageBaseXTrinode()
+	preset := sizing.Presets["s"]
+
+	coordinator, err := BuildCoordinatorDeployment(xtrinode, &preset, "test-config", nil, "base-revision", "coordinator-rollout", nil)
+	require.NoError(t, err)
+	worker, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "base-revision", "worker-rollout", nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, "base-revision", coordinator.Annotations[config.RevisionAnnotationKey])
+	assert.Equal(t, "coordinator-rollout", coordinator.Spec.Template.Annotations[config.RevisionAnnotationKey])
+	assert.Equal(t, "coordinator-rollout", coordinator.Spec.Template.Annotations[rollout.CoordinatorRolloutHashKey])
+	assert.Equal(t, "base-revision", worker.Annotations[config.RevisionAnnotationKey])
+	assert.Equal(t, "worker-rollout", worker.Spec.Template.Annotations[config.RevisionAnnotationKey])
+	assert.Equal(t, "worker-rollout", worker.Spec.Template.Annotations[rollout.WorkerRolloutHashKey])
+}
+
 func TestBuildTrinoResourceSetSkipsWorkersWhenFixedWorkerCountIsZero(t *testing.T) {
 	xtrinode := resourceCoverageBaseXTrinode()
 	disabled := false
@@ -119,6 +314,29 @@ func TestBuildTrinoResourceSetSkipsWorkersWhenFixedWorkerCountIsZero(t *testing.
 	assert.Nil(t, set.WorkerService)
 	assert.Nil(t, set.WorkerMetricsService)
 	assert.Nil(t, set.WorkerPDB)
+}
+
+func TestBuildTrinoResourceSetKeepsWorkersWhenNativeHPAEnabledWithZeroWorkers(t *testing.T) {
+	xtrinode := resourceCoverageBaseXTrinode()
+	xtrinode.Spec.ValuesOverlay = mustValuesOverlay(map[string]interface{}{
+		"server": map[string]interface{}{
+			"workers": int64(0),
+			"autoscaling": map[string]interface{}{
+				"enabled":                           true,
+				"minReplicas":                       int64(1),
+				"maxReplicas":                       int64(4),
+				"targetCPUUtilizationPercentage":    int64(70),
+				"targetMemoryUtilizationPercentage": "",
+			},
+		},
+	})
+
+	set, err := BuildTrinoResourceSet(context.Background(), resourceCoverageClient(t), xtrinode, nil, "test-version")
+	require.NoError(t, err)
+	require.NotNil(t, set.WorkerDeployment)
+	assert.Nil(t, set.WorkerDeployment.Spec.Replicas, "native HPA owns worker replicas")
+	require.NotNil(t, set.HorizontalPodAutoscaler)
+	assert.Equal(t, int32(1), *set.HorizontalPodAutoscaler.Spec.MinReplicas)
 }
 
 func TestBuildTrinoResourceSetKeepsFixedWorkersForPositiveMinWorkers(t *testing.T) {
@@ -257,14 +475,40 @@ func TestCleanupOldConfigMapRevisionsKeepsNewestPerRole(t *testing.T) {
 
 	for _, role := range []string{"coordinator", "worker"} {
 		for _, rev := range []string{"old-a", "old-b"} {
-			err := cli.Get(context.Background(), types.NamespacedName{Namespace: xtrinode.Namespace, Name: "trino-coverage-" + role + "-" + rev}, &corev1.ConfigMap{})
+			err := cli.Get(context.Background(), types.NamespacedName{Namespace: xtrinode.Namespace, Name: revisionConfigMapName(xtrinode, role, rev)}, &corev1.ConfigMap{})
 			require.Error(t, err)
 		}
 		for _, rev := range []string{"keep-a", "keep-b", "keep-c", "current"} {
-			err := cli.Get(context.Background(), types.NamespacedName{Namespace: xtrinode.Namespace, Name: "trino-coverage-" + role + "-" + rev}, &corev1.ConfigMap{})
+			err := cli.Get(context.Background(), types.NamespacedName{Namespace: xtrinode.Namespace, Name: revisionConfigMapName(xtrinode, role, rev)}, &corev1.ConfigMap{})
 			require.NoError(t, err)
 		}
 	}
+}
+
+func TestCleanupOldConfigMapRevisionsKeepsDifferentCurrentRevisionPerRole(t *testing.T) {
+	xtrinode := resourceCoverageBaseXTrinode()
+	now := time.Now()
+	objects := []client.Object{
+		revisionConfigMap(xtrinode, "coordinator", "coord-old-a", now.Add(-5*time.Hour)),
+		revisionConfigMap(xtrinode, "coordinator", "coord-old-b", now.Add(-4*time.Hour)),
+		revisionConfigMap(xtrinode, "coordinator", "coord-old-c", now.Add(-3*time.Hour)),
+		revisionConfigMap(xtrinode, "coordinator", "coord-old-d", now.Add(-2*time.Hour)),
+		revisionConfigMap(xtrinode, "coordinator", "coord-current", now),
+		revisionConfigMap(xtrinode, "worker", "worker-current", now.Add(-6*time.Hour)),
+		revisionConfigMap(xtrinode, "worker", "worker-old-a", now.Add(-5*time.Hour)),
+		revisionConfigMap(xtrinode, "worker", "worker-old-b", now.Add(-4*time.Hour)),
+		revisionConfigMap(xtrinode, "worker", "worker-old-c", now.Add(-3*time.Hour)),
+		revisionConfigMap(xtrinode, "worker", "worker-old-d", now.Add(-2*time.Hour)),
+	}
+	cli := resourceCoverageClient(t, objects...)
+
+	require.NoError(t, CleanupOldConfigMapRevisionsForRoles(context.Background(), cli, xtrinode, "coord-current", "worker-current"))
+
+	err := cli.Get(context.Background(), types.NamespacedName{
+		Namespace: xtrinode.Namespace,
+		Name:      revisionConfigMapName(xtrinode, "worker", "worker-current"),
+	}, &corev1.ConfigMap{})
+	require.NoError(t, err, "current worker ConfigMap must not be pruned when its revision differs from coordinator")
 }
 
 func resourceCoverageBaseXTrinode() *analyticsv1.XTrinode {
@@ -412,33 +656,18 @@ func namedSecret(xtrinode *analyticsv1.XTrinode, name string) *corev1.Secret {
 }
 
 func revisionConfigMap(xtrinode *analyticsv1.XTrinode, role, revision string, created time.Time) *corev1.ConfigMap {
-	cm := namedConfigMap(xtrinode, "trino-"+xtrinode.Name+"-"+role+"-"+revision)
+	cm := namedConfigMap(xtrinode, revisionConfigMapName(xtrinode, role, revision))
 	cm.CreationTimestamp = metav1.NewTime(created)
 	return cm
 }
 
-func TestComponentConfigExtractionAndJSON(t *testing.T) {
-	xtrinode := resourceCoverageXTrinode()
-	xtrinode.Spec.HelmChartConfig.Coordinator = &analyticsv1.CoordinatorHelmConfigSpec{
-		AdditionalConfigFiles: map[string]string{"coordinator.properties": "value"},
+func revisionConfigMapName(xtrinode *analyticsv1.XTrinode, role, revision string) string {
+	switch role {
+	case "coordinator":
+		return coordinatorConfigMapName(xtrinode, revision)
+	case "worker":
+		return workerConfigMapName(xtrinode, revision)
+	default:
+		return "trino-" + xtrinode.Name + "-" + role + "-" + revision
 	}
-	xtrinode.Spec.HelmChartConfig.Worker.SecretMounts = []analyticsv1.SecretMountSpec{
-		{Name: "worker-secret", SecretName: "worker-secret", Path: "/etc/secret"},
-	}
-
-	coord := extractCoordinatorConfig(xtrinode).(ComponentConfig)
-	worker := extractWorkerConfig(xtrinode).(ComponentConfig)
-
-	assert.Equal(t, "s", coord.Size)
-	assert.Equal(t, "trinodb/trino:480", coord.Image)
-	assert.Equal(t, "IfNotPresent", coord.ImagePullPolicy)
-	assert.Contains(t, coord.ComponentSettings, "accessControl")
-	assert.Contains(t, coord.Resources, "coordinator")
-
-	assert.Equal(t, "trinodb/trino:480", worker.Image)
-	assert.Contains(t, worker.Resources, "worker")
-
-	data, err := json.Marshal(coord)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"image":"trinodb/trino:480"`)
 }
