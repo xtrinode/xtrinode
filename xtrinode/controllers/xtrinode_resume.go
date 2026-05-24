@@ -280,20 +280,20 @@ func (r *XTrinodeReconciler) ensureResumedInvariants(ctx context.Context, xtrino
 		return fmt.Errorf("failed to get coordinator deployment: %w", err)
 	}
 
-	// Ensure coordinator matches expected replicas from invariants
+	// Ensure coordinator scale matches phase invariants.
 	currentReplicas := int32(0)
 	if coordDeployment.Spec.Replicas != nil {
 		currentReplicas = *coordDeployment.Spec.Replicas
 	}
 
 	if currentReplicas != inv.CoordReplicas {
-		log.Info("Coordinator replicas drifted - restoring to expected state",
+		log.Info("Coordinator scale drifted - restoring to expected state",
 			"xtrinode", xtrinode.Name,
 			"current", currentReplicas,
 			"expected", inv.CoordReplicas)
 		// Only scale coordinator - NEVER touch workers when KEDA may own them
 		if err := r.scaleCoordinatorOnly(ctx, xtrinode, inv.CoordReplicas); err != nil {
-			return fmt.Errorf("failed to restore coordinator replicas: %w", err)
+			return fmt.Errorf("failed to restore coordinator deployment scale: %w", err)
 		}
 		r.EventRecorder.Normalf(xtrinode, events.ReasonReconcileComplete,
 			"Recovered from drift: coordinator scaled from %d to %d", currentReplicas, inv.CoordReplicas)

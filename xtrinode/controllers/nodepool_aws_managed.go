@@ -98,9 +98,9 @@ func (n *NodePoolAdapter) ensureAWSManagedMachinePool(ctx context.Context, xtrin
 	}
 
 	// Apply node labels (native EKS support)
-	if len(nodePool.NodeLabels) > 0 {
+	if labels := effectiveNodePoolLabels(nodePool, poolName); len(labels) > 0 {
 		nodeLabels := make(map[string]interface{})
-		for k, v := range nodePool.NodeLabels {
+		for k, v := range labels {
 			nodeLabels[k] = v
 		}
 		if err := unstructured.SetNestedMap(infraPool.Object, nodeLabels, "spec", "labels"); err != nil {

@@ -148,7 +148,6 @@ func TestCheckTrinoRuntimeReadyRequiresNativeHPAFloor(t *testing.T) {
 	xtrinode := testRuntimeReadinessXTrinode(nil)
 	xtrinode.Spec.ValuesOverlay = controllerValuesOverlay(t, map[string]interface{}{
 		"server": map[string]interface{}{
-			"workers": int64(0),
 			"autoscaling": map[string]interface{}{
 				"enabled":                           true,
 				"minReplicas":                       int64(2),

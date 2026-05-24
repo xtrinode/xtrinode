@@ -281,11 +281,10 @@ func TestBuildTrinoResourceSetRollsPodsForRenderedTemplateChange(t *testing.T) {
 
 func TestBuildDeploymentsStampPodTemplateRevisionFromRolloutHash(t *testing.T) {
 	xtrinode := resourceCoverageBaseXTrinode()
-	preset := sizing.Presets["s"]
 
-	coordinator, err := BuildCoordinatorDeployment(xtrinode, &preset, "test-config", nil, "base-revision", "coordinator-rollout", nil)
+	coordinator, err := BuildCoordinatorDeployment(xtrinode, "test-config", nil, "base-revision", "coordinator-rollout", nil)
 	require.NoError(t, err)
-	worker, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "base-revision", "worker-rollout", nil)
+	worker, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "base-revision", "worker-rollout", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, "base-revision", coordinator.Annotations[config.RevisionAnnotationKey])
@@ -299,12 +298,9 @@ func TestBuildDeploymentsStampPodTemplateRevisionFromRolloutHash(t *testing.T) {
 func TestBuildTrinoResourceSetSkipsWorkersWhenFixedWorkerCountIsZero(t *testing.T) {
 	xtrinode := resourceCoverageBaseXTrinode()
 	disabled := false
+	maxWorkers := int32(0)
 	xtrinode.Spec.KEDA = &analyticsv1.KEDASpec{Enabled: &disabled}
-	xtrinode.Spec.ValuesOverlay = mustValuesOverlay(map[string]interface{}{
-		"server": map[string]interface{}{
-			"workers": int64(0),
-		},
-	})
+	xtrinode.Spec.MaxWorkers = &maxWorkers
 
 	set, err := BuildTrinoResourceSet(context.Background(), resourceCoverageClient(t), xtrinode, nil, "test-version")
 	require.NoError(t, err)
@@ -320,7 +316,6 @@ func TestBuildTrinoResourceSetKeepsWorkersWhenNativeHPAEnabledWithZeroWorkers(t 
 	xtrinode := resourceCoverageBaseXTrinode()
 	xtrinode.Spec.ValuesOverlay = mustValuesOverlay(map[string]interface{}{
 		"server": map[string]interface{}{
-			"workers": int64(0),
 			"autoscaling": map[string]interface{}{
 				"enabled":                           true,
 				"minReplicas":                       int64(1),
@@ -345,11 +340,6 @@ func TestBuildTrinoResourceSetKeepsFixedWorkersForPositiveMinWorkers(t *testing.
 	minWorkers := int32(2)
 	xtrinode.Spec.KEDA = &analyticsv1.KEDASpec{Enabled: &disabled}
 	xtrinode.Spec.MinWorkers = &minWorkers
-	xtrinode.Spec.ValuesOverlay = mustValuesOverlay(map[string]interface{}{
-		"server": map[string]interface{}{
-			"workers": int64(0),
-		},
-	})
 
 	set, err := BuildTrinoResourceSet(context.Background(), resourceCoverageClient(t), xtrinode, nil, "test-version")
 	require.NoError(t, err)
@@ -364,11 +354,6 @@ func TestBuildWorkerDeploymentUsesMinWorkersAsFixedReplicaFloor(t *testing.T) {
 	minWorkers := int32(3)
 	xtrinode.Spec.KEDA = &analyticsv1.KEDASpec{Enabled: &disabled}
 	xtrinode.Spec.MinWorkers = &minWorkers
-	xtrinode.Spec.ValuesOverlay = mustValuesOverlay(map[string]interface{}{
-		"server": map[string]interface{}{
-			"workers": int64(1),
-		},
-	})
 
 	set, err := BuildTrinoResourceSet(context.Background(), resourceCoverageClient(t), xtrinode, nil, "test-version")
 	require.NoError(t, err)
@@ -410,9 +395,9 @@ func TestDeleteTrinoResourcesDeletesExistingObjects(t *testing.T) {
 	require.NoError(t, err)
 	workerCM, err := BuildWorkerConfigMap(xtrinode, &preset, nil, revision)
 	require.NoError(t, err)
-	coordDeployment, err := BuildCoordinatorDeployment(xtrinode, &preset, coordCM.Name, nil, revision, "coordhash", nil)
+	coordDeployment, err := BuildCoordinatorDeployment(xtrinode, coordCM.Name, nil, revision, "coordhash", nil)
 	require.NoError(t, err)
-	workerDeployment, err := BuildWorkerDeployment(xtrinode, &preset, workerCM.Name, nil, revision, "workerhash", nil)
+	workerDeployment, err := BuildWorkerDeployment(xtrinode, workerCM.Name, nil, revision, "workerhash", nil)
 	require.NoError(t, err)
 
 	set := &TrinoResourceSet{
@@ -560,7 +545,6 @@ func resourceCoverageXTrinode() *analyticsv1.XTrinode {
 			"pullPolicy": "IfNotPresent",
 		},
 		"server": map[string]interface{}{
-			"workers": int64(2),
 			"config": map[string]interface{}{
 				"authenticationType": "PASSWORD",
 			},

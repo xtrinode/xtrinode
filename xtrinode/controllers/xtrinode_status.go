@@ -11,6 +11,7 @@ import (
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 	"github.com/xtrinode/xtrinode/internal/status"
 	"github.com/xtrinode/xtrinode/internal/trino/controlendpoint"
 	"github.com/xtrinode/xtrinode/pkg/metrics"
@@ -55,6 +56,15 @@ func (r *XTrinodeReconciler) markSuspendedStatus(xtrinode *analyticsv1.XTrinode)
 	status.SetCondition(xtrinode, status.ConditionTypeKEDAReady, metav1.ConditionFalse, "KEDADisabled", "KEDA disabled while suspended")
 	status.SetConditionWithEvents(xtrinode, status.ConditionTypeError, metav1.ConditionFalse, status.ConditionReasonNoError, "No errors", r.EventRecorder)
 	r.updateConditionMetrics(xtrinode)
+}
+
+func setObservedRuntimeShapeStatus(xtrinode *analyticsv1.XTrinode) error {
+	shape, err := runtimeshape.Resolve(xtrinode)
+	if err != nil {
+		return err
+	}
+	xtrinode.Status.ObservedRuntimeShape = shape.ObservedStatus()
+	return nil
 }
 
 // calculateRequeueInterval determines if periodic reconciliation is needed

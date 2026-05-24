@@ -16,7 +16,7 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/catalog"
 	"github.com/xtrinode/xtrinode/internal/rollout"
-	"github.com/xtrinode/xtrinode/internal/sizing"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 )
 
 // BuildTrinoResourceSet builds all Trino resources for a XTrinode
@@ -27,11 +27,11 @@ func BuildTrinoResourceSet(
 	catalogs []string,
 	operatorVersion string,
 ) (*TrinoResourceSet, error) {
-	// Get size preset
-	preset, ok := sizing.GetPreset(xtrinode.Spec.Size)
-	if !ok {
-		return nil, fmt.Errorf("invalid size preset: %s", xtrinode.Spec.Size)
+	shape, err := runtimeshape.Resolve(xtrinode)
+	if err != nil {
+		return nil, err
 	}
+	preset := shape.Preset
 
 	// Sort catalogs for deterministic revision and resource generation.
 	sortedCatalogs := make([]string, len(catalogs))
@@ -96,30 +96,9 @@ func BuildTrinoResourceSet(
 	coordinatorConfigMapRevision := configMapDataRevision(coordinatorConfigMapData)
 	coordinatorConfigMap := buildCoordinatorConfigMapFromData(xtrinode, coordinatorConfigMapData, coordinatorConfigMapRevision, revision)
 
-	// Render workers unless workers=0 and no autoscaler owns worker scale.
-	shouldRenderWorker := true // Default to rendering workers
+	// Render workers unless the effective fixed shape has zero workers.
+	shouldRenderWorker := shape.AutoscalingMode != runtimeshape.AutoscalingModeFixed || shape.FixedWorkers == nil || *shape.FixedWorkers > 0
 	valuesOverlay := xtrinode.Spec.GetValuesOverlayMap()
-	if valuesOverlay != nil {
-		if server, ok := valuesOverlay["server"].(map[string]interface{}); ok {
-			autoscalerEnabled := isKEDAEnabled(xtrinode) || isNativeHPAEnabled(xtrinode)
-			workersCount := -1 // -1 means not specified
-
-			// Check workers count
-			if workers, ok := ParseInt32(server["workers"]); ok {
-				workersCount = int(workers)
-			}
-
-			minWorkers := int32(0)
-			if xtrinode.Spec.MinWorkers != nil {
-				minWorkers = *xtrinode.Spec.MinWorkers
-			}
-
-			// Only disable if workers=0, no autoscaler owns replicas, and no fixed floor is set.
-			if workersCount == 0 && !autoscalerEnabled && minWorkers == 0 {
-				shouldRenderWorker = false
-			}
-		}
-	}
 
 	var workerConfigMap *corev1.ConfigMap
 	var workerDeployment *appsv1.Deployment
@@ -139,7 +118,7 @@ func BuildTrinoResourceSet(
 		var draftWorkerDeployment *appsv1.Deployment
 		draftWorkerDeployment, err = buildWorkerDeployment(
 			xtrinode,
-			&preset,
+			shape,
 			workerConfigMap.Name,
 			sortedCatalogs,
 			revision,
@@ -153,7 +132,7 @@ func BuildTrinoResourceSet(
 		workerRolloutHash = workerPodRolloutHash(&draftWorkerDeployment.Spec.Template, rollWorkersOnCatalogChange, rolloutDigests)
 		workerDeployment, err = buildWorkerDeployment(
 			xtrinode,
-			&preset,
+			shape,
 			workerConfigMap.Name,
 			sortedCatalogs,
 			revision,
@@ -178,7 +157,7 @@ func BuildTrinoResourceSet(
 	// Build Deployments (with revision stamping and rollout hashes)
 	draftCoordinatorDeployment, err := buildCoordinatorDeployment(
 		xtrinode,
-		&preset,
+		shape,
 		coordinatorConfigMap.Name,
 		sortedCatalogs,
 		revision,
@@ -192,7 +171,7 @@ func BuildTrinoResourceSet(
 	coordRolloutHash := coordinatorPodRolloutHash(&draftCoordinatorDeployment.Spec.Template, rolloutDigests)
 	coordinatorDeployment, err := buildCoordinatorDeployment(
 		xtrinode,
-		&preset,
+		shape,
 		coordinatorConfigMap.Name,
 		sortedCatalogs,
 		revision,

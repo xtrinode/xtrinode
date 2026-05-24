@@ -41,11 +41,11 @@ func TestResourceGroupsAreCoordinatorOnly(t *testing.T) {
 	assert.NotNil(t, BuildResourceGroupsConfigMapCoordinator(xtrinode))
 	assert.Nil(t, BuildResourceGroupsConfigMapWorker(xtrinode))
 
-	coordinatorDeployment, err := BuildCoordinatorDeployment(xtrinode, &preset, "trino-test-trino-coordinator-rev", nil, "rev", "hash", nil)
+	coordinatorDeployment, err := BuildCoordinatorDeployment(xtrinode, "trino-test-trino-coordinator-rev", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "trino-test-trino-resource-groups-volume-coordinator", configMapVolumeName(coordinatorDeployment.Spec.Template.Spec.Volumes, "resource-groups-volume"))
 
-	workerDeployment, err := BuildWorkerDeployment(xtrinode, &preset, "trino-test-trino-worker-rev", nil, "rev", "hash", nil)
+	workerDeployment, err := BuildWorkerDeployment(xtrinode, "trino-test-trino-worker-rev", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	assert.Empty(t, configMapVolumeName(workerDeployment.Spec.Template.Spec.Volumes, "resource-groups-volume"))
 }
@@ -68,7 +68,7 @@ func TestResourceGroupsProfileMountsUserConfigMap(t *testing.T) {
 	assert.Contains(t, configMap.Data, "resource-groups.properties")
 	assert.Nil(t, BuildResourceGroupsConfigMapCoordinator(xtrinode))
 
-	deployment, err := BuildCoordinatorDeployment(xtrinode, &preset, "trino-test-trino-coordinator-rev", nil, "rev", "hash", nil)
+	deployment, err := BuildCoordinatorDeployment(xtrinode, "trino-test-trino-coordinator-rev", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "bi-friendly", configMapVolumeName(deployment.Spec.Template.Spec.Volumes, "resource-groups-volume"))
 }

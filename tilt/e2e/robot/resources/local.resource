@@ -88,7 +88,7 @@ Ensure Local Postgres Ready
 
 Apply Local XTrinode Manifest
     Command Should Succeed    kubectl    apply    -f    ${MANIFEST}
-    ${patch}=    Set Variable    {"spec":{"valuesOverlay":{"image":{"repository":"${TRINO_IMAGE_REPOSITORY}","tag":"${TRINO_IMAGE_TAG}"}}}}
+    ${patch}=    Set Variable    {"spec":{"autoSuspendAfter":"30m","valuesOverlay":{"image":{"repository":"${TRINO_IMAGE_REPOSITORY}","tag":"${TRINO_IMAGE_TAG}"}}}}
     Command Should Succeed    kubectl    patch    xtrinode/${XTRINODE_NAME}    -n    ${NAMESPACE}    --type=merge    -p    ${patch}
 
 Ensure Local XTrinode Ready
@@ -161,8 +161,8 @@ Start Local Port Forwards
     Stop Local Port Forwards
     Start Process    kubectl    port-forward    -n    ${GATEWAY_NAMESPACE}    svc/${GATEWAY_SERVICE}    ${GATEWAY_PORT}:8080    stdout=/tmp/xtrinode-robot-gateway-port-forward.log    stderr=STDOUT    alias=xtrinode-gateway-port-forward
     Start Process    kubectl    port-forward    -n    ${API_SERVER_NAMESPACE}    svc/${API_SERVER_SERVICE}    ${API_SERVER_PORT}:8081    stdout=/tmp/xtrinode-robot-api-port-forward.log    stderr=STDOUT    alias=xtrinode-api-port-forward
-    Wait Until Keyword Succeeds    45s    1s    HTTP Should Succeed    http://127.0.0.1:${GATEWAY_PORT}/health
-    Wait Until Keyword Succeeds    45s    1s    HTTP Should Succeed    http://127.0.0.1:${API_SERVER_PORT}/health
+    Wait Until Keyword Succeeds    90s    1s    HTTP Should Succeed    http://127.0.0.1:${GATEWAY_PORT}/health
+    Wait Until Keyword Succeeds    90s    1s    HTTP Should Succeed    http://127.0.0.1:${API_SERVER_PORT}/health
 
 Wait For Gateway Backend Ready
     ${body}=    Set Variable    /tmp/xtrinode-gateway-backend-ready.json

@@ -12,6 +12,7 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/retry"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 	"github.com/xtrinode/xtrinode/internal/trino/controlendpoint"
 	"gopkg.in/yaml.v3"
 )
@@ -127,8 +128,12 @@ func RegisterRoute(ctx context.Context, cli client.Client, xtrinode *analyticsv1
 	}
 
 	// Create backend entry for this XTrinode
-	tier := xtrinode.Spec.Size
-	capacityUnits := mapSizeToCapacityUnits(tier)
+	shape, err := runtimeshape.Resolve(xtrinode)
+	if err != nil {
+		return fmt.Errorf("failed to resolve runtime shape for gateway route: %w", err)
+	}
+	tier := shape.PresetName
+	capacityUnits := int(shape.CapacityUnits)
 
 	// Compute backend state from XTrinode CR status (operator-owned)
 	backendState := computeBackendState(xtrinode)

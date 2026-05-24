@@ -92,6 +92,33 @@ Use `make deploy-gcp` when the GKE cluster and images already exist and you want
 directly. `make gcp-control-plane-deploy` is the runbook target used by the from-zero GCP/CAPG flow.
 Run `make gcp-flow` to print the complete ordered CAPG runbook.
 
+### Deploy To An Existing GKE Cluster
+
+The deploy script is not tied to the Terraform default cluster name. Set
+`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_ZONE`, and `GCP_CLUSTER_NAME` to the target
+cluster. The script first tries regional credentials with `--region
+$GCP_REGION`, then zonal credentials with `--zone $GCP_ZONE`.
+
+Images are resolved from `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}`, so
+the pushed image repositories and `VERSION` tag must exist in that region before
+deploying to an arbitrary cluster.
+
+Using an existing GKE node pool for Trino pods is a runtime-level setting, not a
+control-plane deploy setting. For an existing node pool, leave
+`spec.nodePool` unset and set `spec.placement.nodeSelector`, for example:
+
+```yaml
+spec:
+  placement:
+    nodeSelector:
+      cloud.google.com/gke-nodepool: existing-pool
+```
+
+Set `spec.nodePool` only when XTrinode should provision or manage a CAPI/CAPG
+node-pool resource. In that case, `spec.nodePool.clusterName` can target the
+existing CAPI cluster name, and `spec.nodePool.schedulePods: true` binds runtime
+pod placement to the managed pool label.
+
 ### Environment Variables
 
 | Variable | Default | Description |

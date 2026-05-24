@@ -232,9 +232,6 @@ func nativeHPARequiredWorkers(xtrinode *analyticsv1.XTrinode) (int32, bool) {
 	if minReplicas, ok := parseOverlayInt32(autoscaling["minReplicas"]); ok {
 		return minReplicas, true
 	}
-	if workers, ok := parseOverlayInt32(server["workers"]); ok {
-		return workers, true
-	}
 	return int32(config.DefaultHPAMinReplicas), true
 }
 

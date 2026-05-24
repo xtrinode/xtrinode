@@ -51,7 +51,6 @@ func TestChartGoldenCoreDefaults(t *testing.T) {
 
 	coordinatorDeployment, err := BuildCoordinatorDeployment(
 		xtrinode,
-		&preset,
 		coordinatorConfigMap.Name,
 		nil,
 		chartGoldenRevision,
@@ -61,7 +60,6 @@ func TestChartGoldenCoreDefaults(t *testing.T) {
 	require.NoError(t, err)
 	workerDeployment, err := BuildWorkerDeployment(
 		xtrinode,
-		&preset,
 		workerConfigMap.Name,
 		nil,
 		chartGoldenRevision,
@@ -138,7 +136,6 @@ func TestChartGoldenServicePortOverride(t *testing.T) {
 
 	coordinatorDeployment, err := BuildCoordinatorDeployment(
 		xtrinode,
-		&preset,
 		coordinatorConfigMap.Name,
 		nil,
 		chartGoldenRevision,
@@ -148,7 +145,6 @@ func TestChartGoldenServicePortOverride(t *testing.T) {
 	require.NoError(t, err)
 	workerDeployment, err := BuildWorkerDeployment(
 		xtrinode,
-		&preset,
 		workerConfigMap.Name,
 		nil,
 		chartGoldenRevision,
@@ -225,7 +221,6 @@ func TestChartGoldenAuthSecrets(t *testing.T) {
 
 	coordinatorDeployment, err := BuildCoordinatorDeployment(
 		xtrinode,
-		&preset,
 		coordinatorConfigMap.Name,
 		nil,
 		chartGoldenRevision,
@@ -271,7 +266,6 @@ func TestChartGoldenResourceGroups(t *testing.T) {
 
 		coordinatorDeployment, err := BuildCoordinatorDeployment(
 			xtrinode,
-			&preset,
 			coordinatorConfigMap.Name,
 			nil,
 			chartGoldenRevision,
@@ -281,7 +275,6 @@ func TestChartGoldenResourceGroups(t *testing.T) {
 		require.NoError(t, err)
 		workerDeployment, err := BuildWorkerDeployment(
 			xtrinode,
-			&preset,
 			workerConfigMap.Name,
 			nil,
 			chartGoldenRevision,
@@ -310,7 +303,6 @@ func TestChartGoldenResourceGroups(t *testing.T) {
 
 		coordinatorDeployment, err := BuildCoordinatorDeployment(
 			xtrinode,
-			&preset,
 			coordinatorConfigMap.Name,
 			nil,
 			chartGoldenRevision,
@@ -361,7 +353,6 @@ func TestChartGoldenJMX(t *testing.T) {
 
 	coordinatorDeployment, err := BuildCoordinatorDeployment(
 		xtrinode,
-		&preset,
 		coordinatorConfigMap.Name,
 		nil,
 		chartGoldenRevision,
@@ -371,7 +362,6 @@ func TestChartGoldenJMX(t *testing.T) {
 	require.NoError(t, err)
 	workerDeployment, err := BuildWorkerDeployment(
 		xtrinode,
-		&preset,
 		workerConfigMap.Name,
 		nil,
 		chartGoldenRevision,
@@ -443,7 +433,6 @@ func TestChartGoldenNetworkPolicy(t *testing.T) {
 	require.NoError(t, err)
 	coordinatorDeployment, err := BuildCoordinatorDeployment(
 		xtrinode,
-		&preset,
 		coordinatorConfigMap.Name,
 		nil,
 		chartGoldenRevision,
@@ -453,7 +442,6 @@ func TestChartGoldenNetworkPolicy(t *testing.T) {
 	require.NoError(t, err)
 	workerDeployment, err := BuildWorkerDeployment(
 		xtrinode,
-		&preset,
 		workerConfigMap.Name,
 		nil,
 		chartGoldenRevision,

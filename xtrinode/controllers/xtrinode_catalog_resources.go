@@ -72,6 +72,10 @@ func (r *XTrinodeReconciler) reconcileTrinoResources(ctx context.Context, xtrino
 	}
 	status.SetCondition(xtrinode, status.ConditionTypeTrinoResourcesReady, metav1.ConditionTrue, "ResourcesApplied", trinoResourcesAppliedMessage(xtrinode))
 
+	if err := setObservedRuntimeShapeStatus(xtrinode); err != nil {
+		return fmt.Errorf("failed to resolve observed runtime shape: %w", err)
+	}
+
 	// Update status with current revision and observed generation
 	// This tracks the XTrinode revision that was successfully applied
 	currentRevision := r.TrinoResourcesService.GetXTrinodeRevision(xtrinode, r.OperatorVersion, effectiveCatalogs)
