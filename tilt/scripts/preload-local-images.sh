@@ -13,13 +13,15 @@ postgres:16-alpine
 python:3.12-alpine
 redis:7.4-alpine
 bitnami/jmx-exporter@sha256:7c0014b7e1d736faec9760a89727389ba1ba7ad920c764417167abecfb7fd032
-quay.io/prometheus-operator/prometheus-operator:v0.73.0
-quay.io/prometheus-operator/prometheus-config-reloader:v0.73.0
-quay.io/prometheus/prometheus:v2.51.1
-registry.k8s.io/ingress-nginx/kube-webhook-certgen:v20221220-controller-v1.5.1-58-g787ea74b6
-ghcr.io/kedacore/keda:2.18.0
-ghcr.io/kedacore/keda-metrics-apiserver:2.18.0
-ghcr.io/kedacore/keda-admission-webhooks:2.18.0"
+quay.io/prometheus-operator/prometheus-operator:v0.90.1
+quay.io/prometheus-operator/prometheus-config-reloader:v0.90.1
+quay.io/prometheus/prometheus:v3.11.3-distroless
+ghcr.io/jkroepke/kube-webhook-certgen:1.8.2
+docker.io/busybox:latest
+registry.k8s.io/kubectl:v1.32.3
+ghcr.io/kedacore/keda:2.19.0
+ghcr.io/kedacore/keda-metrics-apiserver:2.19.0
+ghcr.io/kedacore/keda-admission-webhooks:2.19.0"
 
 LOCAL_PRELOAD_IMAGES="${LOCAL_PRELOAD_IMAGES:-$DEFAULT_LOCAL_PRELOAD_IMAGES}"
 
