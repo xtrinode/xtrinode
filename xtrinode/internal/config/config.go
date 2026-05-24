@@ -277,7 +277,7 @@ const (
 	// RevisionAnnotationKey is the annotation key for XTrinode revision
 	RevisionAnnotationKey = "xtrinode.io/revision"
 
-	// DefaultCoordinatorReplicas is the default number of coordinator replicas
+	// DefaultCoordinatorReplicas is the default active coordinator count.
 	DefaultCoordinatorReplicas = 1
 
 	// DefaultWorkerReplicas is the default number of worker replicas (when KEDA is disabled)
@@ -526,6 +526,10 @@ const (
 
 	// RuntimeLabel indicates the XTrinode runtime name
 	RuntimeLabel = "xtrinode.analytics.xtrinode.io/runtime"
+
+	// NodePoolSchedulingLabel is applied to managed node pools and selected by
+	// runtime pods when spec.nodePool.schedulePods is enabled.
+	NodePoolSchedulingLabel = "xtrinode.analytics.xtrinode.io/node-pool"
 )
 
 // HTTPPaths defines HTTP path constants

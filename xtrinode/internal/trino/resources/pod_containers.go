@@ -4,56 +4,23 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
-	"github.com/xtrinode/xtrinode/internal/sizing"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 )
 
 func buildTrinoContainer(
 	xtrinode *analyticsv1.XTrinode,
-	preset *sizing.SizePreset,
+	shape *runtimeshape.ResolvedRuntimeShape,
 	role string,
 	configMapName string,
 	catalogs []string,
 ) (corev1.Container, error) {
-	// Validate resource quantities instead of using MustParse.
-	cpuReq, err := resource.ParseQuantity(preset.CoordinatorCPUReq)
-	if err != nil {
-		return corev1.Container{}, fmt.Errorf("invalid coordinator CPU request %q: %w", preset.CoordinatorCPUReq, err)
-	}
-	memReq, err := resource.ParseQuantity(preset.CoordinatorMemReq)
-	if err != nil {
-		return corev1.Container{}, fmt.Errorf("invalid coordinator memory request %q: %w", preset.CoordinatorMemReq, err)
-	}
-	cpuLim, err := resource.ParseQuantity(preset.CoordinatorCPULim)
-	if err != nil {
-		return corev1.Container{}, fmt.Errorf("invalid coordinator CPU limit %q: %w", preset.CoordinatorCPULim, err)
-	}
-	memLim, err := resource.ParseQuantity(preset.CoordinatorMemLim)
-	if err != nil {
-		return corev1.Container{}, fmt.Errorf("invalid coordinator memory limit %q: %w", preset.CoordinatorMemLim, err)
-	}
-
+	resources := shape.Coordinator.DeepCopy()
 	if role == "worker" {
-		cpuReq, err = resource.ParseQuantity(preset.WorkerCPUReq)
-		if err != nil {
-			return corev1.Container{}, fmt.Errorf("invalid worker CPU request %q: %w", preset.WorkerCPUReq, err)
-		}
-		memReq, err = resource.ParseQuantity(preset.WorkerMemReq)
-		if err != nil {
-			return corev1.Container{}, fmt.Errorf("invalid worker memory request %q: %w", preset.WorkerMemReq, err)
-		}
-		cpuLim, err = resource.ParseQuantity(preset.WorkerCPULim)
-		if err != nil {
-			return corev1.Container{}, fmt.Errorf("invalid worker CPU limit %q: %w", preset.WorkerCPULim, err)
-		}
-		memLim, err = resource.ParseQuantity(preset.WorkerMemLim)
-		if err != nil {
-			return corev1.Container{}, fmt.Errorf("invalid worker memory limit %q: %w", preset.WorkerMemLim, err)
-		}
+		resources = shape.Worker.DeepCopy()
 	}
 
 	// Get image pull policy from valuesOverlay
@@ -78,14 +45,8 @@ func buildTrinoContainer(
 			},
 		},
 		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    cpuReq,
-				corev1.ResourceMemory: memReq,
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    cpuLim,
-				corev1.ResourceMemory: memLim,
-			},
+			Requests: resources.Requests,
+			Limits:   resources.Limits,
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
@@ -316,16 +277,6 @@ func buildTrinoContainer(
 			}
 			if probe != nil {
 				container.StartupProbe = probe
-			}
-		}
-
-		if resourcesMap, ok := roleConfig["resources"].(map[string]interface{}); ok {
-			resources, err := buildResourceRequirements(resourcesMap)
-			if err != nil {
-				return corev1.Container{}, fmt.Errorf("failed to build %s resources: %w", role, err)
-			}
-			if resources != nil {
-				container.Resources = *resources
 			}
 		}
 

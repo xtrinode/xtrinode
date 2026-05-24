@@ -39,11 +39,9 @@ func BuildHorizontalPodAutoscaler(xtrinode *analyticsv1.XTrinode) *autoscalingv2
 					maxReplicas = maxRep
 				}
 
-				// Parse minReplicas (defaults to server.workers)
+				// Parse minReplicas
 				if minRep, ok := ParseInt32(autoscaling["minReplicas"]); ok {
 					minReplicas = minRep
-				} else if workers, ok := ParseInt32(server["workers"]); ok {
-					minReplicas = workers
 				}
 
 				// Parse targetCPUUtilizationPercentage

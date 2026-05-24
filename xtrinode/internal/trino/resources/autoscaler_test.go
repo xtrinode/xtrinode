@@ -133,7 +133,7 @@ func TestBuildHorizontalPodAutoscaler(t *testing.T) {
 			},
 		},
 		{
-			name: "autoscaling with minReplicas from workers",
+			name: "autoscaling defaults minReplicas when omitted",
 			xtrinode: &analyticsv1.XTrinode{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-trino",
@@ -143,7 +143,6 @@ func TestBuildHorizontalPodAutoscaler(t *testing.T) {
 					Size: "s",
 					ValuesOverlay: mustValuesOverlay(map[string]interface{}{
 						"server": map[string]interface{}{
-							"workers": int64(3),
 							"autoscaling": map[string]interface{}{
 								"enabled":                           true,
 								"maxReplicas":                       int64(10),
@@ -157,7 +156,7 @@ func TestBuildHorizontalPodAutoscaler(t *testing.T) {
 			wantNil: false,
 			want: &autoscalingv2.HorizontalPodAutoscaler{
 				Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-					MinReplicas: func() *int32 { v := int32(3); return &v }(),
+					MinReplicas: func() *int32 { v := int32(2); return &v }(),
 					MaxReplicas: 10,
 					Metrics: []autoscalingv2.MetricSpec{
 						{

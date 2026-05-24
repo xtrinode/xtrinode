@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
-	"github.com/xtrinode/xtrinode/internal/sizing"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,6 +48,97 @@ func TestCalculateNamespaceGuardrailLimitsIncludesCurrentWhenListMissesIt(t *tes
 	expectedCPU, expectedMemory := expectedNamespaceQuota(t, reconciler, current, second)
 	requireQuantityEqual(t, expectedCPU, limits.MaxCPU)
 	requireQuantityEqual(t, expectedMemory, limits.MaxMemory)
+}
+
+func TestCalculateNamespaceGuardrailLimitsUsesTypedResourcesAndFixedWorkers(t *testing.T) {
+	current := testNamespaceGuardrailXTrinode("runtime-a", "team-a", "s", nil)
+	maxWorkers := int32(3)
+	current.Spec.MaxWorkers = &maxWorkers
+	current.Spec.Resources = &analyticsv1.RuntimeResourcesSpec{
+		Coordinator: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("500m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("1"),
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
+			},
+		},
+		Worker: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("8"),
+				corev1.ResourceMemory: resource.MustParse("32Gi"),
+			},
+		},
+	}
+	reconciler := newNamespaceGuardrailReconciler(t, current)
+
+	limits, err := reconciler.calculateNamespaceGuardrailLimits(context.Background(), current)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, limits.RuntimeCount)
+	requireQuantityEqual(t, resource.MustParse("34"), limits.MaxCPU)
+	requireQuantityEqual(t, resource.MustParse("132Gi"), limits.MaxMemory)
+	requireQuantityEqual(t, resource.MustParse("4"), limits.WorkerCPURequest)
+	requireQuantityEqual(t, resource.MustParse("16Gi"), limits.WorkerMemoryRequest)
+	requireQuantityEqual(t, resource.MustParse("8"), limits.WorkerCPULimit)
+	requireQuantityEqual(t, resource.MustParse("32Gi"), limits.WorkerMemoryLimit)
+}
+
+func TestCalculateNamespaceGuardrailLimitsHonorsRecreateStrategyWithoutSurge(t *testing.T) {
+	current := testNamespaceGuardrailXTrinode("runtime-a", "team-a", "s", nil)
+	maxWorkers := int32(3)
+	current.Spec.MaxWorkers = &maxWorkers
+	current.Spec.Resources = &analyticsv1.RuntimeResourcesSpec{
+		Coordinator: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("500m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("1"),
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
+			},
+		},
+		Worker: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("8"),
+				corev1.ResourceMemory: resource.MustParse("32Gi"),
+			},
+		},
+	}
+	current.Spec.ValuesOverlay = controllerValuesOverlay(t, map[string]interface{}{
+		"coordinator": map[string]interface{}{
+			"deployment": map[string]interface{}{
+				"strategy": map[string]interface{}{
+					"type": "Recreate",
+				},
+			},
+		},
+		"worker": map[string]interface{}{
+			"deployment": map[string]interface{}{
+				"strategy": map[string]interface{}{
+					"type": "Recreate",
+				},
+			},
+		},
+	})
+	reconciler := newNamespaceGuardrailReconciler(t, current)
+
+	limits, err := reconciler.calculateNamespaceGuardrailLimits(context.Background(), current)
+
+	require.NoError(t, err)
+	requireQuantityEqual(t, resource.MustParse("25"), limits.MaxCPU)
+	requireQuantityEqual(t, resource.MustParse("98Gi"), limits.MaxMemory)
 }
 
 func TestCalculateNamespaceGuardrailLimitsSkipsDeletingXTrinodes(t *testing.T) {
@@ -186,10 +277,9 @@ func expectedNamespaceQuota(t *testing.T, reconciler *XTrinodeReconciler, xtrino
 	expectedCPU = resource.MustParse("0")
 	expectedMemory = resource.MustParse("0")
 	for _, xtrinode := range xtrinodes {
-		preset, ok := sizing.GetPreset(xtrinode.Spec.Size)
-		require.True(t, ok)
-		maxCPU, maxMemory, _, _, err := reconciler.calculateResourceLimits(xtrinode, &preset)
+		shape, err := runtimeshape.Resolve(xtrinode)
 		require.NoError(t, err)
+		maxCPU, maxMemory := shapeQuotaLimits(xtrinode, shape)
 		expectedCPU.Add(maxCPU)
 		expectedMemory.Add(maxMemory)
 	}

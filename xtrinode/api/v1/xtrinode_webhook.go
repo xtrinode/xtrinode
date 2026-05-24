@@ -11,7 +11,9 @@ import (
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/sizing"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -283,7 +285,7 @@ func (t *XTrinode) Default() {
 	// Auto-populate machine type from size preset if not specified
 	if t.Spec.NodePool != nil && t.Spec.Size != "" {
 		provider := strings.ToLower(t.Spec.NodePool.Provider)
-		recommendedMachineType := sizing.GetRecommendedMachineType(strings.ToLower(t.Spec.Size), provider)
+		recommendedMachineType, recommendationSource := t.recommendedNodePoolMachineType(provider)
 
 		if recommendedMachineType != "" {
 			switch provider {
@@ -293,8 +295,8 @@ func (t *XTrinode) Default() {
 				}
 				if t.Spec.NodePool.Azure.VMSize == "" {
 					t.Spec.NodePool.Azure.VMSize = recommendedMachineType
-					xtrinodelog.Info("auto-populated Azure vmSize from size preset",
-						"size", t.Spec.Size, "vmSize", recommendedMachineType)
+					xtrinodelog.Info("auto-populated Azure vmSize from runtime recommendation",
+						"source", recommendationSource, "vmSize", recommendedMachineType)
 				}
 			case "aws":
 				if t.Spec.NodePool.AWS == nil {
@@ -302,8 +304,8 @@ func (t *XTrinode) Default() {
 				}
 				if t.Spec.NodePool.AWS.InstanceType == "" {
 					t.Spec.NodePool.AWS.InstanceType = recommendedMachineType
-					xtrinodelog.Info("auto-populated AWS instanceType from size preset",
-						"size", t.Spec.Size, "instanceType", recommendedMachineType)
+					xtrinodelog.Info("auto-populated AWS instanceType from runtime recommendation",
+						"source", recommendationSource, "instanceType", recommendedMachineType)
 				}
 			case "gcp":
 				if t.Spec.NodePool.GCP == nil {
@@ -311,8 +313,8 @@ func (t *XTrinode) Default() {
 				}
 				if t.Spec.NodePool.GCP.MachineType == "" {
 					t.Spec.NodePool.GCP.MachineType = recommendedMachineType
-					xtrinodelog.Info("auto-populated GCP machineType from size preset",
-						"size", t.Spec.Size, "machineType", recommendedMachineType)
+					xtrinodelog.Info("auto-populated GCP machineType from runtime recommendation",
+						"source", recommendationSource, "machineType", recommendedMachineType)
 				}
 			}
 		}
@@ -350,7 +352,60 @@ func (t *XTrinode) validateCreateWarnings() admission.Warnings {
 	if t.Spec.ValuesOverlay != nil {
 		warnings = append(warnings, buildValuesOverlayChangeWarning())
 	}
+	warnings = append(warnings, nodePoolPlacementWarnings(t)...)
 	return warnings
+}
+
+func nodePoolPlacementWarnings(t *XTrinode) admission.Warnings {
+	if t == nil {
+		return nil
+	}
+	if t.Spec.NodePool == nil || t.Spec.NodePool.SchedulePods {
+		return nil
+	}
+	poolName := t.Spec.NodePool.Name
+	if poolName == "" && t.Name != "" {
+		poolName = fmt.Sprintf("%s%s", t.Name, config.NodePoolNameSuffix)
+	}
+	if poolName == "" {
+		return nil
+	}
+
+	selectorValues := placementNodePoolSelectorValues(t.Spec.Placement)
+	if len(selectorValues) == 0 {
+		return admission.Warnings{
+			fmt.Sprintf("spec.nodePool provisions node pool %q, but runtime pods are not bound to it; set spec.nodePool.schedulePods=true or target %s in placement", poolName, config.NodePoolSchedulingLabel),
+		}
+	}
+	for _, value := range selectorValues {
+		if value == poolName {
+			return nil
+		}
+	}
+	return admission.Warnings{
+		fmt.Sprintf("placement targets node pool label %q while spec.nodePool provisions %q; use spec.nodePool.schedulePods=true or align placement with the provisioned pool", selectorValues[0], poolName),
+	}
+}
+
+func placementNodePoolSelectorValues(placement *PlacementSpec) []string {
+	if placement == nil {
+		return nil
+	}
+	var values []string
+	if value, ok := placement.NodeSelector[config.NodePoolSchedulingLabel]; ok {
+		values = append(values, value)
+	}
+	if placement.Coordinator != nil {
+		if value, ok := placement.Coordinator.NodeSelector[config.NodePoolSchedulingLabel]; ok {
+			values = append(values, value)
+		}
+	}
+	if placement.Worker != nil {
+		if value, ok := placement.Worker.NodeSelector[config.NodePoolSchedulingLabel]; ok {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 // validateXTrinode validates a XTrinode spec
@@ -369,11 +424,11 @@ func (t *XTrinode) validateXTrinode() error {
 
 	// Validate maxWorkers
 	if t.Spec.MaxWorkers != nil {
-		if *t.Spec.MaxWorkers < 1 {
+		if *t.Spec.MaxWorkers < 0 {
 			allErrs = append(allErrs, field.Invalid(
 				field.NewPath("spec.maxWorkers"),
 				*t.Spec.MaxWorkers,
-				"maxWorkers must be at least 1"))
+				"maxWorkers must be at least 0"))
 		}
 		if *t.Spec.MaxWorkers > 500 {
 			allErrs = append(allErrs, field.Invalid(
@@ -409,9 +464,24 @@ func (t *XTrinode) validateXTrinode() error {
 		allErrs = append(allErrs, t.validateRouting(field.NewPath("spec.routing"))...)
 	}
 
+	// Validate typed resources and placement
+	if t.Spec.Resources != nil {
+		allErrs = append(allErrs, t.validateRuntimeResources(field.NewPath("spec.resources"))...)
+	}
+	if t.Spec.Placement != nil {
+		allErrs = append(allErrs, t.validatePlacement(field.NewPath("spec.placement"))...)
+	}
+	allErrs = append(allErrs, t.validateNodePoolSchedulePlacement(field.NewPath("spec"))...)
+
 	// Validate KEDA
 	if t.Spec.KEDA != nil {
 		allErrs = append(allErrs, t.validateKEDA(field.NewPath("spec.keda"))...)
+		if kedaAutoscalingActive(t.Spec.KEDA) && t.Spec.MaxWorkers != nil && *t.Spec.MaxWorkers < 1 {
+			allErrs = append(allErrs, field.Invalid(
+				field.NewPath("spec.maxWorkers"),
+				*t.Spec.MaxWorkers,
+				"maxWorkers must be at least 1 when KEDA autoscaling is active"))
+		}
 	}
 
 	// Validate TLS
@@ -549,6 +619,10 @@ func (t *XTrinode) validateXTrinodeUpdate(old *XTrinode) (admission.Warnings, er
 		c.warn(buildBreakGlassNotNeededWarning())
 	}
 
+	for _, warning := range nodePoolPlacementWarnings(t) {
+		c.warn(warning)
+	}
+
 	return c.warnings, nil
 }
 
@@ -567,38 +641,7 @@ func (t *XTrinode) validateNodePool(fldPath *field.Path) field.ErrorList {
 			fmt.Sprintf("provider must be one of: %v", config.ProviderList)))
 	}
 
-	// Validate provider-specific fields and provide recommendations
-	// Normalize provider to avoid case-sensitivity bypass.
-	provider := normalizeString(np.Provider)
-	switch provider {
-	case "azure":
-		if np.Azure == nil || np.Azure.VMSize == "" {
-			recommendation := sizing.GetRecommendedMachineType(strings.ToLower(t.Spec.Size), "azure")
-			msg := "azure.vmSize is required when provider is azure"
-			if recommendation != "" {
-				msg = fmt.Sprintf("azure.vmSize is required when provider is azure (recommended for size '%s': %s)", t.Spec.Size, recommendation)
-			}
-			allErrs = append(allErrs, field.Required(fldPath.Child("azure", "vmSize"), msg))
-		}
-	case "aws":
-		if np.AWS == nil || np.AWS.InstanceType == "" {
-			recommendation := sizing.GetRecommendedMachineType(strings.ToLower(t.Spec.Size), "aws")
-			msg := "aws.instanceType is required when provider is aws"
-			if recommendation != "" {
-				msg = fmt.Sprintf("aws.instanceType is required when provider is aws (recommended for size '%s': %s)", t.Spec.Size, recommendation)
-			}
-			allErrs = append(allErrs, field.Required(fldPath.Child("aws", "instanceType"), msg))
-		}
-	case "gcp":
-		if np.GCP == nil || np.GCP.MachineType == "" {
-			recommendation := sizing.GetRecommendedMachineType(strings.ToLower(t.Spec.Size), "gcp")
-			msg := "gcp.machineType is required when provider is gcp"
-			if recommendation != "" {
-				msg = fmt.Sprintf("gcp.machineType is required when provider is gcp (recommended for size '%s': %s)", t.Spec.Size, recommendation)
-			}
-			allErrs = append(allErrs, field.Required(fldPath.Child("gcp", "machineType"), msg))
-		}
-	}
+	allErrs = append(allErrs, t.validateNodePoolProviderConfig(np, fldPath)...)
 
 	providerMode := normalizeString(np.ProviderMode)
 	if providerMode == "" {
@@ -658,7 +701,179 @@ func (t *XTrinode) validateNodePool(fldPath *field.Path) field.ErrorList {
 		}
 	}
 
+	if np.SchedulePods {
+		poolName := np.Name
+		if poolName == "" {
+			poolName = fmt.Sprintf("%s%s", t.Name, config.NodePoolNameSuffix)
+		}
+		if np.NodeLabels != nil {
+			if existing, ok := np.NodeLabels[config.NodePoolSchedulingLabel]; ok && existing != poolName {
+				allErrs = append(allErrs, field.Invalid(
+					fldPath.Child("nodeLabels").Key(config.NodePoolSchedulingLabel),
+					existing,
+					fmt.Sprintf("must match nodePool name %q when schedulePods is true", poolName)))
+			}
+		}
+	}
+
 	return allErrs
+}
+
+func (t *XTrinode) validateNodePoolProviderConfig(np *NodePoolSpec, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	provider := normalizeString(np.Provider)
+	switch provider {
+	case "azure":
+		if np.Azure == nil || np.Azure.VMSize == "" {
+			recommendation, source := t.recommendedNodePoolMachineType("azure")
+			msg := "azure.vmSize is required when provider is azure"
+			if recommendation != "" {
+				msg = fmt.Sprintf("azure.vmSize is required when provider is azure (recommended for %s: %s)", source, recommendation)
+			}
+			allErrs = append(allErrs, field.Required(fldPath.Child("azure", "vmSize"), msg))
+		}
+	case "aws":
+		if np.AWS == nil || np.AWS.InstanceType == "" {
+			recommendation, source := t.recommendedNodePoolMachineType("aws")
+			msg := "aws.instanceType is required when provider is aws"
+			if recommendation != "" {
+				msg = fmt.Sprintf("aws.instanceType is required when provider is aws (recommended for %s: %s)", source, recommendation)
+			}
+			allErrs = append(allErrs, field.Required(fldPath.Child("aws", "instanceType"), msg))
+		}
+	case "gcp":
+		if np.GCP == nil || np.GCP.MachineType == "" {
+			recommendation, source := t.recommendedNodePoolMachineType("gcp")
+			msg := "gcp.machineType is required when provider is gcp"
+			if recommendation != "" {
+				msg = fmt.Sprintf("gcp.machineType is required when provider is gcp (recommended for %s: %s)", source, recommendation)
+			}
+			allErrs = append(allErrs, field.Required(fldPath.Child("gcp", "machineType"), msg))
+		}
+	}
+	return allErrs
+}
+
+func (t *XTrinode) recommendedNodePoolMachineType(provider string) (machineType, source string) {
+	provider = normalizeString(provider)
+	size := normalizeString(t.Spec.Size)
+	fallback := sizing.GetRecommendedMachineType(size, provider)
+	fallbackSource := fmt.Sprintf("size '%s'", t.Spec.Size)
+
+	resources, source, ok := t.resolvedWorkerResourcesForMachineRecommendation()
+	if !ok {
+		return fallback, fallbackSource
+	}
+	recommendationSize := recommendedPresetForWorkerResources(resources)
+	if recommendationSize == "" {
+		return fallback, fallbackSource
+	}
+	recommendation := sizing.GetRecommendedMachineType(recommendationSize, provider)
+	if recommendation == "" {
+		return fallback, fallbackSource
+	}
+	if source == runtimeRecommendationSourcePreset && recommendationSize == size {
+		return recommendation, fallbackSource
+	}
+	return recommendation, "resolved worker resources"
+}
+
+const (
+	runtimeRecommendationSourcePreset = "preset"
+	runtimeRecommendationSourceTyped  = "typed"
+)
+
+func (t *XTrinode) resolvedWorkerResourcesForMachineRecommendation() (corev1.ResourceRequirements, string, bool) {
+	size := normalizeString(t.Spec.Size)
+	preset, ok := sizing.GetPreset(size)
+	if !ok {
+		return corev1.ResourceRequirements{}, "", false
+	}
+	resources, ok := workerResourcesFromPresetForRecommendation(&preset)
+	if !ok {
+		return corev1.ResourceRequirements{}, "", false
+	}
+	source := runtimeRecommendationSourcePreset
+	if t.Spec.Resources != nil && t.Spec.Resources.Worker != nil {
+		resources = *t.Spec.Resources.Worker.DeepCopy()
+		source = runtimeRecommendationSourceTyped
+	}
+	return resources, source, true
+}
+
+func workerResourcesFromPresetForRecommendation(preset *sizing.SizePreset) (corev1.ResourceRequirements, bool) {
+	cpuRequest, ok := parseRecommendationQuantity(preset.WorkerCPUReq)
+	if !ok {
+		return corev1.ResourceRequirements{}, false
+	}
+	memoryRequest, ok := parseRecommendationQuantity(preset.WorkerMemReq)
+	if !ok {
+		return corev1.ResourceRequirements{}, false
+	}
+	cpuLimit, ok := parseRecommendationQuantity(preset.WorkerCPULim)
+	if !ok {
+		return corev1.ResourceRequirements{}, false
+	}
+	memoryLimit, ok := parseRecommendationQuantity(preset.WorkerMemLim)
+	if !ok {
+		return corev1.ResourceRequirements{}, false
+	}
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    cpuRequest,
+			corev1.ResourceMemory: memoryRequest,
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    cpuLimit,
+			corev1.ResourceMemory: memoryLimit,
+		},
+	}, true
+}
+
+func parseRecommendationQuantity(value string) (resource.Quantity, bool) {
+	quantity, err := resource.ParseQuantity(value)
+	return quantity, err == nil
+}
+
+func recommendedPresetForWorkerResources(resources corev1.ResourceRequirements) string {
+	needCPU, needMemory, ok := recommendationResourceNeed(resources)
+	if !ok {
+		return ""
+	}
+	for _, presetName := range []string{"xs", "s", "m", "l", "xl"} {
+		preset, ok := sizing.GetPreset(presetName)
+		if !ok {
+			continue
+		}
+		presetResources, ok := workerResourcesFromPresetForRecommendation(&preset)
+		if !ok {
+			continue
+		}
+		presetCPU, presetMemory, ok := recommendationResourceNeed(presetResources)
+		if !ok {
+			continue
+		}
+		if presetCPU.Cmp(needCPU) >= 0 && presetMemory.Cmp(needMemory) >= 0 {
+			return presetName
+		}
+	}
+	return "xl"
+}
+
+func recommendationResourceNeed(resources corev1.ResourceRequirements) (cpu, memory resource.Quantity, ok bool) {
+	cpu = resource.Quantity{}
+	memory = resource.Quantity{}
+	applyLargerQuantity(&cpu, resources.Requests[corev1.ResourceCPU])
+	applyLargerQuantity(&cpu, resources.Limits[corev1.ResourceCPU])
+	applyLargerQuantity(&memory, resources.Requests[corev1.ResourceMemory])
+	applyLargerQuantity(&memory, resources.Limits[corev1.ResourceMemory])
+	return cpu, memory, cpu.Sign() > 0 || memory.Sign() > 0
+}
+
+func applyLargerQuantity(current *resource.Quantity, candidate resource.Quantity) {
+	if candidate.Sign() > 0 && candidate.Cmp(*current) > 0 {
+		*current = candidate.DeepCopy()
+	}
 }
 
 // validateRouting validates routing configuration
@@ -668,7 +883,7 @@ func (t *XTrinode) validateRouting(fldPath *field.Path) field.ErrorList {
 
 	// Routing must provide at least one selector
 	hasSelector := r.Header != "" || r.Hostname != "" || r.HostnameDomain != "" || r.Default
-	if !hasSelector {
+	if !hasSelector && r.CapacityUnits == nil {
 		allErrs = append(allErrs, field.Invalid(
 			fldPath,
 			r,
@@ -683,6 +898,141 @@ func (t *XTrinode) validateRouting(fldPath *field.Path) field.ErrorList {
 			"hostname and hostnameDomain should not both be set (hostname overrides auto-generation)"))
 	}
 
+	if r.CapacityUnits != nil && *r.CapacityUnits < 1 {
+		allErrs = append(allErrs, field.Invalid(
+			fldPath.Child("capacityUnits"),
+			*r.CapacityUnits,
+			"capacityUnits must be at least 1"))
+	}
+
+	return allErrs
+}
+
+func (t *XTrinode) validateRuntimeResources(fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	resources := t.Spec.Resources
+	if resources.Coordinator != nil {
+		allErrs = append(allErrs, validateResourceRequirements(resources.Coordinator, fldPath.Child("coordinator"))...)
+	}
+	if resources.Worker != nil {
+		allErrs = append(allErrs, validateResourceRequirements(resources.Worker, fldPath.Child("worker"))...)
+	}
+	return allErrs
+}
+
+func validateResourceRequirements(requirements *corev1.ResourceRequirements, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if requirements == nil {
+		return allErrs
+	}
+	for _, resourceName := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
+		request, hasRequest := requirements.Requests[resourceName]
+		limit, hasLimit := requirements.Limits[resourceName]
+		if hasRequest && request.Sign() < 0 {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("requests").Key(string(resourceName)),
+				request.String(),
+				"resource request must be non-negative"))
+		}
+		if hasLimit && limit.Sign() < 0 {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("limits").Key(string(resourceName)),
+				limit.String(),
+				"resource limit must be non-negative"))
+		}
+		if hasRequest && hasLimit && limit.Cmp(request) < 0 {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("limits").Key(string(resourceName)),
+				limit.String(),
+				fmt.Sprintf("resource limit must be greater than or equal to request %s", request.String())))
+		}
+	}
+	return allErrs
+}
+
+func (t *XTrinode) validatePlacement(fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	placement := t.Spec.Placement
+	if placement.Coordinator != nil {
+		allErrs = append(allErrs, validateRolePlacement(placement.Coordinator, fldPath.Child("coordinator"))...)
+	}
+	if placement.Worker != nil {
+		allErrs = append(allErrs, validateRolePlacement(placement.Worker, fldPath.Child("worker"))...)
+	}
+	return allErrs
+}
+
+func (t *XTrinode) validateNodePoolSchedulePlacement(fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if t == nil || t.Spec.NodePool == nil || !t.Spec.NodePool.SchedulePods {
+		return allErrs
+	}
+
+	poolName := t.Spec.NodePool.Name
+	if poolName == "" {
+		poolName = fmt.Sprintf("%s%s", t.Name, config.NodePoolNameSuffix)
+	}
+	if poolName == "" {
+		return field.ErrorList{
+			field.Required(
+				fldPath.Child("nodePool").Child("name"),
+				"nodePool.schedulePods requires spec.nodePool.name or metadata.name for the generated pool name"),
+		}
+	}
+
+	if placement := t.Spec.Placement; placement != nil {
+		allErrs = append(allErrs, validateNodePoolSelectorConflict(
+			placement.NodeSelector,
+			poolName,
+			fldPath.Child("placement").Child("nodeSelector"),
+		)...)
+		if placement.Coordinator != nil {
+			allErrs = append(allErrs, validateNodePoolSelectorConflict(
+				placement.Coordinator.NodeSelector,
+				poolName,
+				fldPath.Child("placement").Child("coordinator").Child("nodeSelector"),
+			)...)
+		}
+		if placement.Worker != nil {
+			allErrs = append(allErrs, validateNodePoolSelectorConflict(
+				placement.Worker.NodeSelector,
+				poolName,
+				fldPath.Child("placement").Child("worker").Child("nodeSelector"),
+			)...)
+		}
+	}
+
+	return allErrs
+}
+
+func validateNodePoolSelectorConflict(selector map[string]string, poolName string, fldPath *field.Path) field.ErrorList {
+	if selector == nil {
+		return nil
+	}
+	existing, ok := selector[config.NodePoolSchedulingLabel]
+	if !ok || existing == poolName {
+		return nil
+	}
+	return field.ErrorList{
+		field.Invalid(
+			fldPath.Key(config.NodePoolSchedulingLabel),
+			existing,
+			fmt.Sprintf("must match nodePool name %q when nodePool.schedulePods is true", poolName)),
+	}
+}
+
+func validateRolePlacement(placement *RolePlacementSpec, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if placement == nil {
+		return allErrs
+	}
+	for i, constraint := range placement.TopologySpreadConstraints {
+		if constraint.TopologyKey == "" {
+			allErrs = append(allErrs, field.Required(
+				fldPath.Child("topologySpreadConstraints").Index(i).Child("topologyKey"),
+				"topologyKey is required"))
+		}
+	}
 	return allErrs
 }
 

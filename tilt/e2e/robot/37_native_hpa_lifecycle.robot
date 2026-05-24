@@ -47,12 +47,13 @@ Apply Native HPA Runtime
     ...    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode",
     ...    "metadata":{"name":"${HPA_XTRINODE_NAME}","namespace":"${NAMESPACE}","labels":{"team":"team-local","environment":"local"}},
     ...    "spec":{"size":"xs","minWorkers":0,"maxWorkers":1,"suspended":false,"autoSuspendAfter":"30m","wakeMinWorkers":0,"wakeTTL":"1m",
+    ...    "resources":{"coordinator":{"requests":{"cpu":"250m","memory":"1Gi"},"limits":{"cpu":"1","memory":"1536Mi"}},"worker":{"requests":{"cpu":"250m","memory":"1Gi"},"limits":{"cpu":"1","memory":"1536Mi"}}},
     ...    "catalogSelector":{"matchLabels":{"team":"team-local","catalog-set":"${HPA_XTRINODE_NAME}"}},
     ...    "routing":{"header":"X-Trino-XTrinode=${HPA_XTRINODE_NAME}","routingGroup":"${HPA_XTRINODE_NAME}"},
     ...    "valuesOverlay":{"image":{"repository":"${TRINO_IMAGE_REPOSITORY}","tag":"${TRINO_IMAGE_TAG}","pullPolicy":"IfNotPresent"},
-    ...    "server":{"workers":0,"autoscaling":{"enabled":true,"minReplicas":1,"maxReplicas":1,"targetCPUUtilizationPercentage":70,"targetMemoryUtilizationPercentage":""}},
-    ...    "coordinator":{"additionalJVMConfig":["-Xmx768M","-XX:ReservedCodeCacheSize=128M"],"resources":{"requests":{"cpu":"250m","memory":"1Gi"},"limits":{"cpu":"1","memory":"1536Mi"}}},
-    ...    "worker":{"additionalJVMConfig":["-Xmx768M","-XX:ReservedCodeCacheSize=128M"],"resources":{"requests":{"cpu":"250m","memory":"1Gi"},"limits":{"cpu":"1","memory":"1536Mi"}}},
+    ...    "server":{"autoscaling":{"enabled":true,"minReplicas":1,"maxReplicas":1,"targetCPUUtilizationPercentage":70,"targetMemoryUtilizationPercentage":""}},
+    ...    "coordinator":{"additionalJVMConfig":["-Xmx768M","-XX:ReservedCodeCacheSize=128M"]},
+    ...    "worker":{"additionalJVMConfig":["-Xmx768M","-XX:ReservedCodeCacheSize=128M"]},
     ...    "additionalConfigProperties":["query.max-memory=512MB","query.max-memory-per-node=384MB","memory.heap-headroom-per-node=256MB"]}}}
     Create File    /tmp/xtrinode-native-hpa-catalog.json    ${catalog}
     Create File    /tmp/xtrinode-native-hpa-runtime.json    ${runtime}

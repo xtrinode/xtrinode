@@ -537,6 +537,7 @@ render_manifest() {
     --argjson maxWorkers "$SCALEOUT_MAX_WORKERS" \
     --arg threshold "$SCALEOUT_THRESHOLD" '
       def patch_xtrinode:
+        .spec.autoSuspendAfter = "30m" |
         .spec.valuesOverlay = (.spec.valuesOverlay // {}) |
         .spec.valuesOverlay.image = (.spec.valuesOverlay.image // {}) |
         .spec.valuesOverlay.image.repository = $repository |
@@ -549,9 +550,7 @@ render_manifest() {
           .spec.keda.scalerType = "http" |
           .spec.keda.scalingMetric = "query" |
           .spec.keda.threshold = $threshold |
-          .spec.keda.scaleDownCooldown = "30s" |
-          .spec.valuesOverlay.server = (.spec.valuesOverlay.server // {}) |
-          .spec.valuesOverlay.server.workers = 1
+          .spec.keda.scaleDownCooldown = "30s"
         else
           .
         end;

@@ -10,6 +10,7 @@ import (
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 	"github.com/xtrinode/xtrinode/internal/trino/controlauth"
 	"github.com/xtrinode/xtrinode/pkg/metrics"
 	appsv1 "k8s.io/api/apps/v1"
@@ -56,15 +57,12 @@ func EnsureScaledObject(ctx context.Context, cli client.Client, scheme *runtime.
 		log.Info("Deployment found, ScaledObject can scale", "deployment", deploymentName)
 	}
 
-	// Set default min/max workers if not specified
-	minReplicas := int32Ptr(0)
-	maxReplicas := int32Ptr(config.KEDADefaultMaxWorkers)
-	if xtrinode.Spec.MinWorkers != nil {
-		minReplicas = xtrinode.Spec.MinWorkers
+	shape, err := runtimeshape.Resolve(xtrinode)
+	if err != nil {
+		return fmt.Errorf("failed to resolve runtime shape for KEDA ScaledObject: %w", err)
 	}
-	if xtrinode.Spec.MaxWorkers != nil {
-		maxReplicas = xtrinode.Spec.MaxWorkers
-	}
+	minReplicas := int32Ptr(shape.MinWorkers)
+	maxReplicas := int32Ptr(shape.MaxWorkers)
 
 	// Determine scaler type. KEDA itself is opt-in at the controller layer; once
 	// active, defaults depend on whether the user supplied Prometheus-specific fields.
@@ -151,11 +149,11 @@ func EnsureScaledObject(ctx context.Context, cli client.Client, scheme *runtime.
 	authName := ""
 	if shouldUseTrinoQueryAuth(scalerType, scalingMetric, httpEndpoint, xtrinode) {
 		authName = buildMetricsAPIAuthName(releaseName)
-		if err := ensureMetricsAPIAuth(ctx, cli, scheme, xtrinode, authName); err != nil {
-			return err
+		if authErr := ensureMetricsAPIAuth(ctx, cli, scheme, xtrinode, authName); authErr != nil {
+			return authErr
 		}
-	} else if err := cleanupMetricsAPIAuth(ctx, cli, releaseName, xtrinode.Namespace, log); err != nil {
-		return err
+	} else if cleanupErr := cleanupMetricsAPIAuth(ctx, cli, releaseName, xtrinode.Namespace, log); cleanupErr != nil {
+		return cleanupErr
 	}
 
 	scaledObject := buildScaledObjectSpec(scaledObjectName, deploymentName, xtrinode, minReplicas, maxReplicas, scalerType, scalingMetric, threshold, prometheusServer, prometheusQuery, httpEndpoint, httpValueLocation, httpFormat, authName)
@@ -166,8 +164,8 @@ func EnsureScaledObject(ctx context.Context, cli client.Client, scheme *runtime.
 	// Check if ScaledObject exists to track creation vs update
 	existingScaledObject := &kedav1alpha1.ScaledObject{}
 	isCreate := false
-	if err := cli.Get(ctx, client.ObjectKey{Name: scaledObjectName, Namespace: xtrinode.Namespace}, existingScaledObject); err != nil {
-		if k8serrors.IsNotFound(err) {
+	if getErr := cli.Get(ctx, client.ObjectKey{Name: scaledObjectName, Namespace: xtrinode.Namespace}, existingScaledObject); getErr != nil {
+		if k8serrors.IsNotFound(getErr) {
 			isCreate = true
 		}
 	}
@@ -262,10 +260,11 @@ func EnableScaledObjectWithWakeMinWorkers(ctx context.Context, cli client.Client
 	}
 
 	// Set min to wakeMinWorkers, restore max from spec
-	maxReplicas := int32Ptr(config.KEDADefaultMaxWorkers)
-	if xtrinode.Spec.MaxWorkers != nil {
-		maxReplicas = xtrinode.Spec.MaxWorkers
+	shape, err := runtimeshape.Resolve(xtrinode)
+	if err != nil {
+		return fmt.Errorf("failed to resolve runtime shape for KEDA wake scaling: %w", err)
 	}
+	maxReplicas := int32Ptr(shape.MaxWorkers)
 
 	scaledObject.Spec.MinReplicaCount = &wakeMinWorkers
 	scaledObject.Spec.MaxReplicaCount = maxReplicas
