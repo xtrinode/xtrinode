@@ -18,14 +18,27 @@ gateway_chart="${ROOT_DIR}/helm/xtrinode-gateway"
 observability_chart="${ROOT_DIR}/helm/xtrinode-observability"
 values_dir="${ROOT_DIR}/tilt/deployments/values"
 
-if [ ! -f "${operator_chart}/charts/keda-2.18.0.tgz" ]; then
-  echo "KEDA chart dependency not found, running helm dependency build for operator chart"
-  helm dependency build "$operator_chart"
-fi
-if [ ! -f "${observability_chart}/charts/kube-prometheus-stack-58.0.0.tgz" ]; then
-  echo "Prometheus chart dependency not found, running helm dependency build for observability chart"
-  helm dependency build "$observability_chart"
-fi
+helm_dependencies_ready() {
+  local chart_path="$1"
+
+  helm dependency list "$chart_path" | awk '
+    NR == 1 || NF == 0 { next }
+    $NF != "ok" { exit 1 }
+  '
+}
+
+ensure_helm_dependencies() {
+  local chart_path="$1"
+  local chart_name="$2"
+
+  if ! helm_dependencies_ready "$chart_path"; then
+    echo "${chart_name} chart dependencies are missing or out of date, running helm dependency build"
+    helm dependency build "$chart_path"
+  fi
+}
+
+ensure_helm_dependencies "$operator_chart" "Operator"
+ensure_helm_dependencies "$observability_chart" "Observability"
 
 kubectl create namespace "$OPERATOR_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 kubectl create namespace "$GATEWAY_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
