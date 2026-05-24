@@ -2,6 +2,9 @@
 
 prometheus-stack:
   enabled: true
+  crds:
+    upgradeJob:
+      enabled: true
   defaultRules:
     create: false
   alertmanager:
