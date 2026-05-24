@@ -7,31 +7,17 @@ K3D_REGISTRY_NAME="${K3D_REGISTRY_NAME:-xtrinode-registry}"
 K3D_REGISTRY_PORT="${K3D_REGISTRY_PORT:-5001}"
 K3D_AGENTS="${K3D_AGENTS:-1}"
 K3D_K3S_IMAGE="${K3D_K3S_IMAGE:-rancher/k3s:v1.32.3-k3s1}"
+K3D="${K3D:-k3d}"
+KUBECTL="${KUBECTL:-kubectl}"
 
-resolve_k3d() {
-  if [ -n "${K3D:-}" ]; then
-    if command -v "$K3D" >/dev/null 2>&1; then
-      command -v "$K3D"
-    else
-      printf '%s\n' "$K3D"
-    fi
-    return
-  fi
-  if command -v k3d >/dev/null 2>&1; then
-    command -v k3d
-    return
-  fi
-}
-
-K3D_BIN="$(resolve_k3d)"
-if [ -z "$K3D_BIN" ] || [ ! -x "$K3D_BIN" ]; then
-  echo "ERROR: k3d not found. Run: make ensure-k3d" >&2
+if ! "$K3D" version >/dev/null 2>&1; then
+  echo "ERROR: k3d is required. Install it or set K3D=/path/to/k3d." >&2
   exit 1
 fi
 
-if "$K3D_BIN" cluster list "$K3D_CLUSTER_NAME" >/dev/null 2>&1; then
+if "$K3D" cluster list "$K3D_CLUSTER_NAME" >/dev/null 2>&1; then
   echo "k3d cluster already exists: ${K3D_CLUSTER_NAME}"
-  kubectl config use-context "k3d-${K3D_CLUSTER_NAME}" >/dev/null
+  "$KUBECTL" config use-context "k3d-${K3D_CLUSTER_NAME}" >/dev/null
 else
   config_file="$(mktemp)"
   trap 'rm -f "$config_file"' EXIT
@@ -61,12 +47,12 @@ options:
 EOF
 
   echo "Creating k3d cluster ${K3D_CLUSTER_NAME} with registry localhost:${K3D_REGISTRY_PORT}"
-  "$K3D_BIN" cluster create --config "$config_file"
+  "$K3D" cluster create --config "$config_file"
 fi
 
-kubectl config use-context "k3d-${K3D_CLUSTER_NAME}" >/dev/null
-kubectl wait node --all --for=condition=Ready --timeout=180s
-kubectl get nodes -o wide
+"$KUBECTL" config use-context "k3d-${K3D_CLUSTER_NAME}" >/dev/null
+"$KUBECTL" wait node --all --for=condition=Ready --timeout=180s
+"$KUBECTL" get nodes -o wide
 
 echo "k3d cluster is ready: k3d-${K3D_CLUSTER_NAME}"
 echo "Local push registry: localhost:${K3D_REGISTRY_PORT}"

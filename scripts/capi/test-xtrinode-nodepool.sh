@@ -17,6 +17,7 @@ WAIT_FOR_NODEPOOL="${WAIT_FOR_NODEPOOL:-true}"
 WAIT_FOR_WORKLOAD_NODES="${WAIT_FOR_WORKLOAD_NODES:-true}"
 WAIT_FOR_TRINO_ROLLOUT="${WAIT_FOR_TRINO_ROLLOUT:-false}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-30m}"
+KUBECTL="${KUBECTL:-kubectl}"
 
 if [ "$WAIT_FOR_TRINO_ROLLOUT" = "true" ]; then
   XTRINODE_SUSPENDED="${XTRINODE_SUSPENDED:-false}"
@@ -43,7 +44,7 @@ current_workload_node_readiness() {
   local kubeconfig="$1"
   local nodepool="$2"
 
-  kubectl --kubeconfig="$kubeconfig" get nodes \
+  "$KUBECTL" --kubeconfig="$kubeconfig" get nodes \
     -l "xtrinode.io/node-pool=${nodepool}" \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' \
     2>/dev/null || true
@@ -72,7 +73,7 @@ workload_nodepool_converged() {
 }
 
 CONTROL_PLANE_VERSION="$(
-  kubectl get gcpmanagedcontrolplane "${CLUSTER_NAME}-control-plane" -n "$TARGET_NAMESPACE" \
+  "$KUBECTL" get gcpmanagedcontrolplane "${CLUSTER_NAME}-control-plane" -n "$TARGET_NAMESPACE" \
     -o jsonpath='{.status.version}' 2>/dev/null || true
 )"
 KUBERNETES_VERSION="${KUBERNETES_VERSION:-}"
@@ -81,9 +82,9 @@ if [ -z "$KUBERNETES_VERSION" ] && [ -n "$CONTROL_PLANE_VERSION" ]; then
 fi
 KUBERNETES_VERSION="${KUBERNETES_VERSION:-v1.35.3}"
 
-kubectl get "cluster/${CLUSTER_NAME}" -n "$TARGET_NAMESPACE" >/dev/null
+"$KUBECTL" get "cluster/${CLUSTER_NAME}" -n "$TARGET_NAMESPACE" >/dev/null
 
-cat <<EOF | kubectl apply -f -
+cat <<EOF | "$KUBECTL" apply -f -
 apiVersion: analytics.xtrinode.io/v1
 kind: XTrinode
 metadata:
@@ -133,25 +134,25 @@ spec:
       workers: ${TRINO_WORKERS}
 EOF
 
-kubectl get xtrinode "$XTRINODE_NAME" -n "$TARGET_NAMESPACE" -o wide
-kubectl get machinepool,gcpmanagedmachinepool -n "$TARGET_NAMESPACE" -o wide
+"$KUBECTL" get xtrinode "$XTRINODE_NAME" -n "$TARGET_NAMESPACE" -o wide
+"$KUBECTL" get machinepool,gcpmanagedmachinepool -n "$TARGET_NAMESPACE" -o wide
 
 if [ "$WAIT_FOR_NODEPOOL" = "true" ]; then
-  kubectl wait "gcpmanagedmachinepool/${NODEPOOL_NAME}" -n "$TARGET_NAMESPACE" --for=jsonpath='{.status.ready}'=true --timeout="$WAIT_TIMEOUT"
+  "$KUBECTL" wait "gcpmanagedmachinepool/${NODEPOOL_NAME}" -n "$TARGET_NAMESPACE" --for=jsonpath='{.status.ready}'=true --timeout="$WAIT_TIMEOUT"
   if [ "$WAIT_FOR_TRINO_ROLLOUT" = "true" ]; then
-    kubectl wait "xtrinode/${XTRINODE_NAME}" -n "$TARGET_NAMESPACE" --for=condition=Ready=True --timeout="$WAIT_TIMEOUT"
+    "$KUBECTL" wait "xtrinode/${XTRINODE_NAME}" -n "$TARGET_NAMESPACE" --for=condition=Ready=True --timeout="$WAIT_TIMEOUT"
   else
-    kubectl wait "xtrinode/${XTRINODE_NAME}" -n "$TARGET_NAMESPACE" --for=jsonpath='{.status.conditions[?(@.type=="NodePoolReady")].status}'=True --timeout="$WAIT_TIMEOUT"
+    "$KUBECTL" wait "xtrinode/${XTRINODE_NAME}" -n "$TARGET_NAMESPACE" --for=jsonpath='{.status.conditions[?(@.type=="NodePoolReady")].status}'=True --timeout="$WAIT_TIMEOUT"
   fi
 
   if [ "$WAIT_FOR_WORKLOAD_NODES" = "true" ]; then
     workload_kubeconfig="$(mktemp)"
     trap 'rm -f "$workload_kubeconfig"' EXIT
-    kubectl get secret "${CLUSTER_NAME}-user-kubeconfig" -n "$TARGET_NAMESPACE" \
+    "$KUBECTL" get secret "${CLUSTER_NAME}-user-kubeconfig" -n "$TARGET_NAMESPACE" \
       -o jsonpath='{.data.value}' | base64 -d > "$workload_kubeconfig"
     wait_seconds="$(duration_to_seconds "$WAIT_TIMEOUT")"
     deadline="$(( SECONDS + wait_seconds ))"
-    until kubectl --kubeconfig="$workload_kubeconfig" get nodes \
+    until "$KUBECTL" --kubeconfig="$workload_kubeconfig" get nodes \
       -l "xtrinode.io/node-pool=${NODEPOOL_NAME}" \
       -o name 2>/dev/null | grep -q .; do
       if [ "$SECONDS" -ge "$deadline" ]; then
@@ -175,22 +176,22 @@ if [ "$WAIT_FOR_NODEPOOL" = "true" ]; then
       fi
       sleep 10
     done
-    kubectl --kubeconfig="$workload_kubeconfig" get nodes \
+    "$KUBECTL" --kubeconfig="$workload_kubeconfig" get nodes \
       -l "xtrinode.io/node-pool=${NODEPOOL_NAME}" \
       -L xtrinode.io/node-pool,xtrinode.io/runtime
   fi
 
   if [ "$WAIT_FOR_TRINO_ROLLOUT" = "true" ]; then
-    kubectl rollout status "deployment/trino-${XTRINODE_NAME}-coordinator" -n "$TARGET_NAMESPACE" --timeout="$WAIT_TIMEOUT"
+    "$KUBECTL" rollout status "deployment/trino-${XTRINODE_NAME}-coordinator" -n "$TARGET_NAMESPACE" --timeout="$WAIT_TIMEOUT"
     if [ "$TRINO_WORKERS" -gt 0 ]; then
-      kubectl rollout status "deployment/trino-${XTRINODE_NAME}-worker" -n "$TARGET_NAMESPACE" --timeout="$WAIT_TIMEOUT"
+      "$KUBECTL" rollout status "deployment/trino-${XTRINODE_NAME}-worker" -n "$TARGET_NAMESPACE" --timeout="$WAIT_TIMEOUT"
     fi
   else
-    if kubectl get pods -n "$TARGET_NAMESPACE" \
+    if "$KUBECTL" get pods -n "$TARGET_NAMESPACE" \
       -l "app.kubernetes.io/instance=${XTRINODE_NAME},app.kubernetes.io/name=trino" \
       -o name 2>/dev/null | grep -q .; then
       echo "ERROR: provisioning-only CAPG smoke found management-cluster Trino pods for ${XTRINODE_NAME}" >&2
-      kubectl get pods -n "$TARGET_NAMESPACE" \
+      "$KUBECTL" get pods -n "$TARGET_NAMESPACE" \
         -l "app.kubernetes.io/instance=${XTRINODE_NAME},app.kubernetes.io/name=trino" \
         -o wide
       exit 1
@@ -199,12 +200,12 @@ if [ "$WAIT_FOR_NODEPOOL" = "true" ]; then
   fi
 fi
 
-kubectl get xtrinode "$XTRINODE_NAME" -n "$TARGET_NAMESPACE" -o wide
+"$KUBECTL" get xtrinode "$XTRINODE_NAME" -n "$TARGET_NAMESPACE" -o wide
 if [ "$WAIT_FOR_TRINO_ROLLOUT" = "true" ]; then
-  kubectl get deployment "trino-${XTRINODE_NAME}-coordinator" "trino-${XTRINODE_NAME}-worker" -n "$TARGET_NAMESPACE" -o wide
+  "$KUBECTL" get deployment "trino-${XTRINODE_NAME}-coordinator" "trino-${XTRINODE_NAME}-worker" -n "$TARGET_NAMESPACE" -o wide
 else
-  kubectl get pods -n "$TARGET_NAMESPACE" \
+  "$KUBECTL" get pods -n "$TARGET_NAMESPACE" \
     -l "app.kubernetes.io/instance=${XTRINODE_NAME},app.kubernetes.io/name=trino" \
     -o wide
 fi
-kubectl get machinepool,gcpmanagedmachinepool -n "$TARGET_NAMESPACE" -o wide
+"$KUBECTL" get machinepool,gcpmanagedmachinepool -n "$TARGET_NAMESPACE" -o wide

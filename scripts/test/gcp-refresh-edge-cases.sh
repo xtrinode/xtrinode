@@ -70,13 +70,13 @@ require_contains "Makefile" 'gcp-teardown-prep FORCE_NAMESPACE_FINALIZERS=$(TEAR
   "full GCP teardown passes force-finalizer setting into prep"
 require_contains "Makefile" 'WAIT_TIMEOUT=$(TEARDOWN_NAMESPACE_WAIT_TIMEOUT)' \
   "teardown prep passes the bounded wait timeout to cleanup script"
-require_contains "Makefile" 'gcloud container clusters update $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project=$(GCP_PROJECT_ID) --no-deletion-protection' \
+require_contains "Makefile" '$(GCLOUD) container clusters update $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project=$(GCP_PROJECT_ID) --no-deletion-protection' \
   "GKE deletion protection is disabled through gcloud instead of Terraform replacement"
 require_not_contains "Makefile" "terraform apply -target=google_container_cluster.xtrinode" \
   "teardown prep does not use targeted Terraform apply for deletion protection"
-require_contains "Makefile" "gcloud compute addresses delete xtrinode-private-ip-range" \
+require_contains "Makefile" '$(GCLOUD) compute addresses delete xtrinode-private-ip-range' \
   "teardown deletes current XTrinode private service range"
-require_matches "Makefile" "terraform state list .*awk '.*/\\^\\(kubernetes_\\|helm_release\\\\\\.\\)/" \
+require_matches "Makefile" "\\$\\(TERRAFORM\\) state list .*awk '.*/\\^\\(kubernetes_\\|helm_release\\\\\\.\\)/" \
   "teardown removes leftover Kubernetes and Helm resources from Terraform state"
 
 echo "Checking finalizer cleanup edge cases..."

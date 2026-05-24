@@ -11,6 +11,7 @@ GO_VERSION="${GO_VERSION:-$(awk '/^go / {print $2; exit}' "${ROOT_DIR}/xtrinode/
 ALPINE_VERSION="${ALPINE_VERSION:-3.23}"
 GIT_COMMIT="${GIT_COMMIT:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 BUILD_DATE="${BUILD_DATE:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+DOCKER="${DOCKER:-docker}"
 
 build_component() {
   local image_name="$1"
@@ -19,7 +20,7 @@ build_component() {
   local image_ref="${LOCAL_REGISTRY_HOST}/${image_name}:${LOCAL_IMAGE_TAG}"
 
   echo "Building ${image_ref}"
-  docker build \
+  "$DOCKER" build \
     --build-arg "GO_VERSION=${GO_VERSION}" \
     --build-arg "ALPINE_VERSION=${ALPINE_VERSION}" \
     --build-arg "APP_PACKAGE=${app_package}" \
@@ -32,7 +33,7 @@ build_component() {
     "${ROOT_DIR}/xtrinode"
 
   echo "Pushing ${image_ref}"
-  docker push "$image_ref"
+  "$DOCKER" push "$image_ref"
 }
 
 for component in $LOCAL_COMPONENTS; do

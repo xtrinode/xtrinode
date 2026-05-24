@@ -1,8 +1,14 @@
 {
   "name": "xtrinode-ci-tools",
   "private": true,
+  "packageManager": "npm@10.9.7",
+  "scripts": {
+    "check:node": "node -e \"const major = Number(process.versions.node.split('.')[0]); if (major < 22) { console.error('Node.js >=22 is required; found ' + process.version); process.exit(1); }\"",
+    "prelint:markdown": "npm run check:node",
+    "lint:markdown": "markdownlint \"**/*.md\" --ignore node_modules --ignore docs/internal"
+  },
   "engines": {
-    "node": ">=22 <23"
+    "node": ">=22"
   },
   "devDependencies": {
     "markdownlint-cli": "0.48.0"

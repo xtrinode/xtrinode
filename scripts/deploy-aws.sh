@@ -5,12 +5,9 @@
 # End-to-end: build Docker images locally, push to ECR, provision infra via
 # Terraform, deploy to EKS via Helm.
 #
-# Prerequisites:
+# Prerequisites: see docs/TOOLING.md for versions.
 #   - AWS CLI v2 configured with an admin/root-equivalent profile
-#   - Docker running
-#   - Terraform >= 1.0
-#   - Helm >= 3.x
-#   - kubectl
+#   - Docker, Terraform, Helm, kubectl, curl, and openssl
 #
 # Usage:
 #   ./scripts/deploy-aws.sh                  # Full deploy (infra + build + helm)
@@ -27,6 +24,14 @@ TF_DIR="$ROOT_DIR/terraform/aws"
 OPERATOR_DIR="$ROOT_DIR/xtrinode"
 HELM_DIR="$ROOT_DIR/helm"
 DOCKERFILE="$ROOT_DIR/docker/Dockerfile"
+DOCKER="${DOCKER:-docker}"
+TERRAFORM="${TERRAFORM:-terraform}"
+HELM="${HELM:-helm}"
+KUBECTL="${KUBECTL:-kubectl}"
+MAKE="${MAKE:-make}"
+AWS="${AWS:-aws}"
+CURL="${CURL:-curl}"
+OPENSSL="${OPENSSL:-openssl}"
 
 # Overridable via environment
 AWS_PROFILE="${AWS_PROFILE:-default}"
@@ -89,16 +94,8 @@ ok()    { echo -e "\033[1;32m✔ $*\033[0m"; }
 warn()  { echo -e "\033[1;33m⚠ $*\033[0m"; }
 fail()  { echo -e "\033[1;31m✖ $*\033[0m" >&2; exit 1; }
 
-check_tool() {
-  command -v "$1" >/dev/null 2>&1 || fail "$1 is required but not installed."
-}
-
 random_token() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
-  else
-    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
-  fi
+  "$OPENSSL" rand -hex 32
 }
 
 postgres_enabled() {
@@ -111,18 +108,8 @@ postgres_enabled() {
     grep -Eq '^[[:space:]]*postgres_enabled[[:space:]]*=[[:space:]]*true([[:space:]#]|$)' "$TF_DIR/terraform.tfvars"
 }
 
-# ─── Preflight checks ──────────────────────────────────────────────────────
-info "Preflight checks"
-check_tool aws
-check_tool curl
-check_tool docker
-check_tool terraform
-check_tool helm
-check_tool kubectl
-check_tool make
-
 # Verify AWS credentials
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text 2>/dev/null) \
+AWS_ACCOUNT_ID=$("$AWS" sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text 2>/dev/null) \
   || fail "AWS credentials not configured. Run: aws configure --profile $AWS_PROFILE"
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 ok "AWS Account: $AWS_ACCOUNT_ID  Region: $AWS_REGION  Registry: $ECR_REGISTRY"
@@ -143,14 +130,14 @@ if [ "$DESTROY" = true ]; then
   [ "$confirm" = "yes" ] || { echo "Aborted."; exit 0; }
 
   info "Removing Helm releases"
-  aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME" --profile "$AWS_PROFILE" 2>/dev/null || true
-  helm uninstall xtrinode-gateway -n "$GATEWAY_NAMESPACE" 2>/dev/null || true
-  helm uninstall xtrinode-api-server -n "$OPERATOR_NAMESPACE" 2>/dev/null || true
-  helm uninstall xtrinode-operator -n "$OPERATOR_NAMESPACE" 2>/dev/null || true
+  "$AWS" eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME" --profile "$AWS_PROFILE" 2>/dev/null || true
+  "$HELM" uninstall xtrinode-gateway -n "$GATEWAY_NAMESPACE" 2>/dev/null || true
+  "$HELM" uninstall xtrinode-api-server -n "$OPERATOR_NAMESPACE" 2>/dev/null || true
+  "$HELM" uninstall xtrinode-operator -n "$OPERATOR_NAMESPACE" 2>/dev/null || true
 
   info "Running terraform destroy"
   cd "$TF_DIR"
-  terraform destroy -auto-approve \
+  "$TERRAFORM" destroy -auto-approve \
     -var "aws_profile=${AWS_PROFILE}" \
     -var "aws_region=${AWS_REGION}" \
     -var "postgres_admin_password=${POSTGRES_PASSWORD:-dummy}" \
@@ -171,10 +158,10 @@ if [ "$SKIP_TERRAFORM" = false ]; then
   fi
 
   cd "$TF_DIR"
-  terraform init -upgrade
+  "$TERRAFORM" init -upgrade
 
   info "Planning..."
-  CURRENT_IP=$(curl -fsS --max-time 5 https://checkip.amazonaws.com | tr -d '[:space:]')
+  CURRENT_IP=$("$CURL" -fsS --max-time 5 https://checkip.amazonaws.com | tr -d '[:space:]')
   [ -n "$CURRENT_IP" ] || fail "Could not determine public IP for temporary EKS endpoint access."
   terraform_plan_args=(
     -var "aws_profile=${AWS_PROFILE}"
@@ -188,10 +175,10 @@ if [ "$SKIP_TERRAFORM" = false ]; then
   if [ -n "$POSTGRES_ENABLED" ]; then
     terraform_plan_args+=(-var "postgres_enabled=${POSTGRES_ENABLED}")
   fi
-  terraform plan "${terraform_plan_args[@]}" -out=tfplan
+  "$TERRAFORM" plan "${terraform_plan_args[@]}" -out=tfplan
 
   info "Applying..."
-  terraform apply tfplan
+  "$TERRAFORM" apply tfplan
   ok "Terraform apply complete"
 else
   info "Step 1/5: Skipping Terraform (--skip-terraform)"
@@ -199,12 +186,12 @@ fi
 
 # ─── Step 2: Configure kubectl ─────────────────────────────────────────────
 info "Step 2/5: Configuring kubectl for EKS"
-aws eks update-kubeconfig \
+"$AWS" eks update-kubeconfig \
   --region "$AWS_REGION" \
   --name "$CLUSTER_NAME" \
   --profile "$AWS_PROFILE"
 
-kubectl cluster-info 2>/dev/null \
+"$KUBECTL" cluster-info 2>/dev/null \
   || fail "Cannot connect to cluster. Is eks_public_access enabled?"
 ok "kubectl configured — cluster reachable"
 
@@ -225,7 +212,7 @@ if [ "$SKIP_BUILD" = false ]; then
     image_name="xtrinode-${name}"
     tag="${ECR_REGISTRY}/${image_name}:${VERSION}"
     info "  Building ${image_name}..."
-    docker build \
+    "$DOCKER" build \
       --build-arg APP_PACKAGE="$app_package" \
       --build-arg APP_PORT="$app_port" \
       --build-arg VERSION="$VERSION" \
@@ -239,14 +226,14 @@ if [ "$SKIP_BUILD" = false ]; then
 
   # ─── Step 4: Push to ECR ────────────────────────────────────────────────
   info "Step 4/5: Pushing images to ECR"
-  aws ecr get-login-password --region "$AWS_REGION" --profile "$AWS_PROFILE" | \
-    docker login --username AWS --password-stdin "$ECR_REGISTRY"
+  "$AWS" ecr get-login-password --region "$AWS_REGION" --profile "$AWS_PROFILE" | \
+    "$DOCKER" login --username AWS --password-stdin "$ECR_REGISTRY"
 
   for comp in "${COMPONENTS[@]}"; do
     IFS=':' read -r name _ <<< "$comp"
     image_name="xtrinode-${name}"
     info "  Pushing ${image_name}..."
-    docker push "${ECR_REGISTRY}/${image_name}:${VERSION}"
+    "$DOCKER" push "${ECR_REGISTRY}/${image_name}:${VERSION}"
     ok "  Pushed: ${ECR_REGISTRY}/${image_name}:${VERSION}"
   done
 else
@@ -258,9 +245,9 @@ fi
 info "Step 5/5: Deploying to EKS via Helm"
 
 # Create namespaces
-kubectl create namespace "$OPERATOR_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace "$GATEWAY_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace team-test --dry-run=client -o yaml | kubectl apply -f -
+"$KUBECTL" create namespace "$OPERATOR_NAMESPACE" --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create namespace "$GATEWAY_NAMESPACE" --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create namespace team-test --dry-run=client -o yaml | "$KUBECTL" apply -f -
 
 auth_token_file="$(mktemp)"
 resume_auth_token_file="$(mktemp)"
@@ -268,22 +255,22 @@ gateway_auth_keys_file="$(mktemp)"
 trap 'rm -f "$auth_token_file" "$resume_auth_token_file" "$gateway_auth_keys_file"' EXIT
 printf '%s' "$API_SERVER_AUTH_TOKEN" > "$auth_token_file"
 printf '%s' "$API_SERVER_RESUME_AUTH_TOKEN" > "$resume_auth_token_file"
-kubectl create secret generic "$API_SERVER_AUTH_SECRET" \
+"$KUBECTL" create secret generic "$API_SERVER_AUTH_SECRET" \
   --namespace "$OPERATOR_NAMESPACE" \
   --from-file=token="$auth_token_file" \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl create secret generic "$API_SERVER_RESUME_AUTH_SECRET" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create secret generic "$API_SERVER_RESUME_AUTH_SECRET" \
   --namespace "$OPERATOR_NAMESPACE" \
   --from-file=token="$resume_auth_token_file" \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl create secret generic "$API_SERVER_RESUME_AUTH_SECRET" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create secret generic "$API_SERVER_RESUME_AUTH_SECRET" \
   --namespace "$GATEWAY_NAMESPACE" \
   --from-file=token="$resume_auth_token_file" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
 
 if [ "$GATEWAY_AUTH_ENABLED" = "true" ]; then
   existing_gateway_keys="$(
-    kubectl get secret "$GATEWAY_AUTH_SECRET" \
+    "$KUBECTL" get secret "$GATEWAY_AUTH_SECRET" \
       --namespace "$GATEWAY_NAMESPACE" \
       -o "go-template={{ index .data \"$GATEWAY_AUTH_SECRET_KEY\" }}" 2>/dev/null |
       base64 -d 2>/dev/null || true
@@ -295,27 +282,27 @@ if [ "$GATEWAY_AUTH_ENABLED" = "true" ]; then
   else
     printf '%s: "%s"\n' "$GATEWAY_API_KEY_ID" "$(random_token)" > "$gateway_auth_keys_file"
   fi
-  kubectl create secret generic "$GATEWAY_AUTH_SECRET" \
+  "$KUBECTL" create secret generic "$GATEWAY_AUTH_SECRET" \
     --namespace "$GATEWAY_NAMESPACE" \
     --from-file="$GATEWAY_AUTH_SECRET_KEY=$gateway_auth_keys_file" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | "$KUBECTL" apply -f -
 fi
 
 # Generate CRDs (outputs to helm chart crds/), then apply them explicitly.
 # Helm installs CRDs only on first install and does not upgrade existing CRDs.
 info "  Generating manifests (CRDs)..."
-cd "$ROOT_DIR" && make manifests
-kubectl apply -f "$HELM_DIR/xtrinode-operator/crds"
+cd "$ROOT_DIR" && "$MAKE" manifests
+"$KUBECTL" apply -f "$HELM_DIR/xtrinode-operator/crds"
 
 # Build Helm dependencies from chart locks.
 info "  Building Helm dependencies..."
 cd "$ROOT_DIR"
-helm dependency build "$HELM_DIR/xtrinode-operator"
-helm dependency build "$HELM_DIR/xtrinode-observability"
+"$HELM" dependency build "$HELM_DIR/xtrinode-operator"
+"$HELM" dependency build "$HELM_DIR/xtrinode-observability"
 
 if [ "$PROMETHEUS_ENABLED" = "true" ] || [ "$VECTOR_ENABLED" = "true" ]; then
   info "  Deploying xtrinode-observability..."
-  helm upgrade --install xtrinode-observability "$HELM_DIR/xtrinode-observability" \
+  "$HELM" upgrade --install xtrinode-observability "$HELM_DIR/xtrinode-observability" \
     --namespace "$OBSERVABILITY_NAMESPACE" \
     --create-namespace \
     --set prometheus-stack.enabled="$PROMETHEUS_ENABLED" \
@@ -346,7 +333,7 @@ fi
 
 # Deploy operator
 info "  Deploying xtrinode-operator..."
-helm upgrade --install xtrinode-operator "$HELM_DIR/xtrinode-operator" \
+"$HELM" upgrade --install xtrinode-operator "$HELM_DIR/xtrinode-operator" \
   --take-ownership \
   --namespace "$OPERATOR_NAMESPACE" \
   --set image.repository="${ECR_REGISTRY}/xtrinode-operator" \
@@ -362,7 +349,7 @@ ok "  Operator deployed"
 
 # Deploy API server
 info "  Deploying xtrinode-api-server..."
-helm upgrade --install xtrinode-api-server "$HELM_DIR/xtrinode-api-server" \
+"$HELM" upgrade --install xtrinode-api-server "$HELM_DIR/xtrinode-api-server" \
   --take-ownership \
   --namespace "$OPERATOR_NAMESPACE" \
   --set image.repository="${ECR_REGISTRY}/xtrinode-api-server" \
@@ -378,7 +365,7 @@ ok "  API server deployed"
 
 # Deploy gateway
 info "  Deploying xtrinode-gateway..."
-helm upgrade --install xtrinode-gateway "$HELM_DIR/xtrinode-gateway" \
+"$HELM" upgrade --install xtrinode-gateway "$HELM_DIR/xtrinode-gateway" \
   --force \
   --namespace "$GATEWAY_NAMESPACE" \
   --set image.repository="${ECR_REGISTRY}/xtrinode-gateway" \

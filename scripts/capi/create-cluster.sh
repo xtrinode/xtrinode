@@ -5,60 +5,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TF_DIR="$REPO_ROOT/terraform/gcp"
-TOOL_CACHE_DIR="${XTRINODE_TOOL_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/xtrinode}"
+TERRAFORM="${TERRAFORM:-terraform}"
+KUBECTL="${KUBECTL:-kubectl}"
+CLUSTERCTL="${CLUSTERCTL:-clusterctl}"
 
 tf_output() {
   local name="$1"
-  terraform -chdir="$TF_DIR" output -raw "$name" 2>/dev/null || true
+  "$TERRAFORM" -chdir="$TF_DIR" output -raw "$name"
 }
 
-tf_var() {
-  local name="$1"
-  local file="$TF_DIR/terraform.tfvars"
-  [ -f "$file" ] || return 0
-  awk -F= -v key="$name" '
-    $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
-      value=$2
-      sub(/[[:space:]]+#.*/, "", value)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      gsub(/^"|"$/, "", value)
-      print value
-      exit
-    }
-  ' "$file"
-}
-
-ensure_clusterctl() {
-  if command -v clusterctl >/dev/null 2>&1; then
-    command -v clusterctl
-    return
-  fi
-
-  local version="${CLUSTERCTL_VERSION:-v1.11.3}"
-  local bin="$TOOL_CACHE_DIR/clusterctl"
-  if [ ! -x "$bin" ]; then
-    mkdir -p "$TOOL_CACHE_DIR"
-    echo "Installing clusterctl $version to $bin..." >&2
-    curl -fsSL -o "$bin" "https://github.com/kubernetes-sigs/cluster-api/releases/download/${version}/clusterctl-linux-amd64"
-    chmod +x "$bin"
-  fi
-  echo "$bin"
-}
-
-if [ -d "$TF_DIR" ] && command -v terraform >/dev/null 2>&1; then
-  GCP_PROJECT="${GCP_PROJECT:-$(tf_output gcp_project_id)}"
-  GCP_REGION="${GCP_REGION:-$(tf_output gcp_region)}"
-  GCP_ZONE="${GCP_ZONE:-$(tf_output gke_cluster_location)}"
-  GCP_NETWORK_NAME="${GCP_NETWORK_NAME:-$(tf_output network_name)}"
-  GCP_SUBNET_NAME="${GCP_SUBNET_NAME:-$(tf_output subnet_name)}"
-fi
-
-GCP_PROJECT="${GCP_PROJECT:-$(tf_var gcp_project_id)}"
-GCP_REGION="${GCP_REGION:-$(tf_var gcp_region)}"
-GCP_ZONE="${GCP_ZONE:-$(tf_var gcp_zone)}"
-GCP_NETWORK_NAME="${GCP_NETWORK_NAME:-$(tf_var network_name)}"
-GCP_SUBNET_NAME="${GCP_SUBNET_NAME:-$(tf_var subnet_name)}"
 GCP_PROJECT="${GCP_PROJECT:-${GCP_PROJECT_ID:-}}"
+GCP_REGION="${GCP_REGION:-}"
+GCP_ZONE="${GCP_ZONE:-}"
+GCP_NETWORK_NAME="${GCP_NETWORK_NAME:-}"
+GCP_SUBNET_NAME="${GCP_SUBNET_NAME:-}"
+
+[ -n "$GCP_PROJECT" ] || GCP_PROJECT="$(tf_output gcp_project_id)"
+[ -n "$GCP_REGION" ] || GCP_REGION="$(tf_output gcp_region)"
+[ -n "$GCP_ZONE" ] || GCP_ZONE="$(tf_output gke_cluster_location)"
+[ -n "$GCP_NETWORK_NAME" ] || GCP_NETWORK_NAME="$(tf_output network_name)"
+[ -n "$GCP_SUBNET_NAME" ] || GCP_SUBNET_NAME="$(tf_output subnet_name)"
+
 export GCP_REGION="${GCP_REGION:-us-central1}"
 export GCP_ZONE="${GCP_ZONE:-us-central1-a}"
 export GCP_NETWORK_NAME="${GCP_NETWORK_NAME:-xtrinode-network}"
@@ -77,7 +44,6 @@ if [ -z "${GCP_PROJECT:-}" ]; then
 fi
 
 export GCP_PROJECT
-CLUSTERCTL_BIN="$(ensure_clusterctl)"
 
 echo "Creating GKE workload cluster manifest via CAPG..."
 echo "  GCP_PROJECT=$GCP_PROJECT"
@@ -90,33 +56,33 @@ echo "  TARGET_NAMESPACE=$TARGET_NAMESPACE"
 echo "  WORKER_MACHINE_COUNT=$WORKER_MACHINE_COUNT"
 echo "  CAPG_VERSION=$CAPG_VERSION"
 
-"$CLUSTERCTL_BIN" generate cluster "$CLUSTER_NAME" \
+"$CLUSTERCTL" generate cluster "$CLUSTER_NAME" \
   --target-namespace "$TARGET_NAMESPACE" \
   --flavor gke \
   --infrastructure "gcp:${CAPG_VERSION}" > "$OUTPUT_FILE"
 echo "Generated $OUTPUT_FILE"
 
-kubectl create namespace "$TARGET_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply --server-side --dry-run=server -f "$OUTPUT_FILE"
-kubectl apply -f "$OUTPUT_FILE"
+"$KUBECTL" create namespace "$TARGET_NAMESPACE" --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" apply --server-side --dry-run=server -f "$OUTPUT_FILE"
+"$KUBECTL" apply -f "$OUTPUT_FILE"
 
 if [ "$WORKER_MACHINE_COUNT" = "0" ]; then
   echo "Removing unused zero-node default MachinePool ${CLUSTER_NAME}-mp-0..."
-  kubectl delete "machinepool/${CLUSTER_NAME}-mp-0" -n "$TARGET_NAMESPACE" --ignore-not-found=true
+  "$KUBECTL" delete "machinepool/${CLUSTER_NAME}-mp-0" -n "$TARGET_NAMESPACE" --ignore-not-found=true
 fi
 
 if [ -n "${GCP_SUBNET_NAME:-}" ]; then
   echo "Patching GCPManagedCluster for manual-mode VPC subnet..."
-  kubectl patch gcpmanagedcluster "$CLUSTER_NAME" -n "$TARGET_NAMESPACE" --type=merge -p \
+  "$KUBECTL" patch gcpmanagedcluster "$CLUSTER_NAME" -n "$TARGET_NAMESPACE" --type=merge -p \
     "{\"spec\":{\"network\":{\"name\":\"${GCP_NETWORK_NAME}\",\"autoCreateSubnetworks\":false,\"subnets\":[{\"name\":\"${GCP_SUBNET_NAME}\",\"region\":\"${GCP_REGION}\"}]}}}"
 fi
 
 echo "Cluster creation started. Status:"
-kubectl get cluster,machinepool,gcpmanagedcluster,gcpmanagedcontrolplane,gcpmanagedmachinepool -n "$TARGET_NAMESPACE" -o wide
+"$KUBECTL" get cluster,machinepool,gcpmanagedcluster,gcpmanagedcontrolplane,gcpmanagedmachinepool -n "$TARGET_NAMESPACE" -o wide
 
 if [ "$WAIT_FOR_CLUSTER" = "true" ]; then
-  kubectl wait "cluster/${CLUSTER_NAME}" -n "$TARGET_NAMESPACE" --for=condition=Available=True --timeout="$WAIT_TIMEOUT"
+  "$KUBECTL" wait "cluster/${CLUSTER_NAME}" -n "$TARGET_NAMESPACE" --for=condition=Available=True --timeout="$WAIT_TIMEOUT"
 fi
 
 echo "Get kubeconfig:"
-echo "  kubectl get secret ${CLUSTER_NAME}-user-kubeconfig -n ${TARGET_NAMESPACE} -o jsonpath='{.data.value}' | base64 -d > ${CLUSTER_NAME}.kubeconfig"
+echo "  ${KUBECTL} get secret ${CLUSTER_NAME}-user-kubeconfig -n ${TARGET_NAMESPACE} -o jsonpath='{.data.value}' | base64 -d > ${CLUSTER_NAME}.kubeconfig"

@@ -15,7 +15,7 @@
   &nbsp;|&nbsp;
   <a href="docs/VERSIONING_AND_PACKAGING.md">Versioning and packaging</a>
   &nbsp;|&nbsp;
-  <a href="docs/COMPATIBILITY_MATRIX.md">Compatibility matrix</a>
+  <a href="docs/TOOLING.md">Tooling and compatibility</a>
   &nbsp;|&nbsp;
   <a href="https://xtrinode.dev">xtrinode.dev</a>
 </p>
@@ -220,8 +220,8 @@ Detailed material lives in topic-specific documents:
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) explains platform deployment flow.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) covers day-two checks and
   common runtime failures.
-- [docs/COMPATIBILITY_MATRIX.md](docs/COMPATIBILITY_MATRIX.md) documents tested
-  Kubernetes, Trino, Helm, KEDA, and provider validation posture.
+- [docs/TOOLING.md](docs/TOOLING.md) is the central local and CI toolchain,
+  runtime compatibility, and provider validation contract.
 
 ## Development
 
@@ -231,18 +231,22 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow,
 
 For a first development pass:
 
-1. Install the tools in [Build Requirements](#build-requirements).
-2. Run `make help` to see the maintained command surface and default variables.
-3. Run `make helm-deps` before Helm, install, or local-cluster work.
-4. Use focused checks while changing one area, then run broader CI targets before
+1. Install the tools in [docs/TOOLING.md](docs/TOOLING.md).
+2. Run `make tool-versions` to see the pinned local and CI tool versions.
+3. Run `nvm use && npm ci` before markdown linting.
+4. Run `make help` to see the maintained command surface and default variables.
+5. Run `make helm-deps` before Helm, install, or local-cluster work.
+6. Use focused checks while changing one area, then run broader CI targets before
    opening a pull request.
-5. Use the local k3d/Tilt path for end-to-end behavior that needs a real
+7. Use the local k3d/Tilt path for end-to-end behavior that needs a real
    Kubernetes API, KEDA, the gateway, and Trino.
 
 Useful first commands:
 
 ```bash
 make help
+make tool-versions
+nvm use && npm ci
 make helm-deps
 make build-all
 make lint-markdown
@@ -303,21 +307,15 @@ Repository map:
 
 ## Build Requirements
 
-Install the core tools for your workflow:
+Install the workflow tools listed in [docs/TOOLING.md](docs/TOOLING.md), then
+run `make tool-versions` to print the pinned versions used by local targets and
+CI. The Makefile assumes these tools are installed and does not download
+fallback implementations inside recipes.
 
-| Area | Tools | Notes |
-| --- | --- | --- |
-| Base shell | Linux or macOS, Bash, GNU Make, `curl`, `jq`, `yq` | Shell scripts and Robot suites use JSON/YAML command-line processing. |
-| Go development | Go `1.26.3` | Must match `xtrinode/go.mod` and `tools/go.mod`. |
-| Go tooling | `golangci-lint` `v2.12.1`, `controller-gen` `v0.20.1` | Versions are pinned in `tools/go.mod`; Make targets install or verify them where practical. |
-| Containers | Docker with Buildx | Required for image builds, local registry work, k3d, and some lint fallbacks. |
-| Kubernetes | `kubectl`, Helm `3.20.0` | Required for chart development and cluster deployment. |
-| Local cluster loop | k3d, Tilt | Required by `make dev-up`, `make tilt-up`, and local e2e targets. |
-| Python e2e | `uv`, Python `>=3.11` | `uv` manages Robot Framework and Locust from `tilt/e2e/pyproject.toml`. |
-| Markdown docs | Node.js `22` or Docker | `markdownlint-cli` is pinned in `package.json`; the Makefile can use Docker as a fallback. |
-| Terraform | Terraform `1.9.0`, optional `tflint` | Used for infrastructure validation and provider deployment workflows. |
-| Security scans | Trivy | Required by image, filesystem, and rendered-config scan targets. |
-| Cloud CLIs | `gcloud` plus `gke-gcloud-auth-plugin`; optional `aws` and `az` | GCP is the fully tested deploy path. AWS and Azure workflows exist, but remain experimental. |
+Common groups are Go and Go tooling, Node.js 22 plus `npm ci` for markdown
+linting, Docker with Buildx, Helm and `kubectl`, Terraform and `tflint`, k3d and
+Tilt for the local stack, `uv` and Python for Robot/Locust e2e, `clusterctl` for
+CAPG workload clusters, Trivy for security scans, and the cloud CLI for the provider you are deploying.
 
 ## Contributing
 

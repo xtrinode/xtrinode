@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TF_DIR="$REPO_ROOT/terraform/gcp"
+TERRAFORM="${TERRAFORM:-terraform}"
+KUBECTL="${KUBECTL:-kubectl}"
 
 TF_TARGETS=(
   "-target=google_service_account.capg"
@@ -20,13 +22,13 @@ TF_TARGETS=(
   "-target=helm_release.capi_operator"
 )
 
-terraform -chdir="$TF_DIR" apply -var="capg_enabled=true" "${TF_TARGETS[@]}" "$@"
+"$TERRAFORM" -chdir="$TF_DIR" apply -var="capg_enabled=true" "${TF_TARGETS[@]}" "$@"
 
-CONFIGURE_KUBECTL="$(terraform -chdir="$TF_DIR" output -raw configure_kubectl)"
+CONFIGURE_KUBECTL="$("$TERRAFORM" -chdir="$TF_DIR" output -raw configure_kubectl)"
 echo "Configuring kubectl for the management cluster..."
 $CONFIGURE_KUBECTL
 
 echo "CAPG bootstrap requested. Verify with:"
-echo "  kubectl get pods -n capi-operator-system"
-echo "  kubectl get pods -n capi-system"
-echo "  kubectl get pods -n capg-system"
+echo "  ${KUBECTL} get pods -n capi-operator-system"
+echo "  ${KUBECTL} get pods -n capi-system"
+echo "  ${KUBECTL} get pods -n capg-system"

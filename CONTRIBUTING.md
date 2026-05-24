@@ -85,20 +85,15 @@ External contributors should not bump release versions unless a maintainer asks 
 
 ## Development Setup
 
-Required tools are listed in [README.md](README.md#build-requirements). The common baseline is:
-
-- Go version matching `xtrinode/go.mod`
-- Docker
-- Helm
-- Terraform
-- `kubectl`
-- Node.js 22 for markdown tooling
-- k3d and Tilt for the local development stack
+Required tools and pinned versions are centralized in [docs/TOOLING.md](docs/TOOLING.md). The Makefile assumes those
+tools are installed; local setup belongs in the tooling doc, not in Makefile bootstrap targets.
 
 Useful first commands:
 
 ```bash
 make help
+make tool-versions
+nvm use && npm ci
 make helm-deps
 make build-all
 make lint-markdown

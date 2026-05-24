@@ -8,61 +8,37 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+func decodeValuesOverlayMap[T any](value map[string]interface{}, name string) (T, error) {
+	var out T
+	yamlBytes, err := yaml.Marshal(value)
+	if err != nil {
+		return out, fmt.Errorf("failed to marshal %s map: %w", name, err)
+	}
+	if err := yaml.Unmarshal(yamlBytes, &out); err != nil {
+		return out, fmt.Errorf("failed to unmarshal %s: %w", name, err)
+	}
+	return out, nil
+}
+
 // buildContainerFromMap converts a Helm values container map to corev1.Container
 // Uses YAML marshaling/unmarshaling for full passthrough support
 func buildContainerFromMap(containerMap map[string]interface{}) (corev1.Container, error) {
-	yamlBytes, err := yaml.Marshal(containerMap)
-	if err != nil {
-		return corev1.Container{}, fmt.Errorf("failed to marshal container map: %w", err)
-	}
-
-	var container corev1.Container
-	if err := yaml.Unmarshal(yamlBytes, &container); err != nil {
-		return corev1.Container{}, fmt.Errorf("failed to unmarshal container: %w", err)
-	}
-	return container, nil
+	return decodeValuesOverlayMap[corev1.Container](containerMap, "container")
 }
 
 func buildEnvVarFromMap(envMap map[string]interface{}) (corev1.EnvVar, error) {
-	yamlBytes, err := yaml.Marshal(envMap)
-	if err != nil {
-		return corev1.EnvVar{}, fmt.Errorf("failed to marshal env var map: %w", err)
-	}
-
-	var envVar corev1.EnvVar
-	if err := yaml.Unmarshal(yamlBytes, &envVar); err != nil {
-		return corev1.EnvVar{}, fmt.Errorf("failed to unmarshal env var: %w", err)
-	}
-	return envVar, nil
+	return decodeValuesOverlayMap[corev1.EnvVar](envMap, "env var")
 }
 
 // buildVolumeFromMap converts a Helm values volume map to corev1.Volume
 // Uses YAML marshaling/unmarshaling for full passthrough support
 func buildVolumeFromMap(volumeMap map[string]interface{}) (corev1.Volume, error) {
-	yamlBytes, err := yaml.Marshal(volumeMap)
-	if err != nil {
-		return corev1.Volume{}, fmt.Errorf("failed to marshal volume map: %w", err)
-	}
-
-	var volume corev1.Volume
-	if err := yaml.Unmarshal(yamlBytes, &volume); err != nil {
-		return corev1.Volume{}, fmt.Errorf("failed to unmarshal volume: %w", err)
-	}
-	return volume, nil
+	return decodeValuesOverlayMap[corev1.Volume](volumeMap, "volume")
 }
 
 // buildVolumeMountFromMap converts a Helm values volume mount map to corev1.VolumeMount
 func buildVolumeMountFromMap(mountMap map[string]interface{}) (corev1.VolumeMount, error) {
-	yamlBytes, err := yaml.Marshal(mountMap)
-	if err != nil {
-		return corev1.VolumeMount{}, fmt.Errorf("failed to marshal volume mount map: %w", err)
-	}
-
-	var mount corev1.VolumeMount
-	if err := yaml.Unmarshal(yamlBytes, &mount); err != nil {
-		return corev1.VolumeMount{}, fmt.Errorf("failed to unmarshal volume mount: %w", err)
-	}
-	return mount, nil
+	return decodeValuesOverlayMap[corev1.VolumeMount](mountMap, "volume mount")
 }
 
 // buildLifecycle converts a Helm values lifecycle map to corev1.Lifecycle
@@ -71,14 +47,9 @@ func buildLifecycle(lifecycleMap map[string]interface{}) (*corev1.Lifecycle, err
 		return nil, nil
 	}
 
-	yamlBytes, err := yaml.Marshal(lifecycleMap)
+	lifecycle, err := decodeValuesOverlayMap[corev1.Lifecycle](lifecycleMap, "lifecycle")
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal lifecycle map: %w", err)
-	}
-
-	var lifecycle corev1.Lifecycle
-	if err := yaml.Unmarshal(yamlBytes, &lifecycle); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal lifecycle: %w", err)
+		return nil, err
 	}
 	return &lifecycle, nil
 }
@@ -89,14 +60,9 @@ func buildProbeFromMap(probeMap map[string]interface{}) (*corev1.Probe, error) {
 		return nil, nil
 	}
 
-	yamlBytes, err := yaml.Marshal(probeMap)
+	probe, err := decodeValuesOverlayMap[corev1.Probe](probeMap, "probe")
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal probe map: %w", err)
-	}
-
-	var probe corev1.Probe
-	if err := yaml.Unmarshal(yamlBytes, &probe); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal probe: %w", err)
+		return nil, err
 	}
 	return &probe, nil
 }
@@ -107,28 +73,18 @@ func buildResourceRequirements(resourcesMap map[string]interface{}) (*corev1.Res
 		return nil, nil
 	}
 
-	yamlBytes, err := yaml.Marshal(resourcesMap)
+	requirements, err := decodeValuesOverlayMap[corev1.ResourceRequirements](resourcesMap, "resources")
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal resources map: %w", err)
-	}
-
-	var requirements corev1.ResourceRequirements
-	if err := yaml.Unmarshal(yamlBytes, &requirements); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal resources: %w", err)
+		return nil, err
 	}
 	return &requirements, nil
 }
 
 // buildContainerPortFromMap converts a Helm values port map to corev1.ContainerPort
 func buildContainerPortFromMap(portMap map[string]interface{}) (corev1.ContainerPort, error) {
-	yamlBytes, err := yaml.Marshal(portMap)
+	port, err := decodeValuesOverlayMap[corev1.ContainerPort](portMap, "port")
 	if err != nil {
-		return corev1.ContainerPort{}, fmt.Errorf("failed to marshal port map: %w", err)
-	}
-
-	var port corev1.ContainerPort
-	if err := yaml.Unmarshal(yamlBytes, &port); err != nil {
-		return corev1.ContainerPort{}, fmt.Errorf("failed to unmarshal port: %w", err)
+		return corev1.ContainerPort{}, err
 	}
 	if port.ContainerPort == 0 {
 		if containerPort, ok := ParseInt32(portMap["port"]); ok {
@@ -140,16 +96,7 @@ func buildContainerPortFromMap(portMap map[string]interface{}) (corev1.Container
 
 // buildEnvFromSourceFromMap converts a Helm values envFrom map to corev1.EnvFromSource
 func buildEnvFromSourceFromMap(envFromMap map[string]interface{}) (corev1.EnvFromSource, error) {
-	yamlBytes, err := yaml.Marshal(envFromMap)
-	if err != nil {
-		return corev1.EnvFromSource{}, fmt.Errorf("failed to marshal envFrom map: %w", err)
-	}
-
-	var envFrom corev1.EnvFromSource
-	if err := yaml.Unmarshal(yamlBytes, &envFrom); err != nil {
-		return corev1.EnvFromSource{}, fmt.Errorf("failed to unmarshal envFrom: %w", err)
-	}
-	return envFrom, nil
+	return decodeValuesOverlayMap[corev1.EnvFromSource](envFromMap, "envFrom")
 }
 
 // buildSecurityContextFromMap converts a Helm values security context map to *corev1.SecurityContext
@@ -158,14 +105,9 @@ func buildSecurityContextFromMap(securityContextMap map[string]interface{}) (*co
 		return nil, nil
 	}
 
-	yamlBytes, err := yaml.Marshal(securityContextMap)
+	securityContext, err := decodeValuesOverlayMap[corev1.SecurityContext](securityContextMap, "security context")
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal security context map: %w", err)
-	}
-
-	var securityContext corev1.SecurityContext
-	if err := yaml.Unmarshal(yamlBytes, &securityContext); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal security context: %w", err)
+		return nil, err
 	}
 	return &securityContext, nil
 }
@@ -176,14 +118,9 @@ func buildDeploymentStrategyFromMap(strategyMap map[string]interface{}) (*appsv1
 		return nil, nil
 	}
 
-	yamlBytes, err := yaml.Marshal(strategyMap)
+	strategy, err := decodeValuesOverlayMap[appsv1.DeploymentStrategy](strategyMap, "deployment strategy")
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal deployment strategy map: %w", err)
-	}
-
-	var strategy appsv1.DeploymentStrategy
-	if err := yaml.Unmarshal(yamlBytes, &strategy); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal deployment strategy: %w", err)
+		return nil, err
 	}
 	return &strategy, nil
 }
