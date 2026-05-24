@@ -39,6 +39,9 @@ func (r *XTrinodeReconciler) reconcileSuspend(ctx context.Context, xtrinode *ana
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 		r.markSuspendedStatus(xtrinode)
+		if err := setObservedRuntimeShapeStatus(xtrinode); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to resolve observed runtime shape while suspended: %w", err)
+		}
 		if result, err := r.reconcileSuspendedNodePool(ctx, xtrinode, log); err != nil || result.RequeueAfter > 0 {
 			return result, err
 		}
@@ -102,6 +105,9 @@ func (r *XTrinodeReconciler) reconcileSuspend(ctx context.Context, xtrinode *ana
 	}
 
 	r.markSuspendedStatus(xtrinode)
+	if err := setObservedRuntimeShapeStatus(xtrinode); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to resolve observed runtime shape while suspending: %w", err)
+	}
 
 	if result, err := r.reconcileSuspendedNodePool(ctx, xtrinode, log); err != nil || result.RequeueAfter > 0 {
 		return result, err

@@ -7,13 +7,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
+	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/sizing"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestBuildWorkerDeployment_DefaultFixedReplicas(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -24,7 +24,7 @@ func TestBuildWorkerDeployment_DefaultFixedReplicas(t *testing.T) {
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 
 	require.NotNil(t, deployment.Spec.Replicas, "KEDA is opt-in, so fixed replicas should be set by default")
@@ -32,7 +32,6 @@ func TestBuildWorkerDeployment_DefaultFixedReplicas(t *testing.T) {
 }
 
 func TestBuildWorkerDeployment_KEDAEnabledOmitsReplicas(t *testing.T) {
-	preset := sizing.Presets["s"]
 	enabled := true
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
@@ -49,14 +48,36 @@ func TestBuildWorkerDeployment_KEDAEnabledOmitsReplicas(t *testing.T) {
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 
 	assert.Nil(t, deployment.Spec.Replicas, "KEDA owns worker replicas when explicitly enabled with metric config")
 }
 
+func TestBuildWorkerDeployment_UsesEffectiveNodePoolPlacement(t *testing.T) {
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-trino",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			NodePool: &analyticsv1.NodePoolSpec{
+				Name:         "runtime-pool",
+				Provider:     "gcp",
+				SchedulePods: true,
+				GCP:          &analyticsv1.GCPNodePoolSpec{MachineType: "n1-standard-8"},
+			},
+		},
+	}
+
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
+	require.NoError(t, err)
+
+	require.Equal(t, "runtime-pool", deployment.Spec.Template.Spec.NodeSelector[config.NodePoolSchedulingLabel])
+}
+
 func TestBuildWorkerDeployment_NativeHPAEnabledOmitsReplicas(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -66,7 +87,6 @@ func TestBuildWorkerDeployment_NativeHPAEnabledOmitsReplicas(t *testing.T) {
 			Size: "s",
 			ValuesOverlay: mustValuesOverlay(map[string]interface{}{
 				"server": map[string]interface{}{
-					"workers": int64(4),
 					"autoscaling": map[string]interface{}{
 						"enabled":                           true,
 						"minReplicas":                       int64(1),
@@ -79,15 +99,15 @@ func TestBuildWorkerDeployment_NativeHPAEnabledOmitsReplicas(t *testing.T) {
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 
 	assert.Nil(t, deployment.Spec.Replicas, "native HPA owns worker replicas when enabled")
 }
 
-func TestBuildWorkerDeployment_KEDADisabledUsesWorkersOverlay(t *testing.T) {
-	preset := sizing.Presets["s"]
+func TestBuildWorkerDeployment_KEDADisabledUsesTypedMaxWorkers(t *testing.T) {
 	disabled := false
+	maxWorkers := int32(4)
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -98,15 +118,11 @@ func TestBuildWorkerDeployment_KEDADisabledUsesWorkersOverlay(t *testing.T) {
 			KEDA: &analyticsv1.KEDASpec{
 				Enabled: &disabled,
 			},
-			ValuesOverlay: mustValuesOverlay(map[string]interface{}{
-				"server": map[string]interface{}{
-					"workers": int64(4),
-				},
-			}),
+			MaxWorkers: &maxWorkers,
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotNil(t, deployment.Spec.Replicas)
 
@@ -114,9 +130,9 @@ func TestBuildWorkerDeployment_KEDADisabledUsesWorkersOverlay(t *testing.T) {
 }
 
 func TestBuildWorkerDeployment_KEDABlankMetricEndpointsUsesFixedReplicas(t *testing.T) {
-	preset := sizing.Presets["s"]
 	enabled := true
 	blank := " "
+	maxWorkers := int32(3)
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -130,15 +146,11 @@ func TestBuildWorkerDeployment_KEDABlankMetricEndpointsUsesFixedReplicas(t *test
 				PrometheusQuery:  &blank,
 				HTTPEndpoint:     &blank,
 			},
-			ValuesOverlay: mustValuesOverlay(map[string]interface{}{
-				"server": map[string]interface{}{
-					"workers": int64(3),
-				},
-			}),
+			MaxWorkers: &maxWorkers,
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotNil(t, deployment.Spec.Replicas)
 	assert.Equal(t, int32(3), *deployment.Spec.Replicas)
@@ -177,7 +189,6 @@ func TestBuildWorkerConfigMap_GracefulShutdownAddsWorkerAccessControl(t *testing
 }
 
 func TestBuildWorkerDeployment_GracefulShutdownUsesControlAuthSecret(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -203,7 +214,7 @@ func TestBuildWorkerDeployment_GracefulShutdownUsesControlAuthSecret(t *testing.
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	container := deployment.Spec.Template.Spec.Containers[0]
 	envByName := map[string]corev1.EnvVar{}
@@ -227,7 +238,6 @@ func TestBuildWorkerDeployment_GracefulShutdownUsesControlAuthSecret(t *testing.
 }
 
 func TestBuildWorkerDeployment_HelmChartConfigEnvPreservesValueFromAndEnvFrom(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -272,7 +282,7 @@ func TestBuildWorkerDeployment_HelmChartConfigEnvPreservesValueFromAndEnvFrom(t 
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	container := deployment.Spec.Template.Spec.Containers[0]
 
@@ -295,7 +305,6 @@ func TestBuildWorkerDeployment_HelmChartConfigEnvPreservesValueFromAndEnvFrom(t 
 }
 
 func TestBuildWorkerDeployment_ValuesOverlayEnvPreservesValueFrom(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -328,7 +337,7 @@ func TestBuildWorkerDeployment_ValuesOverlayEnvPreservesValueFrom(t *testing.T) 
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	container := deployment.Spec.Template.Spec.Containers[0]
 
@@ -459,7 +468,6 @@ func TestBuildConfigMaps_TrinoControlAuthEnablesForwardedHeadersWithoutRouting(t
 }
 
 func TestBuildWorkerDeployment_GracefulShutdownMountsAccessControl(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -477,7 +485,7 @@ func TestBuildWorkerDeployment_GracefulShutdownMountsAccessControl(t *testing.T)
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, deployment.Spec.Template.Spec.Containers)
 
@@ -496,7 +504,6 @@ func TestBuildWorkerDeployment_GracefulShutdownMountsAccessControl(t *testing.T)
 }
 
 func TestBuildWorkerDeployment_UsesWorkerOverlayForContainerSettings(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -551,7 +558,7 @@ func TestBuildWorkerDeployment_UsesWorkerOverlayForContainerSettings(t *testing.
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, deployment.Spec.Template.Spec.Containers)
 
@@ -572,7 +579,6 @@ func TestBuildWorkerDeployment_UsesWorkerOverlayForContainerSettings(t *testing.
 }
 
 func TestBuildWorkerDeployment_DefaultStartupProbeMatchesHelmChart(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -583,7 +589,7 @@ func TestBuildWorkerDeployment_DefaultStartupProbeMatchesHelmChart(t *testing.T)
 		},
 	}
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, deployment.Spec.Template.Spec.Containers)
 

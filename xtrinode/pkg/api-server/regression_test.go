@@ -14,6 +14,8 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -69,11 +71,11 @@ func TestRegression_TriggerResume_UsesConfigAnnotations(t *testing.T) {
 	assert.NotEmpty(t, updated.Annotations[config.ResumeRequestedAtAnnotation],
 		"triggerResume must use config.ResumeRequestedAtAnnotation, not hardcoded key")
 
-	// Verify the OLD hardcoded keys are NOT present
+	// Verify the previous hardcoded keys are NOT present
 	assert.Empty(t, updated.Annotations["xtrinode.io/resume-requested"],
-		"Old hardcoded annotation key must NOT be present")
+		"Previous hardcoded annotation key must NOT be present")
 	assert.Empty(t, updated.Annotations["xtrinode.io/resume-requested-at"],
-		"Old hardcoded annotation key must NOT be present")
+		"Previous hardcoded annotation key must NOT be present")
 }
 
 // =============================================================================
@@ -148,6 +150,62 @@ func TestRegression_RouteGroupLookup_MatchesDefaultDedicatedRoutingGroup(t *test
 	require.NotNil(t, candidate)
 	assert.Equal(t, "team-a", candidate.Namespace)
 	assert.Equal(t, "runtime", candidate.Name)
+}
+
+func TestRegression_PickCandidateFromRoutes_UsesEffectiveCapacity(t *testing.T) {
+	server, cli := setupTestServer()
+	highCapacityWorkers := int32(6)
+	highCapacitySmallPreset := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "small-preset-large-typed",
+			Namespace: "team-a",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			Routing: &analyticsv1.RoutingSpec{
+				RoutingGroup: "shared",
+			},
+			MaxWorkers: &highCapacityWorkers,
+			Resources: &analyticsv1.RuntimeResourcesSpec{
+				Worker: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("4"),
+						corev1.ResourceMemory: resource.MustParse("16Gi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("8"),
+						corev1.ResourceMemory: resource.MustParse("32Gi"),
+					},
+				},
+			},
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			Phase: "Suspended",
+		},
+	}
+	lowerCapacityMediumPreset := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "medium-preset-default",
+			Namespace: "team-a",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "m",
+			Routing: &analyticsv1.RoutingSpec{
+				RoutingGroup: "shared",
+			},
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			Phase: "Suspended",
+		},
+	}
+	require.NoError(t, cli.Create(context.Background(), highCapacitySmallPreset))
+	require.NoError(t, cli.Create(context.Background(), lowerCapacityMediumPreset))
+
+	candidate := server.pickCandidateFromRoutes(context.Background(), "shared")
+
+	require.NotNil(t, candidate)
+	assert.Equal(t, "team-a", candidate.Namespace)
+	assert.Equal(t, "medium-preset-default", candidate.Name)
 }
 
 func TestRegression_IsPoolEmpty_MatchesDefaultDedicatedRoutingGroup(t *testing.T) {

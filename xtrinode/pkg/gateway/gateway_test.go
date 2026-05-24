@@ -9,6 +9,7 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -66,6 +67,75 @@ func TestRegisterRoute_UsesValuesOverlayServicePort(t *testing.T) {
 	require.Len(t, routes, 1)
 	require.Len(t, routes[0].Backends, 1)
 	require.Equal(t, "http://trino-runtime.team-a.svc.cluster.local:8181", routes[0].Backends[0].CoordinatorURL)
+}
+
+func TestRegisterRoute_UsesResolvedRuntimeShapeCapacity(t *testing.T) {
+	ctx := context.Background()
+	cli := fake.NewClientBuilder().Build()
+	maxWorkers := int32(3)
+
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime",
+			Namespace: "team-a",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size:       "s",
+			MaxWorkers: &maxWorkers,
+			Resources: &analyticsv1.RuntimeResourcesSpec{
+				Worker: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("4"),
+						corev1.ResourceMemory: resource.MustParse("16Gi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("8"),
+						corev1.ResourceMemory: resource.MustParse("32Gi"),
+					},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, RegisterRoute(ctx, cli, xtrinode))
+
+	configMap := &corev1.ConfigMap{}
+	require.NoError(t, cli.Get(ctx, client.ObjectKey{Name: GatewayConfigMapName, Namespace: GatewayConfigMapNamespace}, configMap))
+	routes, err := parseRoutes(configMap.Data[GatewayConfigMapKey])
+	require.NoError(t, err)
+	require.Len(t, routes, 1)
+	require.Len(t, routes[0].Backends, 1)
+	require.Equal(t, "s", routes[0].Backends[0].Tier)
+	require.Equal(t, 6, routes[0].Backends[0].CapacityUnits)
+}
+
+func TestRegisterRoute_UsesExplicitRoutingCapacityOverride(t *testing.T) {
+	ctx := context.Background()
+	cli := fake.NewClientBuilder().Build()
+	capacityUnits := int32(9)
+
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime",
+			Namespace: "team-a",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			Routing: &analyticsv1.RoutingSpec{
+				CapacityUnits: &capacityUnits,
+			},
+		},
+	}
+
+	require.NoError(t, RegisterRoute(ctx, cli, xtrinode))
+
+	configMap := &corev1.ConfigMap{}
+	require.NoError(t, cli.Get(ctx, client.ObjectKey{Name: GatewayConfigMapName, Namespace: GatewayConfigMapNamespace}, configMap))
+	routes, err := parseRoutes(configMap.Data[GatewayConfigMapKey])
+	require.NoError(t, err)
+	require.Len(t, routes, 1)
+	require.Len(t, routes[0].Backends, 1)
+	require.Equal(t, 9, routes[0].Backends[0].CapacityUnits)
 }
 
 func TestRegisterRoute_UpdateExisting(t *testing.T) {

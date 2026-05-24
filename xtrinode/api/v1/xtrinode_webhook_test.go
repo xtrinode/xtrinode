@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/xtrinode/xtrinode/internal/config"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -178,7 +179,20 @@ func TestXTrinode_ValidateCreate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "maxWorkers too low",
+			name: "maxWorkers negative",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-dummy",
+				},
+				Spec: XTrinodeSpec{
+					Size:       "s",
+					MaxWorkers: int32Ptr(-1),
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "maxWorkers zero allowed for fixed runtime",
 			xtrinode: &XTrinode{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-dummy",
@@ -188,7 +202,7 @@ func TestXTrinode_ValidateCreate(t *testing.T) {
 					MaxWorkers: int32Ptr(0),
 				},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "maxWorkers too high",
@@ -199,6 +213,24 @@ func TestXTrinode_ValidateCreate(t *testing.T) {
 				Spec: XTrinodeSpec{
 					Size:       "s",
 					MaxWorkers: int32Ptr(501),
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "maxWorkers zero rejected when KEDA autoscaling is active",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-dummy",
+				},
+				Spec: XTrinodeSpec{
+					Size:       "s",
+					MaxWorkers: int32Ptr(0),
+					KEDA: &KEDASpec{
+						Enabled:       boolPtr(true),
+						ScalerType:    "prometheus",
+						ScalingMetric: "query",
+					},
 				},
 			},
 			wantErr: true,
@@ -369,6 +401,183 @@ func TestXTrinode_ValidateCreate_RejectsKEDAAndNativeHPA(t *testing.T) {
 
 	if assert.Error(t, err) {
 		assert.Contains(t, err.Error(), "native HPA and spec.keda cannot both manage worker replicas")
+	}
+}
+
+func TestXTrinode_ValidateCreate_NodePoolSchedulePodsPlacement(t *testing.T) {
+	tests := []struct {
+		name          string
+		xtrinode      *XTrinode
+		wantErr       bool
+		wantErrSubstr string
+	}{
+		{
+			name: "allows matching typed placement selector",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					NodePool: &NodePoolSpec{
+						Name:         "runtime-pool",
+						Provider:     "gcp",
+						SchedulePods: true,
+						GCP:          &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+					},
+					Placement: &PlacementSpec{
+						NodeSelector: map[string]string{
+							config.NodePoolSchedulingLabel: "runtime-pool",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "rejects conflicting typed worker placement selector",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					NodePool: &NodePoolSpec{
+						Name:         "runtime-pool",
+						Provider:     "gcp",
+						SchedulePods: true,
+						GCP:          &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+					},
+					Placement: &PlacementSpec{
+						Worker: &RolePlacementSpec{
+							NodeSelector: map[string]string{
+								config.NodePoolSchedulingLabel: "other-pool",
+							},
+						},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: "must match nodePool name",
+		},
+		{
+			name: "allows generated pool name to match typed placement selector",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					NodePool: &NodePoolSpec{
+						Provider:     "gcp",
+						SchedulePods: true,
+						GCP:          &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+					},
+					Placement: &PlacementSpec{
+						NodeSelector: map[string]string{
+							config.NodePoolSchedulingLabel: "runtime-pool",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.xtrinode.ValidateCreate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrSubstr)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestXTrinode_ValidateCreate_NodePoolPlacementWarnings(t *testing.T) {
+	tests := []struct {
+		name       string
+		xtrinode   *XTrinode
+		wantSubstr string
+		wantCount  int
+	}{
+		{
+			name: "warns when provisioned node pool has no pod binding",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					NodePool: &NodePoolSpec{
+						Name:     "runtime-pool",
+						Provider: "gcp",
+						GCP:      &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+					},
+				},
+			},
+			wantSubstr: "runtime pods are not bound",
+			wantCount:  1,
+		},
+		{
+			name: "warns when placement targets a different node pool",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					NodePool: &NodePoolSpec{
+						Name:     "runtime-pool",
+						Provider: "gcp",
+						GCP:      &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+					},
+					Placement: &PlacementSpec{
+						NodeSelector: map[string]string{
+							config.NodePoolSchedulingLabel: "existing-pool",
+						},
+					},
+				},
+			},
+			wantSubstr: "placement targets node pool label",
+			wantCount:  1,
+		},
+		{
+			name: "does not warn when placement targets the provisioned node pool",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					NodePool: &NodePoolSpec{
+						Name:     "runtime-pool",
+						Provider: "gcp",
+						GCP:      &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+					},
+					Placement: &PlacementSpec{
+						NodeSelector: map[string]string{
+							config.NodePoolSchedulingLabel: "runtime-pool",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "does not warn when schedulePods owns binding",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					NodePool: &NodePoolSpec{
+						Name:         "runtime-pool",
+						Provider:     "gcp",
+						SchedulePods: true,
+						GCP:          &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warnings, err := tt.xtrinode.ValidateCreate()
+			assert.NoError(t, err)
+			assert.Len(t, warnings, tt.wantCount)
+			if tt.wantSubstr != "" {
+				assert.Contains(t, warnings[0], tt.wantSubstr)
+			}
+		})
 	}
 }
 

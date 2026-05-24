@@ -20,11 +20,11 @@ ${DRAIN_RESULT_ANNOTATION}   xtrinode.analytics.xtrinode.io/drain-result
 
 *** Test Cases ***
 Shared Namespace Guardrails Recalculate Through Deletion Finalizers
-    Wait Until Keyword Succeeds    180s    2s    Namespace Guardrail Quota Should Equal    8    32Gi
-    Namespace Guardrail LimitRange Should Equal    2    8Gi
+    Wait Until Keyword Succeeds    180s    2s    Namespace Guardrail Quota Should Equal    1    3Gi
+    Namespace Guardrail LimitRange Should Equal    250m    768Mi
     Delete Guardrail XTrinode Through Finalizer    ${GUARDRAIL_A}
-    Wait Until Keyword Succeeds    180s    2s    Namespace Guardrail Quota Should Equal    4    16Gi
-    Namespace Guardrail LimitRange Should Equal    2    8Gi
+    Wait Until Keyword Succeeds    180s    2s    Namespace Guardrail Quota Should Equal    500m    1536Mi
+    Namespace Guardrail LimitRange Should Equal    250m    768Mi
     Delete Guardrail XTrinode Through Finalizer    ${GUARDRAIL_B}
     Wait Until Keyword Succeeds    120s    2s    Namespace Guardrail Resource Should Not Exist    resourcequota    ${GUARDRAIL_QUOTA}
     Namespace Guardrail Resource Should Not Exist    limitrange    ${GUARDRAIL_LIMITRANGE}
@@ -48,7 +48,7 @@ Create Guardrail Namespace If Missing
 Apply Guardrail XTrinode
     [Arguments]    ${name}
     ${manifest}=    Set Variable    /tmp/xtrinode-namespace-guardrail-${name}.json
-    ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"${name}","namespace":"${GUARDRAIL_NAMESPACE}","labels":{"test.xtrinode.io/contract":"namespace-guardrails"}},"spec":{"size":"xs","minWorkers":0,"maxWorkers":1,"suspended":false,"routing":{"header":"X-Trino-XTrinode=${GUARDRAIL_NAMESPACE}/${name}","routingGroup":"${name}"},"valuesOverlay":{"image":{"repository":"${TRINO_IMAGE_REPOSITORY}","tag":"${TRINO_IMAGE_TAG}","pullPolicy":"IfNotPresent"},"server":{"workers":0},"coordinator":{"resources":{"requests":{"cpu":"50m","memory":"512Mi"},"limits":{"cpu":"250m","memory":"768Mi"}}},"worker":{"resources":{"requests":{"cpu":"50m","memory":"512Mi"},"limits":{"cpu":"250m","memory":"768Mi"}}}}}}
+    ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"${name}","namespace":"${GUARDRAIL_NAMESPACE}","labels":{"test.xtrinode.io/contract":"namespace-guardrails"}},"spec":{"size":"xs","minWorkers":0,"maxWorkers":0,"suspended":false,"resources":{"coordinator":{"requests":{"cpu":"50m","memory":"512Mi"},"limits":{"cpu":"250m","memory":"768Mi"}},"worker":{"requests":{"cpu":"50m","memory":"512Mi"},"limits":{"cpu":"250m","memory":"768Mi"}}},"routing":{"header":"X-Trino-XTrinode=${GUARDRAIL_NAMESPACE}/${name}","routingGroup":"${name}"},"valuesOverlay":{"image":{"repository":"${TRINO_IMAGE_REPOSITORY}","tag":"${TRINO_IMAGE_TAG}","pullPolicy":"IfNotPresent"}}}}
     Create File    ${manifest}    ${json}
     Command Should Succeed    kubectl    apply    -f    ${manifest}
 

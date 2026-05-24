@@ -6,35 +6,36 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/yaml"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
-	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/rollout"
-	"github.com/xtrinode/xtrinode/internal/sizing"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 )
 
 // BuildWorkerDeployment builds the worker Deployment with revision stamping
 // Note: Replicas are controlled by KEDA ScaledObject, so this sets replicas to 0 initially
 func BuildWorkerDeployment(
 	xtrinode *analyticsv1.XTrinode,
-	preset *sizing.SizePreset,
 	configMapName string,
 	catalogs []string,
 	revision string,
 	rolloutHash string,
 	catalogSecretEnvVars []corev1.EnvVar,
 ) (*appsv1.Deployment, error) {
+	shape, err := runtimeshape.Resolve(xtrinode)
+	if err != nil {
+		return nil, err
+	}
 	podTemplateRevision := rolloutHash
 	if podTemplateRevision == "" {
 		podTemplateRevision = revision
 	}
-	return buildWorkerDeployment(xtrinode, preset, configMapName, catalogs, revision, podTemplateRevision, rolloutHash, catalogSecretEnvVars)
+	return buildWorkerDeployment(xtrinode, shape, configMapName, catalogs, revision, podTemplateRevision, rolloutHash, catalogSecretEnvVars)
 }
 
 func buildWorkerDeployment(
 	xtrinode *analyticsv1.XTrinode,
-	preset *sizing.SizePreset,
+	shape *runtimeshape.ResolvedRuntimeShape,
 	configMapName string,
 	catalogs []string,
 	resourceRevision string,
@@ -42,38 +43,11 @@ func buildWorkerDeployment(
 	rolloutHash string,
 	catalogSecretEnvVars []corev1.EnvVar,
 ) (*appsv1.Deployment, error) {
-	// Worker replica ownership:
-	// - If KEDA or native HPA is enabled: set to nil (autoscaler owns scaling)
-	// - Else if server.workers specified: use that value
-	// - Else: use preset default (typically 2)
 	var replicas *int32
-	autoscalerEnabled := isKEDAEnabled(xtrinode) || isNativeHPAEnabled(xtrinode)
-
-	if xtrinode.Spec.GetValuesOverlayMap() != nil {
-		if server, ok := xtrinode.Spec.GetValuesOverlayMap()["server"].(map[string]interface{}); ok {
-			// Check for explicit workers count only when no autoscaler owns replicas.
-			if !autoscalerEnabled {
-				if workers, ok := ParseInt32(server["workers"]); ok {
-					replicas = &workers
-				}
-			}
-		}
+	if shape.AutoscalingMode == runtimeshape.AutoscalingModeFixed && shape.FixedWorkers != nil {
+		fixedWorkers := *shape.FixedWorkers
+		replicas = &fixedWorkers
 	}
-
-	// Set default replicas if autoscaling is not enabled and no explicit count exists.
-	if !autoscalerEnabled && replicas == nil {
-		defaultReplicas := int32(config.DefaultWorkerReplicas)
-		replicas = &defaultReplicas
-	}
-
-	if !autoscalerEnabled && xtrinode.Spec.MinWorkers != nil && *xtrinode.Spec.MinWorkers > 0 {
-		if replicas == nil || *replicas < *xtrinode.Spec.MinWorkers {
-			minWorkers := *xtrinode.Spec.MinWorkers
-			replicas = &minWorkers
-		}
-	}
-
-	// If an autoscaler is enabled, replicas stays nil so the autoscaler owns this field.
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -105,7 +79,7 @@ func buildWorkerDeployment(
 	}
 
 	// Build main Trino container
-	trinoContainer, err := buildTrinoContainer(xtrinode, preset, "worker", configMapName, catalogs)
+	trinoContainer, err := buildTrinoContainer(xtrinode, shape, "worker", configMapName, catalogs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build Trino container: %w", err)
 	}
@@ -198,66 +172,22 @@ func buildWorkerDeployment(
 		}
 	}
 
-	// Add node selector, affinity, tolerations, topology spread constraints
+	applySchedulingShape(&deployment.Spec.Template.Spec, shape.Placement.Worker)
+	if len(deployment.Spec.Template.Spec.TopologySpreadConstraints) == 0 {
+		if xtrinode.Spec.HelmChartConfig != nil &&
+			xtrinode.Spec.HelmChartConfig.Worker != nil &&
+			len(xtrinode.Spec.HelmChartConfig.Worker.TopologySpreadConstraints) > 0 {
+			deployment.Spec.Template.Spec.TopologySpreadConstraints = xtrinode.Spec.HelmChartConfig.Worker.TopologySpreadConstraints
+		}
+	}
+
 	if xtrinode.Spec.GetValuesOverlayMap() != nil {
 		if worker, ok := xtrinode.Spec.GetValuesOverlayMap()["worker"].(map[string]interface{}); ok {
-			if nodeSelector, ok := worker["nodeSelector"].(map[string]interface{}); ok {
-				deployment.Spec.Template.Spec.NodeSelector = convertToStringMap(nodeSelector)
-			}
-			// Add affinity from valuesOverlay
-			if affinityMap, ok := worker["affinity"].(map[string]interface{}); ok {
-				affinity, err := buildAffinityFromMap(affinityMap)
-				if err != nil {
-					return nil, fmt.Errorf("failed to build worker affinity: %w", err)
-				}
-				if affinity != nil {
-					deployment.Spec.Template.Spec.Affinity = affinity
-				}
-			}
-			// Add tolerations from valuesOverlay
-			if tolerationsList, ok := worker["tolerations"].([]interface{}); ok {
-				tolerations, err := buildTolerationsFromList(tolerationsList)
-				if err != nil {
-					return nil, fmt.Errorf("failed to build worker tolerations: %w", err)
-				}
-				deployment.Spec.Template.Spec.Tolerations = tolerations
-			}
 			// Add priority class name if specified
 			if priorityClassName, ok := worker["priorityClassName"].(string); ok && priorityClassName != "" {
 				deployment.Spec.Template.Spec.PriorityClassName = priorityClassName
 			}
-			// Add topology spread constraints from valuesOverlay
-			if topologySpreadConstraints, ok := worker["topologySpreadConstraints"].([]interface{}); ok {
-				constraints := []corev1.TopologySpreadConstraint{}
-				for _, constraint := range topologySpreadConstraints {
-					if constraintMap, ok := constraint.(map[string]interface{}); ok {
-						// Convert map to TopologySpreadConstraint using YAML
-						yamlBytes, err := yaml.Marshal(constraintMap)
-						if err == nil {
-							var tsc corev1.TopologySpreadConstraint
-							if err := yaml.Unmarshal(yamlBytes, &tsc); err == nil {
-								constraints = append(constraints, tsc)
-							}
-						}
-					}
-				}
-				if len(constraints) > 0 {
-					deployment.Spec.Template.Spec.TopologySpreadConstraints = constraints
-				}
-			}
-			// Add topology spread constraints from HelmChartConfig (if not already set)
-			if len(deployment.Spec.Template.Spec.TopologySpreadConstraints) == 0 &&
-				xtrinode.Spec.HelmChartConfig != nil &&
-				xtrinode.Spec.HelmChartConfig.Worker != nil &&
-				len(xtrinode.Spec.HelmChartConfig.Worker.TopologySpreadConstraints) > 0 {
-				deployment.Spec.Template.Spec.TopologySpreadConstraints = xtrinode.Spec.HelmChartConfig.Worker.TopologySpreadConstraints
-			}
 		}
-	} else if xtrinode.Spec.HelmChartConfig != nil &&
-		xtrinode.Spec.HelmChartConfig.Worker != nil &&
-		len(xtrinode.Spec.HelmChartConfig.Worker.TopologySpreadConstraints) > 0 {
-		// Use HelmChartConfig if valuesOverlay not set
-		deployment.Spec.Template.Spec.TopologySpreadConstraints = xtrinode.Spec.HelmChartConfig.Worker.TopologySpreadConstraints
 	}
 
 	// Apply rollout policy from CRD spec (rollout mechanics, not versioning)

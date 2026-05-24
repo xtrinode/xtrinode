@@ -101,17 +101,7 @@ func buildProbeFromMap(probeMap map[string]interface{}) (*corev1.Probe, error) {
 	return &probe, nil
 }
 
-func convertToStringMap(m map[string]interface{}) map[string]string {
-	result := make(map[string]string)
-	for k, v := range m {
-		if vStr, ok := v.(string); ok {
-			result[k] = vStr
-		}
-	}
-	return result
-}
-
-// buildResourceRequirements converts a Helm values resources map to corev1.ResourceRequirements
+// buildResourceRequirements converts sidecar resource settings to corev1.ResourceRequirements.
 func buildResourceRequirements(resourcesMap map[string]interface{}) (*corev1.ResourceRequirements, error) {
 	if len(resourcesMap) == 0 {
 		return nil, nil
@@ -160,42 +150,6 @@ func buildEnvFromSourceFromMap(envFromMap map[string]interface{}) (corev1.EnvFro
 		return corev1.EnvFromSource{}, fmt.Errorf("failed to unmarshal envFrom: %w", err)
 	}
 	return envFrom, nil
-}
-
-// buildAffinityFromMap converts a Helm values affinity map to corev1.Affinity
-func buildAffinityFromMap(affinityMap map[string]interface{}) (*corev1.Affinity, error) {
-	if len(affinityMap) == 0 {
-		return nil, nil
-	}
-
-	yamlBytes, err := yaml.Marshal(affinityMap)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal affinity map: %w", err)
-	}
-
-	var affinity corev1.Affinity
-	if err := yaml.Unmarshal(yamlBytes, &affinity); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal affinity: %w", err)
-	}
-	return &affinity, nil
-}
-
-// buildTolerationsFromList converts a Helm values tolerations list to []corev1.Toleration
-func buildTolerationsFromList(tolerationsList []interface{}) ([]corev1.Toleration, error) {
-	if len(tolerationsList) == 0 {
-		return nil, nil
-	}
-
-	yamlBytes, err := yaml.Marshal(tolerationsList)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal tolerations list: %w", err)
-	}
-
-	var tolerations []corev1.Toleration
-	if err := yaml.Unmarshal(yamlBytes, &tolerations); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal tolerations: %w", err)
-	}
-	return tolerations, nil
 }
 
 // buildSecurityContextFromMap converts a Helm values security context map to *corev1.SecurityContext

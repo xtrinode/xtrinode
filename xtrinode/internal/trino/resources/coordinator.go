@@ -10,29 +10,32 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/rollout"
-	"github.com/xtrinode/xtrinode/internal/sizing"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 )
 
 // BuildCoordinatorDeployment builds the coordinator Deployment with revision stamping
 func BuildCoordinatorDeployment(
 	xtrinode *analyticsv1.XTrinode,
-	preset *sizing.SizePreset,
 	configMapName string,
 	catalogs []string,
 	revision string,
 	rolloutHash string,
 	catalogSecretEnvVars []corev1.EnvVar,
 ) (*appsv1.Deployment, error) {
+	shape, err := runtimeshape.Resolve(xtrinode)
+	if err != nil {
+		return nil, err
+	}
 	podTemplateRevision := rolloutHash
 	if podTemplateRevision == "" {
 		podTemplateRevision = revision
 	}
-	return buildCoordinatorDeployment(xtrinode, preset, configMapName, catalogs, revision, podTemplateRevision, rolloutHash, catalogSecretEnvVars)
+	return buildCoordinatorDeployment(xtrinode, shape, configMapName, catalogs, revision, podTemplateRevision, rolloutHash, catalogSecretEnvVars)
 }
 
 func buildCoordinatorDeployment(
 	xtrinode *analyticsv1.XTrinode,
-	preset *sizing.SizePreset,
+	shape *runtimeshape.ResolvedRuntimeShape,
 	configMapName string,
 	catalogs []string,
 	resourceRevision string,
@@ -40,7 +43,7 @@ func buildCoordinatorDeployment(
 	rolloutHash string,
 	catalogSecretEnvVars []corev1.EnvVar,
 ) (*appsv1.Deployment, error) {
-	replicas := getCoordinatorReplicas(xtrinode)
+	replicas := int32(config.DefaultCoordinatorReplicas)
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -88,7 +91,7 @@ func buildCoordinatorDeployment(
 	}
 
 	// Build the main Trino container before any sidecars.
-	trinoContainer, err := buildTrinoContainer(xtrinode, preset, "coordinator", configMapName, catalogs)
+	trinoContainer, err := buildTrinoContainer(xtrinode, shape, "coordinator", configMapName, catalogs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build Trino container: %w", err)
 	}
@@ -133,32 +136,7 @@ func buildCoordinatorDeployment(
 		}
 	}
 
-	// Add node selector, affinity, tolerations from valuesOverlay
-	if xtrinode.Spec.GetValuesOverlayMap() != nil {
-		if coordinator, ok := xtrinode.Spec.GetValuesOverlayMap()["coordinator"].(map[string]interface{}); ok {
-			if nodeSelector, ok := coordinator["nodeSelector"].(map[string]interface{}); ok {
-				deployment.Spec.Template.Spec.NodeSelector = convertToStringMap(nodeSelector)
-			}
-			// Add affinity from valuesOverlay
-			if affinityMap, ok := coordinator["affinity"].(map[string]interface{}); ok {
-				affinity, err := buildAffinityFromMap(affinityMap)
-				if err != nil {
-					return nil, fmt.Errorf("failed to build affinity: %w", err)
-				}
-				if affinity != nil {
-					deployment.Spec.Template.Spec.Affinity = affinity
-				}
-			}
-			// Add tolerations from valuesOverlay
-			if tolerationsList, ok := coordinator["tolerations"].([]interface{}); ok {
-				tolerations, err := buildTolerationsFromList(tolerationsList)
-				if err != nil {
-					return nil, fmt.Errorf("failed to build tolerations: %w", err)
-				}
-				deployment.Spec.Template.Spec.Tolerations = tolerations
-			}
-		}
-	}
+	applySchedulingShape(&deployment.Spec.Template.Spec, shape.Placement.Coordinator)
 
 	// Add termination grace period from valuesOverlay
 	if xtrinode.Spec.GetValuesOverlayMap() != nil {
@@ -281,24 +259,4 @@ func buildCoordinatorDeployment(
 
 func coordinatorDeploymentName(xtrinode *analyticsv1.XTrinode) string {
 	return config.BuildCoordinatorServiceName(xtrinode.Name) + "-coordinator"
-}
-
-// getCoordinatorReplicas extracts coordinator replicas from valuesOverlay (0 or 1 only)
-func getCoordinatorReplicas(xtrinode *analyticsv1.XTrinode) int32 {
-	replicas := int32(config.DefaultCoordinatorReplicas)
-	if xtrinode.Spec.GetValuesOverlayMap() == nil {
-		return replicas
-	}
-
-	coordinator, ok := xtrinode.Spec.GetValuesOverlayMap()["coordinator"].(map[string]interface{})
-	if !ok {
-		return replicas
-	}
-
-	if replicasVal, ok := ParseInt32(coordinator["replicas"]); ok {
-		if replicasVal >= 0 && replicasVal <= 1 {
-			return replicasVal
-		}
-	}
-	return replicas
 }

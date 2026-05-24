@@ -176,6 +176,8 @@ TRIVY_SEVERITY ?= CRITICAL,HIGH
 TRIVY_FS_SARIF ?= trivy-fs-results.sarif
 TRIVY_IGNORE_FILE ?= .trivyignore.yaml
 TRIVY_IGNORE_ARGS := $(if $(wildcard $(TRIVY_IGNORE_FILE)),--ignorefile $(TRIVY_IGNORE_FILE),)
+TRIVY_K8S_VERSION ?= $(patsubst v%,%,$(KUBECTL_VERSION))
+TRIVY_HELM_KUBE_VERSION ?= $(TRIVY_K8S_VERSION)
 TRIVY_CONFIG_TARGETS ?= \
 	docker \
 	examples \
@@ -1421,7 +1423,8 @@ gcp-configure-kubectl: ## Configure kubectl for the Terraform-created GKE manage
 		echo "$$cmd"; \
 		eval "$$cmd"; \
 	else \
-		gcloud container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID); \
+		gcloud container clusters get-credentials $(GCP_CLUSTER_NAME) --region $(GCP_REGION) --project $(GCP_PROJECT_ID) || \
+			gcloud container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID); \
 	fi
 
 .PHONY: gcp-capg-workload-down
@@ -1735,11 +1738,24 @@ security-scan-config: ensure-trivy helm-template ## Run Trivy config scan and fa
 	@status=0; \
 	for target in $(TRIVY_CONFIG_TARGETS); do \
 		echo "Scanning $$target..."; \
+		output_file="$$(mktemp)"; \
 		trivy config --severity $(TRIVY_SEVERITY) --exit-code 1 \
 			$(TRIVY_IGNORE_ARGS) \
+			--k8s-version "$(TRIVY_K8S_VERSION)" \
+			--helm-kube-version "$(TRIVY_HELM_KUBE_VERSION)" \
 			--skip-files "$(DOCKERFILE).dockerignore" \
 			--skip-files "$(TF_DIR)/**/tfplan*" \
-			"$$target" || status=$$?; \
+			"$$target" > "$$output_file" 2>&1; \
+		trivy_status=$$?; \
+		cat "$$output_file"; \
+		if [ $$trivy_status -ne 0 ]; then \
+			status=$$trivy_status; \
+		fi; \
+		if grep -Eq 'Failed to render Chart files|Supported files for scanner\(s\) not found|Detected config files[[:space:]]+num=0' "$$output_file"; then \
+			echo "ERROR: Trivy config scan did not render or scan $$target completely"; \
+			status=1; \
+		fi; \
+		rm -f "$$output_file"; \
 	done; \
 	exit $$status
 	@echo "Config scan complete"

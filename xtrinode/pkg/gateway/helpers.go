@@ -317,29 +317,6 @@ func isDedicatedRoutingGroup(xtrinode *analyticsv1.XTrinode, routingGroup string
 	return routingGroup == defaultDedicatedRoutingGroup(xtrinode)
 }
 
-// mapSizeToCapacityUnits maps XTrinode size to normalized capacity units for load balancing.
-// Capacity units are used to calculate normalized load: effectiveLoad = (running + queued) / capacityUnits
-// This enables "small-first, spill to large" load balancing behavior.
-func mapSizeToCapacityUnits(size string) int {
-	switch size {
-	case "xs":
-		return 1
-	case "s":
-		return 2
-	case "m":
-		return 4
-	case "l":
-		return 8
-	case "xl":
-		return 16
-	case "xxl":
-		return 32
-	default:
-		// Default to medium capacity if unknown
-		return 4
-	}
-}
-
 // buildHostname builds the hostname for a XTrinode based on routing configuration.
 //
 // Hostname generation logic:
