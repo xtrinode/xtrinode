@@ -43,11 +43,11 @@ func TestNamespaceGuardrailsEnvtest_ConcurrentPeersAndDeletionRecalculateSharedR
 	require.NoError(t, cli.Create(ctx, second))
 
 	reconcileConcurrently(t, ctx, reconciler, namespace, first.Name, second.Name)
-	requireNamespaceQuotaEventually(t, ctx, cli, namespace, "8", "32Gi")
+	requireNamespaceQuotaEventually(t, ctx, cli, namespace, "16", "64Gi")
 	requireNamespaceLimitRangeEventually(t, ctx, cli, namespace, "2", "8Gi")
 
 	deleteThroughFinalizer(t, ctx, cli, reconciler, namespace, first.Name)
-	requireNamespaceQuotaEventually(t, ctx, cli, namespace, "4", "16Gi")
+	requireNamespaceQuotaEventually(t, ctx, cli, namespace, "8", "32Gi")
 	requireNamespaceLimitRangeEventually(t, ctx, cli, namespace, "2", "8Gi")
 
 	deleteThroughFinalizer(t, ctx, cli, reconciler, namespace, second.Name)

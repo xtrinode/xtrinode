@@ -17,8 +17,9 @@ GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Go configuration
-GO ?= $(shell command -v go 2>/dev/null || command -v /usr/local/go/bin/go 2>/dev/null || echo go)
-GO_VERSION ?= $(shell awk '/^go / {print $$2; exit}' $(OPERATOR_DIR)/go.mod 2>/dev/null || echo 1.26.3)
+GO ?= go
+GOFMT ?= gofmt
+GO_VERSION ?= 1.26.3
 GOOS ?= linux
 GOARCH ?= amd64
 CGO_ENABLED ?= 0
@@ -68,23 +69,24 @@ GATEWAY_BIN ?= $(BIN_DIR)/gateway
 API_SERVER_BIN ?= $(BIN_DIR)/api-server
 
 # Local k3d, Tilt, and Robot configuration
-K3D ?= k3d
+LOCAL_TOOL_BIN ?= bin
+K3D ?= $(LOCAL_TOOL_BIN)/k3d
 K3D_CLUSTER_NAME ?= xtrinode-dev
 K3D_REGISTRY_NAME ?= xtrinode-registry
 K3D_REGISTRY_PORT ?= 5001
 K3D_AGENTS ?= 1
 K3D_K3S_IMAGE ?= rancher/k3s:v1.32.3-k3s1
-TILT ?= tilt
+TILT ?= $(LOCAL_TOOL_BIN)/tilt
 TILTFILE ?= tilt/Tiltfile
 TILT_IMAGE_TAG ?= tilt
 TILT_TRINO_IMAGE_TAG ?= $(TRINO_IMAGE_TAG)
-TILT_ARGS ?= -- --image_tag=$(TILT_IMAGE_TAG) --trino_tag=$(TILT_TRINO_IMAGE_TAG) --uv=$(UV)
+TILT_ARGS ?= -- --image_tag=$(TILT_IMAGE_TAG) --trino_tag=$(TILT_TRINO_IMAGE_TAG) --uv=$(UV) --helm=$(HELM) --k3d=$(K3D) --kubectl=$(KUBECTL) --docker=$(DOCKER)
 LOCAL_IMAGE_TAG ?= dev
 LOCAL_COMPONENTS ?= operator api-server gateway
 LOCAL_REGISTRY_HOST ?= localhost:$(K3D_REGISTRY_PORT)
 LOCAL_REGISTRY_CLUSTER ?= $(K3D_REGISTRY_NAME):5000
 ROBOT ?= robot
-UV ?= uv
+UV ?= $(LOCAL_TOOL_BIN)/uv
 ROBOT_PROJECT ?= tilt/e2e
 ROBOT_OUTPUT_DIR ?= tilt/e2e/results
 UV_CACHE_DIR ?= /tmp/xtrinode-uv-cache
@@ -147,31 +149,56 @@ CAPG_WORKLOAD_CLUSTER_NAME ?= xtrinode-capg-workload
 CAPG_WORKLOAD_NAMESPACE ?= xtrinode-capg-real
 CAPG_WORKLOAD_KUBECONFIG ?= /tmp/$(CAPG_WORKLOAD_CLUSTER_NAME).kubeconfig
 CAPG_WAIT_TIMEOUT ?= 30m
+CAPG_VERSION ?= v1.11.1
 CONFIRM_DESTROY ?=
 FORCE_NAMESPACE_FINALIZERS ?= false
 TEARDOWN_FORCE_NAMESPACE_FINALIZERS ?= true
 TEARDOWN_NAMESPACE_WAIT_TIMEOUT ?= 45s
 
 # Linting configuration
-GOLANGCI_LINT_VERSION ?= $(shell version=$$(awk '$$1 == "github.com/golangci/golangci-lint/v2" {print $$2; exit}' tools/go.mod 2>/dev/null); printf '%s' "$${version:-v2.12.1}")
-GOLANGCI_LINT_BIN ?= $(shell go env GOPATH 2>/dev/null)/bin/golangci-lint
-CONTROLLER_GEN_VERSION ?= $(shell version=$$(awk '$$1 == "sigs.k8s.io/controller-tools" {print $$2; exit}' tools/go.mod 2>/dev/null); printf '%s' "$${version:-v0.20.1}")
+GO_TOOL_BIN ?= $(HOME)/go/bin
+GOLANGCI_LINT ?= $(GO_TOOL_BIN)/golangci-lint
+GOLANGCI_LINT_VERSION ?= v2.12.2
+CONTROLLER_GEN ?= $(GO_TOOL_BIN)/controller-gen
+CONTROLLER_GEN_VERSION ?= v0.21.0
+SETUP_ENVTEST ?= $(GO_TOOL_BIN)/setup-envtest
 SETUP_ENVTEST_VERSION ?= v0.24.0
 ENVTEST_K8S_VERSION ?= 1.32.0
-SETUP_ENVTEST_BIN ?= $(shell go env GOPATH 2>/dev/null)/bin/setup-envtest
 LINT_TIMEOUT ?= 10m
+RUBY ?= ruby
+RUBY_VERSION ?= 4.0.5
 
-# CI tool versions
+# Tool versions used by CI and local development docs
+HELM ?= helm
 HELM_VERSION ?= v3.20.0
 NODE_VERSION ?= 22
-TERRAFORM_VERSION ?= 1.9.0
+NPM ?= npm
+NPM_VERSION ?= 10.9.7
+MARKDOWNLINT_CLI_VERSION ?= 0.48.0
+TERRAFORM ?= terraform
+TERRAFORM_VERSION ?= 1.15.4
+TFLINT ?= tflint
+TFLINT_VERSION ?= 0.60.0
 K3D_VERSION ?= v5.8.3
+KUBECTL ?= kubectl
 KUBECTL_VERSION ?= v1.32.3
-UV_VERSION ?= 0.9.17
-MARKDOWNLINT_CLI_VERSION ?= $(shell version=$$(sed -n 's/.*"markdownlint-cli": "[^0-9v]*\([^"]*\)".*/\1/p' package.json 2>/dev/null | head -n 1); printf '%s' "$${version:-0.47.0}")
-MARKDOWNLINT_DOCKER_IMAGE ?= node:22-alpine
+TILT_VERSION ?= v0.37.3
+UV_VERSION ?= 0.11.13
+CLUSTERCTL ?= $(LOCAL_TOOL_BIN)/clusterctl
+CLUSTERCTL_VERSION ?= v1.11.3
+DOCKER ?= docker
+AWS ?= aws
+AZ ?= az
+GCLOUD ?= gcloud
+CURL ?= curl
+OPENSSL ?= openssl
+MAKE_CMD ?= make
+GODOC ?= $(GO_TOOL_BIN)/godoc
+GODOC_VERSION ?= v0.1.0-deprecated
+OPEN ?= xdg-open
 
 # Security tooling
+TRIVY ?= trivy
 TRIVY_SEVERITY ?= CRITICAL,HIGH
 TRIVY_FS_SARIF ?= trivy-fs-results.sarif
 TRIVY_IGNORE_FILE ?= .trivyignore.yaml
@@ -198,12 +225,12 @@ TEST_FLAGS ?= -v -race -timeout $(TEST_TIMEOUT) -failfast -count=1
 
 .PHONY: help
 help: ## Display this help message
-	@echo "XTrinode Operator Makefile"
+	@printf "\033[35m%s\033[0m\n" "XTrinode Operator Makefile"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Available targets:"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %-25s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "; esc = sprintf("%c", 27); purple = esc "[35m"; gray = esc "[90m"; reset = esc "[0m"} /^[a-zA-Z0-9_-]+:.*?## / {printf "  %s%-31s%s %s%s%s\n", purple, $$1, reset, gray, $$2, reset}' $(MAKEFILE_LIST)
 	@echo ""
 	@echo "Variables:"
 	@echo "  REGISTRY             Docker registry/repository prefix (default: ghcr.io/xtrinode)"
@@ -214,10 +241,10 @@ help: ## Display this help message
 	@echo "  IMAGE_VERSION        Component image version from Helm appVersion (default: umbrella appVersion)"
 	@echo "  IMAGE_TAG            Docker image tag (default: appVersion on exact release tags, otherwise \$${VERSION})"
 	@echo "  CLOUD_IMAGE_TAG      Cloud publish/deploy tag (default: appVersion when IMAGE_TAG is dev)"
-	@echo "  GO_VERSION           Go image version (default: go.mod go directive)"
+	@echo "  GO_VERSION           Go toolchain/image version (default: 1.26.3)"
 	@echo "  ALPINE_VERSION       Alpine image version (default: 3.23)"
 	@echo "  DOCKER_PLATFORMS     buildx platforms (default: linux/amd64)"
-	@echo "  NODE_VERSION         Required Node.js major version for markdown tooling (default: 22)"
+	@echo "  NODE_VERSION         Minimum Node.js major version for local npm tooling (default: 22)"
 	@echo "  OPERATOR_NAMESPACE   Operator namespace (default: xtrinode-system)"
 	@echo "  GATEWAY_NAMESPACE    Gateway namespace (default: xtrinode-gateway)"
 	@echo "  API_SERVER_NAMESPACE API Server namespace (default: xtrinode-system)"
@@ -226,9 +253,10 @@ help: ## Display this help message
 	@echo "  TF_VAR_FILE          Terraform variables file (default: terraform.tfvars)"
 	@echo "  TERRAFORM_CLOUDS     Terraform clouds used by generic/CI checks (default: gcp)"
 	@echo ""
+	@echo "Tooling: make tool-versions and docs/TOOLING.md show required local versions."
 	@echo "Deployment: make deploy-gcp | make deploy-aws | make deploy-azure | make deploy"
-	@echo "Docker release: git tag v0.1.2 && make docker-release"
-	@echo "Release GCP: make release-operator-gcp VERSION=0.1.2  (build, push, rollout)"
+	@echo "Docker release: git tag v0.1.0 && make docker-release"
+	@echo "Release GCP: make release-operator-gcp VERSION=0.1.0  (build, push, rollout)"
 	@echo "See docs/DEPLOYMENT.md for full flow."
 
 # =============================================================================
@@ -240,7 +268,7 @@ build-operator: manifests ## Build the operator binary
 	@echo "Building operator binary..."
 	@mkdir -p "$(BIN_DIR)"
 	cd $(OPERATOR_DIR) && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)" \
+		$(GO) build -ldflags "-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)" \
 		-o "$(CURDIR)/$(OPERATOR_BIN)" ./cmd/operator
 	@echo "Binary built: $(OPERATOR_BIN)"
 
@@ -249,7 +277,7 @@ build-gateway: ## Build the gateway binary
 	@echo "Building gateway binary..."
 	@mkdir -p "$(BIN_DIR)"
 	cd $(OPERATOR_DIR) && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)" \
+		$(GO) build -ldflags "-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)" \
 		-o "$(CURDIR)/$(GATEWAY_BIN)" ./cmd/gateway
 	@echo "Binary built: $(GATEWAY_BIN)"
 
@@ -258,7 +286,7 @@ build-api-server: ## Build the API server binary
 	@echo "Building API server binary..."
 	@mkdir -p "$(BIN_DIR)"
 	cd $(OPERATOR_DIR) && CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)" \
+		$(GO) build -ldflags "-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)" \
 		-o "$(CURDIR)/$(API_SERVER_BIN)" ./cmd/api-server
 	@echo "Binary built: $(API_SERVER_BIN)"
 
@@ -268,17 +296,17 @@ build-all: build-operator build-gateway build-api-server ## Build all binaries
 .PHONY: run-gateway
 run-gateway: ## Run the gateway locally (requires kubeconfig)
 	@echo "Running gateway locally..."
-	cd $(OPERATOR_DIR) && go run ./cmd/gateway
+	cd $(OPERATOR_DIR) && $(GO) run ./cmd/gateway
 
 .PHONY: run-api-server
 run-api-server: ## Run the API server locally (requires kubeconfig)
 	@echo "Running API server locally..."
-	cd $(OPERATOR_DIR) && go run ./cmd/api-server
+	cd $(OPERATOR_DIR) && $(GO) run ./cmd/api-server
 
 .PHONY: run-operator
 run-operator: ## Run the operator locally (requires kubeconfig)
 	@echo "Running operator locally..."
-	cd $(OPERATOR_DIR) && go run ./cmd/operator
+	cd $(OPERATOR_DIR) && $(GO) run ./cmd/operator
 
 .PHONY: clean
 clean: ## Clean build artifacts
@@ -286,7 +314,7 @@ clean: ## Clean build artifacts
 	rm -f "$(OPERATOR_BIN)" "$(GATEWAY_BIN)" "$(API_SERVER_BIN)"
 	rm -f $(OPERATOR_DIR)/coverage.out $(OPERATOR_DIR)/coverage.html
 	rm -rf $(OPERATOR_DIR)/dist/
-	find . -type d -name ".terraform" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".terraform" -prune -exec rm -rf {} +
 	@echo "Terraform state and lock files are left intact."
 	@echo "Clean complete"
 
@@ -297,7 +325,7 @@ clean: ## Clean build artifacts
 .PHONY: gofmt
 gofmt: ## Check Go code formatting without modifying
 	@echo "Checking Go code formatting..."
-	@cd $(OPERATOR_DIR) && gofmt -d -s . | tee /tmp/gofmt.diff || true
+	@cd $(OPERATOR_DIR) && $(GOFMT) -d -s . > /tmp/gofmt.diff
 	@if [ -s /tmp/gofmt.diff ]; then \
 		echo "ERROR: Code is not formatted. Run 'make gofmt-fix' to fix."; \
 		cat /tmp/gofmt.diff; \
@@ -310,79 +338,57 @@ gofmt: ## Check Go code formatting without modifying
 .PHONY: gofmt-fix
 gofmt-fix: ## Fix Go code formatting
 	@echo "Fixing Go code formatting..."
-	cd $(OPERATOR_DIR) && gofmt -s -w .
+	cd $(OPERATOR_DIR) && $(GOFMT) -s -w .
 	@echo "Go formatting fixed"
 
 .PHONY: govet
 govet: ## Run go vet
 	@echo "Running go vet..."
-	cd $(OPERATOR_DIR) && go vet ./...
+	cd $(OPERATOR_DIR) && $(GO) vet ./...
 	@echo "Vet complete"
 
-.PHONY: ensure-golangci-lint
-ensure-golangci-lint:
-	@expected="$(GOLANGCI_LINT_VERSION)"; expected="$${expected#v}"; \
-	actual=""; \
-	if [ -x "$(GOLANGCI_LINT_BIN)" ]; then \
-		actual="$$($(GOLANGCI_LINT_BIN) version 2>/dev/null | awk '/version/ {print $$4; exit}')"; \
-	fi; \
-	if [ "$$actual" != "$$expected" ]; then \
-		echo "Installing golangci-lint..."; \
-		curl --proto '=https' --tlsv1.2 -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/$(GOLANGCI_LINT_VERSION)/install.sh | sh -s -- -b $$(go env GOPATH)/bin $(GOLANGCI_LINT_VERSION); \
-	fi
-
-.PHONY: ensure-controller-gen
-ensure-controller-gen:
-	@actual=""; \
-	if [ -x "$$(go env GOPATH)/bin/controller-gen" ]; then \
-		actual="$$($$(go env GOPATH)/bin/controller-gen --version 2>/dev/null | awk '{print $$2; exit}')"; \
-	fi; \
-	if [ "$$actual" != "$(CONTROLLER_GEN_VERSION)" ]; then \
-		echo "Installing controller-gen..."; \
-		cd $(OPERATOR_DIR) && go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION); \
-	fi
-
-.PHONY: ensure-trivy
-ensure-trivy:
-	@if ! command -v trivy >/dev/null 2>&1; then \
-		echo "Error: trivy not found. Install from https://trivy.dev/latest/getting-started/installation/"; \
-		exit 1; \
-	fi
-
 .PHONY: lint
-lint: lint-go lint-helm lint-markdown lint-terraform ## Run all linters
+lint: lint-go lint-shell lint-yaml lint-helm lint-markdown lint-terraform ## Run all linters
 
 .PHONY: lint-go
-lint-go: ensure-golangci-lint ## Run Go linter (golangci-lint)
+lint-go: ## Run Go linter (golangci-lint)
 	@echo "Running golangci-lint..."
-	cd $(OPERATOR_DIR) && $(GOLANGCI_LINT_BIN) run --timeout $(LINT_TIMEOUT) ./...
+	cd $(OPERATOR_DIR) && $(GOLANGCI_LINT) run --timeout $(LINT_TIMEOUT) ./...
 	@echo "Go linting complete"
 
 .PHONY: lint-go-fix
-lint-go-fix: ensure-golangci-lint ## Run golangci-lint with auto-fix
+lint-go-fix: ## Run golangci-lint with auto-fix
 	@echo "Running golangci-lint with auto-fix..."
-	cd $(OPERATOR_DIR) && $(GOLANGCI_LINT_BIN) run --timeout $(LINT_TIMEOUT) --fix ./...
+	cd $(OPERATOR_DIR) && $(GOLANGCI_LINT) run --timeout $(LINT_TIMEOUT) --fix ./...
 	@echo "Go linting fixes applied"
 
 .PHONY: lint-go-all
 lint-go-all: gofmt govet lint-go ## Run all Go quality checks (format, vet, lint)
 	@echo "All linting checks complete"
 
+.PHONY: lint-shell
+lint-shell: ## Check Bash script syntax
+	@echo "Checking Bash script syntax..."
+	@git ls-files -z '*.sh' | xargs -0 -r bash -n
+	@echo "Bash script syntax check complete"
+
+.PHONY: lint-yaml
+lint-yaml: ## Parse tracked YAML files outside Helm template directories
+	@echo "Checking YAML syntax..."
+	@git ls-files -z '*.yaml' '*.yml' | xargs -0 -r $(RUBY) scripts/ci/lint-yaml.rb
+	@echo "YAML syntax check complete"
+
 .PHONY: lint-helm
 lint-helm: helm-deps ## Run Helm chart linter for configured charts
 	@echo "Running Helm lint for configured charts..."
-	@if ! command -v helm >/dev/null 2>&1; then \
-		echo "Error: helm not found. Install from https://helm.sh/docs/intro/install/"; \
-		exit 1; \
-	fi
 	@status=0; \
 	for chart in $(HELM_LINT_CHARTS); do \
 		name="$${chart%%=*}"; \
 		path="$${chart#*=}"; \
 		echo "Running Helm lint for $$name..."; \
-		helm lint "$$path" || status=$$?; \
+		$(HELM) lint "$$path" || status=$$?; \
 	done; \
-	exit $$status
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi
 	@echo "Testing Helm production guardrails..."
 	@scripts/test/helm-prod-guardrails.sh
 	@echo "Helm production guardrail tests complete"
@@ -397,33 +403,19 @@ test-helm-prod-guardrails: helm-deps ## Verify production Helm guardrails render
 .PHONY: lint-markdown
 lint-markdown: ## Run Markdown linter
 	@echo "Running Markdown lint..."
-	@if command -v markdownlint >/dev/null 2>&1 && command -v node >/dev/null 2>&1 && [ "$$(node -p 'Number(process.versions.node.split(".")[0])')" -eq "$(NODE_VERSION)" ]; then \
-		markdownlint '**/*.md' --ignore node_modules --ignore docs/internal; \
-	elif command -v npx >/dev/null 2>&1 && command -v node >/dev/null 2>&1 && [ "$$(node -p 'Number(process.versions.node.split(".")[0])')" -eq "$(NODE_VERSION)" ]; then \
-		npx --yes "markdownlint-cli@$(MARKDOWNLINT_CLI_VERSION)" '**/*.md' --ignore node_modules --ignore docs/internal; \
-	elif command -v docker >/dev/null 2>&1; then \
-		echo "Using Dockerized Node 22 markdownlint because local Node is $$(node --version 2>/dev/null || echo unavailable)"; \
-		docker run --rm -v "$(CURDIR)":/work:ro -w /work $(MARKDOWNLINT_DOCKER_IMAGE) sh -c "npm install -g markdownlint-cli@$(MARKDOWNLINT_CLI_VERSION) >/tmp/markdownlint-install.log && markdownlint '**/*.md' --ignore node_modules --ignore docs/internal"; \
-	else \
-		echo "ERROR: markdownlint requires Node.js $(NODE_VERSION) or Docker fallback."; \
-		exit 1; \
-	fi
+	@$(NPM) run --silent lint:markdown
 	@echo "Markdown linting complete"
 
 .PHONY: lint-terraform
 lint-terraform: ## Run Terraform linter for configured clouds (tflint)
 	@echo "Running Terraform lint for configured clouds: $(TERRAFORM_CLOUDS)"
-	@if ! command -v tflint >/dev/null 2>&1; then \
-		echo "Skipping tflint (not installed). Install from https://github.com/terraform-linters/tflint"; \
-	else \
-		status=0; \
-		for cloud in $(TERRAFORM_CLOUDS); do \
-			dir="$(TF_DIR)/$$cloud"; \
-			echo "Running tflint in $$dir..."; \
-			(cd "$$dir" && tflint --init && tflint) || status=$$?; \
-		done; \
-		exit $$status; \
-	fi
+	@status=0; \
+	for cloud in $(TERRAFORM_CLOUDS); do \
+		dir="$(TF_DIR)/$$cloud"; \
+		echo "Running tflint in $$dir..."; \
+		(cd "$$dir" && $(TFLINT) --init && $(TFLINT)) || status=$$?; \
+	done; \
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi
 	@echo "Terraform linting complete"
 
 .PHONY: lint-terraform-format
@@ -433,7 +425,7 @@ lint-terraform-format: ## Check Terraform formatting for configured clouds
 	for cloud in $(TERRAFORM_CLOUDS); do \
 		dir="$(TF_DIR)/$$cloud"; \
 		echo "Checking Terraform formatting in $$dir..."; \
-		(cd "$$dir" && terraform fmt -check -recursive) || status=$$?; \
+		(cd "$$dir" && $(TERRAFORM) fmt -check -recursive) || status=$$?; \
 	done; \
 	if [ "$$status" -ne 0 ]; then \
 		echo "Run 'make terraform-fmt' to fix formatting"; \
@@ -448,26 +440,26 @@ lint-terraform-format: ## Check Terraform formatting for configured clouds
 .PHONY: helm-repo-setup
 helm-repo-setup: ## Set up Helm repositories (Trino, KEDA, Prometheus)
 	@echo "Setting up Helm repositories..."
-	@helm repo add trino https://trinodb.github.io/charts 2>/dev/null || true
-	@helm repo add kedacore https://kedacore.github.io/charts 2>/dev/null || true
-	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
-	@helm repo update trino kedacore prometheus-community 2>/dev/null || true
+	@$(HELM) repo add trino https://trinodb.github.io/charts --force-update
+	@$(HELM) repo add kedacore https://kedacore.github.io/charts --force-update
+	@$(HELM) repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+	@$(HELM) repo update trino kedacore prometheus-community
 	@echo "Helm repository setup complete"
 
 .PHONY: helm-deps
 helm-deps: helm-repo-setup ## Build Helm chart dependencies from checked-in lock files
 	@echo "Building Helm dependencies..."
-	@helm dependency build $(HELM_CHART_PATH)
-	@helm dependency build $(UMBRELLA_HELM_CHART_PATH)
-	@helm dependency build $(OBSERVABILITY_HELM_CHART_PATH)
+	@$(HELM) dependency build $(HELM_CHART_PATH)
+	@$(HELM) dependency build $(UMBRELLA_HELM_CHART_PATH)
+	@$(HELM) dependency build $(OBSERVABILITY_HELM_CHART_PATH)
 	@echo "Helm dependencies built"
 
 .PHONY: helm-deps-update
 helm-deps-update: helm-repo-setup ## Update Helm chart dependencies and lock files
 	@echo "Updating Helm dependencies..."
-	@helm dependency update $(HELM_CHART_PATH)
-	@helm dependency update $(UMBRELLA_HELM_CHART_PATH)
-	@helm dependency update $(OBSERVABILITY_HELM_CHART_PATH)
+	@$(HELM) dependency update $(HELM_CHART_PATH)
+	@$(HELM) dependency update $(UMBRELLA_HELM_CHART_PATH)
+	@$(HELM) dependency update $(OBSERVABILITY_HELM_CHART_PATH)
 	@echo "Helm dependencies updated"
 
 .PHONY: helm-template
@@ -478,9 +470,9 @@ helm-template: helm-deps ## Render Helm charts to validate dependencies and temp
 		name="$${chart%%=*}"; \
 		path="$${chart#*=}"; \
 		echo "Rendering Helm chart $$name..."; \
-		helm template "$$name" "$$path" >/dev/null || status=$$?; \
+		$(HELM) template "$$name" "$$path" >/dev/null || status=$$?; \
 	done; \
-	exit $$status
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi
 	@echo "Helm rendering complete"
 
 # =============================================================================
@@ -501,20 +493,20 @@ WEBHOOK_ENABLED ?= true
 .PHONY: install-keda
 install-keda: helm-repo-setup ## Install KEDA (required for XTrinode worker autoscaling)
 	@echo "Installing KEDA..."
-	@helm upgrade --install keda kedacore/keda -n $(KEDA_NAMESPACE) --create-namespace
+	@$(HELM) upgrade --install keda kedacore/keda -n $(KEDA_NAMESPACE) --create-namespace
 	@echo "KEDA installed in namespace $(KEDA_NAMESPACE)"
 
 .PHONY: uninstall-keda
 uninstall-keda: ## Uninstall KEDA
 	@echo "Uninstalling KEDA..."
-	@helm uninstall keda -n $(KEDA_NAMESPACE) 2>/dev/null || true
+	@$(HELM) uninstall keda -n $(KEDA_NAMESPACE) --ignore-not-found
 	@echo "KEDA uninstalled"
 
 .PHONY: install-observability
 install-observability: helm-repo-setup ## Install XTrinode observability chart (Prometheus + Vector)
 	@echo "Installing XTrinode observability stack..."
-	helm dependency update helm/xtrinode-observability
-	helm upgrade --install $(OBSERVABILITY_RELEASE) helm/xtrinode-observability \
+	$(HELM) dependency update helm/xtrinode-observability
+	$(HELM) upgrade --install $(OBSERVABILITY_RELEASE) helm/xtrinode-observability \
 		-n $(OBSERVABILITY_NAMESPACE) --create-namespace \
 		--set prometheus-stack.enabled=$(PROMETHEUS_ENABLED) \
 		--set prometheus-stack.defaultRules.create=false \
@@ -544,41 +536,17 @@ install-observability: helm-repo-setup ## Install XTrinode observability chart (
 .PHONY: uninstall-observability
 uninstall-observability: ## Uninstall XTrinode observability chart
 	@echo "Uninstalling XTrinode observability stack..."
-	@helm uninstall $(OBSERVABILITY_RELEASE) -n $(OBSERVABILITY_NAMESPACE) 2>/dev/null || true
+	@$(HELM) uninstall $(OBSERVABILITY_RELEASE) -n $(OBSERVABILITY_NAMESPACE) --ignore-not-found
 	@echo "Observability stack uninstalled"
 
 # =============================================================================
 # Local k3d + Tilt Development
 # =============================================================================
 
-.PHONY: ensure-k3d
-ensure-k3d: ## Check that k3d is installed or available at K3D=/path/to/k3d
-	@if command -v "$(K3D)" >/dev/null 2>&1; then \
-		"$(K3D)" version; \
-	elif [ -x "$(K3D)" ]; then \
-		"$(K3D)" version; \
-	else \
-		echo "ERROR: k3d not found."; \
-		echo "Install k3d with your package manager, or set K3D=/path/to/k3d."; \
-		echo "Example: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; \
-		exit 1; \
-	fi
-
-.PHONY: ensure-tilt
-ensure-tilt: ## Check that Tilt is installed or available at TILT=/path/to/tilt
-	@if command -v "$(TILT)" >/dev/null 2>&1; then \
-		"$(TILT)" version; \
-	elif [ -x "$(TILT)" ]; then \
-		"$(TILT)" version; \
-	else \
-		echo "ERROR: Tilt not found."; \
-		echo "Install Tilt from https://docs.tilt.dev/install.html, or set TILT=/path/to/tilt."; \
-		exit 1; \
-	fi
-
 .PHONY: k3d-up
-k3d-up: ensure-k3d ## Create the local k3d cluster and registry for XTrinode development
+k3d-up: ## Create the local k3d cluster and registry for XTrinode development
 	K3D="$(K3D)" \
+	KUBECTL="$(KUBECTL)" \
 	K3D_CLUSTER_NAME="$(K3D_CLUSTER_NAME)" \
 	K3D_REGISTRY_NAME="$(K3D_REGISTRY_NAME)" \
 	K3D_REGISTRY_PORT="$(K3D_REGISTRY_PORT)" \
@@ -589,6 +557,7 @@ k3d-up: ensure-k3d ## Create the local k3d cluster and registry for XTrinode dev
 .PHONY: k3d-down
 k3d-down: ## Delete the local k3d cluster and registry
 	K3D="$(K3D)" \
+	KUBECTL="$(KUBECTL)" \
 	K3D_CLUSTER_NAME="$(K3D_CLUSTER_NAME)" \
 	K3D_REGISTRY_NAME="$(K3D_REGISTRY_NAME)" \
 	tilt/scripts/k3d-down.sh
@@ -599,6 +568,7 @@ local-images: ## Build and push local dev images to the k3d registry
 	LOCAL_COMPONENTS="$(LOCAL_COMPONENTS)" \
 	K3D_REGISTRY_PORT="$(K3D_REGISTRY_PORT)" \
 	LOCAL_REGISTRY_HOST="$(LOCAL_REGISTRY_HOST)" \
+	DOCKER="$(DOCKER)" \
 	GO_VERSION="$(GO_VERSION)" \
 	ALPINE_VERSION="$(ALPINE_VERSION)" \
 	tilt/scripts/build-push-local-images.sh
@@ -606,6 +576,7 @@ local-images: ## Build and push local dev images to the k3d registry
 .PHONY: preload-local-images
 preload-local-images: k3d-up ## Pull and import third-party local e2e images into k3d nodes
 	K3D="$(K3D)" \
+	DOCKER="$(DOCKER)" \
 	K3D_CLUSTER_NAME="$(K3D_CLUSTER_NAME)" \
 	TRINO_IMAGE_REPOSITORY="$(TRINO_IMAGE_REPOSITORY)" \
 	TRINO_IMAGE_TAG="$(TRINO_IMAGE_TAG)" \
@@ -615,13 +586,15 @@ preload-local-images: k3d-up ## Pull and import third-party local e2e images int
 	tilt/scripts/preload-local-images.sh
 
 .PHONY: deploy-local-k3d
-deploy-local-k3d: ## Deploy operator, API server, gateway, Redis, and KEDA into local k3d
+deploy-local-k3d: helm-deps ## Deploy operator, API server, gateway, Redis, and KEDA into local k3d
 	LOCAL_IMAGE_TAG="$(LOCAL_IMAGE_TAG)" \
 	K3D_REGISTRY_NAME="$(K3D_REGISTRY_NAME)" \
 	LOCAL_REGISTRY_CLUSTER="$(LOCAL_REGISTRY_CLUSTER)" \
 	OPERATOR_NAMESPACE="$(OPERATOR_NAMESPACE)" \
 	API_SERVER_NAMESPACE="$(API_SERVER_NAMESPACE)" \
 	GATEWAY_NAMESPACE="$(GATEWAY_NAMESPACE)" \
+	HELM="$(HELM)" \
+	KUBECTL="$(KUBECTL)" \
 	tilt/scripts/deploy-local-stack.sh
 
 .PHONY: local-stack-up
@@ -640,15 +613,15 @@ dev-up: local-stack-up ## Alias for local-stack-up
 dev-down: local-stack-down ## Alias for local-stack-down
 
 .PHONY: tilt-up
-tilt-up: ensure-tilt preload-local-images ## Start Tilt against the local k3d cluster
+tilt-up: preload-local-images ## Start Tilt against the local k3d cluster
 	LOCAL_PRELOAD_IMAGES_ENABLED=false "$(TILT)" up -f "$(TILTFILE)" $(TILT_ARGS)
 
 .PHONY: tilt-ci
-tilt-ci: ensure-tilt preload-local-images ## Run Tilt headlessly until all auto-init resources are healthy
+tilt-ci: preload-local-images ## Run Tilt headlessly until all auto-init resources are healthy
 	LOCAL_PRELOAD_IMAGES_ENABLED=false "$(TILT)" ci -f "$(TILTFILE)" $(TILT_ARGS)
 
 .PHONY: tilt-down
-tilt-down: ensure-tilt ## Delete Tilt-managed resources from the current k3d context
+tilt-down: ## Delete Tilt-managed resources from the current k3d context
 	"$(TILT)" down -f "$(TILTFILE)"
 
 .PHONY: tilt-clean
@@ -661,10 +634,10 @@ tilt-clean: tilt-down k3d-down ## Delete Tilt-managed resources, then delete the
 .PHONY: test
 test: ## Run unit tests (strict mode: failfast, timeout, no retries)
 	@echo "Running unit tests with strict policy..."
-	cd $(OPERATOR_DIR) && go test $(TEST_FLAGS) -coverprofile=coverage.out -covermode=atomic \
+	cd $(OPERATOR_DIR) && $(GO) test $(TEST_FLAGS) -coverprofile=coverage.out -covermode=atomic \
 		./api/v1 ./controllers ./pkg/api-server ./pkg/gateway ./pkg/gateway/auth
 	@echo "Checking test coverage threshold..."
-	@cd $(OPERATOR_DIR) && coverage=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	@cd $(OPERATOR_DIR) && coverage=$$($(GO) tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 		echo "Current coverage: $$coverage%"; \
 		if [ -n "$$coverage" ] && [ -n "$(COVERAGE_THRESHOLD)" ]; then \
 			if ! awk -v coverage="$$coverage" -v threshold="$(COVERAGE_THRESHOLD)" 'BEGIN { exit (coverage + 0 >= threshold + 0) ? 0 : 1 }'; then \
@@ -677,13 +650,13 @@ test: ## Run unit tests (strict mode: failfast, timeout, no retries)
 .PHONY: test-coverage
 test-coverage: ## Run tests and generate coverage report (strict mode)
 	@echo "Running tests with coverage (strict mode)..."
-	cd $(OPERATOR_DIR) && go test $(TEST_FLAGS) -coverprofile=coverage.out -covermode=atomic ./...
+	cd $(OPERATOR_DIR) && $(GO) test $(TEST_FLAGS) -coverprofile=coverage.out -covermode=atomic ./...
 	@echo ""
 	@echo "=== Coverage Summary ==="
-	cd $(OPERATOR_DIR) && go tool cover -func=coverage.out | grep -E "(^github.com|^total)" | \
+	cd $(OPERATOR_DIR) && $(GO) tool cover -func=coverage.out | grep -E "(^github.com|^total)" | \
 		awk '{printf "%-60s %6s\n", $$1, $$3}'
 	@echo ""
-	@cd $(OPERATOR_DIR) && coverage=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	@cd $(OPERATOR_DIR) && coverage=$$($(GO) tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 	echo "Total Coverage: $$coverage%"; \
 	if [ -n "$$coverage" ] && [ -n "$(COVERAGE_THRESHOLD)" ]; then \
 		if ! awk -v coverage="$$coverage" -v threshold="$(COVERAGE_THRESHOLD)" 'BEGIN { exit (coverage + 0 >= threshold + 0) ? 0 : 1 }'; then \
@@ -693,19 +666,13 @@ test-coverage: ## Run tests and generate coverage report (strict mode)
 	fi
 	@echo ""
 	@echo "Generating HTML coverage report..."
-	cd $(OPERATOR_DIR) && go tool cover -html=coverage.out -o coverage.html
+	cd $(OPERATOR_DIR) && $(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: $(OPERATOR_DIR)/coverage.html"
 
 .PHONY: test-coverage-html
 test-coverage-html: test-coverage ## Open coverage report in browser
 	@echo "Opening coverage report..."
-	@if command -v xdg-open >/dev/null 2>&1; then \
-		xdg-open $(OPERATOR_DIR)/coverage.html; \
-	elif command -v open >/dev/null 2>&1; then \
-		open $(OPERATOR_DIR)/coverage.html; \
-	else \
-		echo "Coverage report: $(OPERATOR_DIR)/coverage.html"; \
-	fi
+	$(OPEN) $(OPERATOR_DIR)/coverage.html
 
 .PHONY: test-coverage-package
 test-coverage-package: ## Show coverage per package (usage: make test-coverage-package PKG=./pkg/sizing)
@@ -714,14 +681,15 @@ test-coverage-package: ## Show coverage per package (usage: make test-coverage-p
 		exit 1; \
 	fi
 	@echo "Running coverage for $(PKG) (strict mode)..."
-	cd $(OPERATOR_DIR) && go test $(TEST_FLAGS) -coverprofile=coverage-$(shell basename $(PKG)).out -covermode=atomic $(PKG)
-	cd $(OPERATOR_DIR) && go tool cover -func=coverage-$(shell basename $(PKG)).out | tail -1
+	@coverage_file="coverage-$$(basename "$(PKG)").out"; \
+	cd $(OPERATOR_DIR) && $(GO) test $(TEST_FLAGS) -coverprofile="$$coverage_file" -covermode=atomic $(PKG) && \
+		$(GO) tool cover -func="$$coverage_file" | tail -1
 
 .PHONY: test-coverage-summary
 test-coverage-summary: ## Show coverage summary for all packages
 	@echo "=== Coverage Summary by Package ==="
 	@echo ""
-	cd $(OPERATOR_DIR) && go test -race -timeout $(TEST_TIMEOUT) -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | \
+	cd $(OPERATOR_DIR) && $(GO) test -race -timeout $(TEST_TIMEOUT) -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | \
 		grep -E "(ok|FAIL).*coverage:" | \
 		sed 's/ok[[:space:]]*/ok /' | \
 		awk '{ \
@@ -736,93 +704,76 @@ test-coverage-summary: ## Show coverage summary for all packages
 				} \
 			} \
 			if (coverage != "") printf "%-60s %s\n", pkg, coverage; \
-		}'
+	}'
 	@echo ""
 	@echo "=== Overall Coverage ==="
-	cd $(OPERATOR_DIR) && go tool cover -func=coverage.out 2>/dev/null | grep total || \
-		(go test -race -timeout $(TEST_TIMEOUT) -coverprofile=coverage.out -covermode=atomic ./... >/dev/null 2>&1 && \
-		 go tool cover -func=coverage.out | grep total)
+	cd $(OPERATOR_DIR) && $(GO) tool cover -func=coverage.out 2>/dev/null | grep total || \
+		($(GO) test -race -timeout $(TEST_TIMEOUT) -coverprofile=coverage.out -covermode=atomic ./... >/dev/null 2>&1 && \
+		 $(GO) tool cover -func=coverage.out | grep total)
 
 .PHONY: test-unit
 test-unit: ## Run unit tests only (strict mode)
 	@echo "Running unit tests (strict mode)..."
-	cd $(OPERATOR_DIR) && go test $(TEST_FLAGS) ./pkg/... ./controllers/... ./api/...
+	cd $(OPERATOR_DIR) && $(GO) test $(TEST_FLAGS) ./pkg/... ./controllers/... ./api/...
 
 .PHONY: test-gateway-ui
 test-gateway-ui: ## Run focused Gateway UI/status API tests
 	@echo "Running Gateway UI/status API tests..."
 	cd $(OPERATOR_DIR) && $(GO) test $(TEST_FLAGS) ./cmd/gateway ./pkg/gateway -run 'GatewayUI|GatewayStatus|ParseGatewayOptions'
 
-.PHONY: ensure-setup-envtest
-ensure-setup-envtest: ## Install setup-envtest if needed
-	@if [ ! -x "$(SETUP_ENVTEST_BIN)" ]; then \
-		echo "Installing setup-envtest $(SETUP_ENVTEST_VERSION)..."; \
-		go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION); \
-	fi
-
 .PHONY: test-integration
-test-integration: ensure-setup-envtest ## Run integration tests (strict mode)
+test-integration: ## Run integration tests (strict mode)
 	@echo "Running integration tests (strict mode)..."
-	cd $(OPERATOR_DIR) && KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST_BIN) use $(ENVTEST_K8S_VERSION) -p path)" \
-		go test $(TEST_FLAGS) -tags=integration ./tests/integration/...
+	cd $(OPERATOR_DIR) && KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
+		$(GO) test $(TEST_FLAGS) -tags=integration ./tests/integration/...
 
 .PHONY: test-e2e
 test-e2e: ## Run end-to-end tests (requires cluster, strict mode)
 	@echo "Running e2e tests (strict mode)..."
-	@if ! kubectl cluster-info >/dev/null 2>&1; then \
+	@if ! $(KUBECTL) cluster-info >/dev/null 2>&1; then \
 		echo "Error: No Kubernetes cluster available"; \
 		exit 1; \
 	fi
-	cd $(OPERATOR_DIR) && go test $(TEST_FLAGS) -tags=e2e ./tests/e2e/...
-
-.PHONY: ensure-robot
-ensure-robot: ## Check that the uv-managed Robot Framework e2e runner works
-	@if [ "$(ROBOT_RUNNER)" = "$(ROBOT_RUNNER_DEFAULT)" ] && ! command -v "$(UV)" >/dev/null 2>&1; then \
-		echo "ERROR: uv is required by the default local e2e runner."; \
-		echo "Install uv from https://docs.astral.sh/uv/getting-started/installation/."; \
-		echo "Or override ROBOT_RUNNER=robot if Robot Framework is already installed another way."; \
-		exit 1; \
-	fi
-	@$(ROBOT_RUNNER) --version || [ "$$?" -eq 251 ]
+	cd $(OPERATOR_DIR) && $(GO) test $(TEST_FLAGS) -tags=e2e ./tests/e2e/...
 
 .PHONY: test-e2e-local
-test-e2e-local: ensure-robot dev-up ## Run all local k3d e2e Robot suites
+test-e2e-local: dev-up ## Run all local k3d e2e Robot suites
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) tilt/e2e/robot
 
 .PHONY: test-e2e-local-contracts
-test-e2e-local-contracts: ensure-robot dev-up ## Run local control-plane/API/gateway contract Robot suites
+test-e2e-local-contracts: dev-up ## Run local control-plane/API/gateway contract Robot suites
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include contracts tilt/e2e/robot
 
 .PHONY: test-e2e-local-integration
-test-e2e-local-integration: ensure-robot dev-up ## Run local Robot integration suites
+test-e2e-local-integration: dev-up ## Run local Robot integration suites
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include integration tilt/e2e/robot
 
 .PHONY: test-e2e-local-gateway-auth
-test-e2e-local-gateway-auth: ensure-robot dev-up ## Run local gateway API-key authentication Robot suite
+test-e2e-local-gateway-auth: dev-up ## Run local gateway API-key authentication Robot suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include gateway-auth tilt/e2e/robot
 
 .PHONY: test-e2e-local-smoke
-test-e2e-local-smoke: ensure-robot dev-up ## Run local real-Trino lifecycle smoke Robot suite
+test-e2e-local-smoke: dev-up ## Run local real-Trino lifecycle smoke Robot suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include smoke tilt/e2e/robot
 
 .PHONY: test-e2e-local-scaleout
-test-e2e-local-scaleout: ensure-robot dev-up ## Run local real-Trino KEDA scale-out Robot suite
+test-e2e-local-scaleout: dev-up ## Run local real-Trino KEDA scale-out Robot suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include scaleout tilt/e2e/robot
 
 .PHONY: test-e2e-local-lifecycle-cleanup
-test-e2e-local-lifecycle-cleanup: ensure-robot dev-up ## Run local interrupted lifecycle cleanup Robot suite
+test-e2e-local-lifecycle-cleanup: dev-up ## Run local interrupted lifecycle cleanup Robot suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include lifecycle-cleanup tilt/e2e/robot
 
 .PHONY: test-e2e-local-native-hpa
-test-e2e-local-native-hpa: ensure-robot dev-up ## Run local native-HPA XTrinode lifecycle Robot suite
+test-e2e-local-native-hpa: dev-up ## Run local native-HPA XTrinode lifecycle Robot suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include native-hpa tilt/e2e/robot
 
 .PHONY: test-e2e-local-postgres
-test-e2e-local-postgres: ensure-robot dev-up ## Run local Postgres catalog integration Robot suite
+test-e2e-local-postgres: dev-up ## Run local Postgres catalog integration Robot suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) --include postgres tilt/e2e/robot
 
 .PHONY: test-e2e-local-loadtest
-test-e2e-local-loadtest: ensure-robot dev-up ## Run local Locust load-test through the Robot wrapper
+test-e2e-local-loadtest: dev-up ## Run local Locust load-test through the Robot wrapper
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) \
 		--variable LOADTEST_USERS:$(LOADTEST_USERS) \
 		--variable LOADTEST_SPAWN_RATE:$(LOADTEST_SPAWN_RATE) \
@@ -842,7 +793,7 @@ test-e2e-local-loadtest: ensure-robot dev-up ## Run local Locust load-test throu
 		tilt/loadtest/robot
 
 .PHONY: test-e2e-local-operator-stress
-test-e2e-local-operator-stress: ensure-robot dev-up ## Run local k3d operator reconcile stress suite
+test-e2e-local-operator-stress: dev-up ## Run local k3d operator reconcile stress suite
 	$(ROBOT_RUNNER) $(LOCAL_E2E_ROBOT_ARGS) \
 		--variable OPERATOR_STRESS_NAMESPACE:$(OPERATOR_STRESS_NAMESPACE) \
 		--variable OPERATOR_STRESS_COUNT:$(OPERATOR_STRESS_COUNT) \
@@ -862,15 +813,14 @@ test-e2e-local-robot: test-e2e-local ## Alias for the canonical local Robot e2e 
 .PHONY: generate
 generate: manifests ## Generate code (CRDs, RBAC, etc.)
 	@echo "Generating code..."
-	cd $(OPERATOR_DIR) && PATH="$$(go env GOPATH)/bin:$$PATH" go generate ./...
+	cd $(OPERATOR_DIR) && $(GO) generate ./...
 	@echo "Code generation complete"
 
 .PHONY: manifests
 manifests: ## Generate CRD manifests (outputs directly to Helm chart crds/)
 	@echo "Generating CRD manifests..."
-	@$(MAKE) ensure-controller-gen
 	@mkdir -p helm/xtrinode-operator/crds
-	cd $(OPERATOR_DIR) && $$(go env GOPATH)/bin/controller-gen rbac:roleName=xtrinode-operator-role crd:allowDangerousTypes=true object paths="./api/v1/..." output:crd:artifacts:config=../helm/xtrinode-operator/crds
+	cd $(OPERATOR_DIR) && $(CONTROLLER_GEN) rbac:roleName=xtrinode-operator-role crd:allowDangerousTypes=true object paths="./api/v1/..." output:crd:artifacts:config=../helm/xtrinode-operator/crds
 	@echo "Manifests generated"
 
 .PHONY: verify-manifests
@@ -889,7 +839,7 @@ verify-manifests: manifests ## Verify manifests are up to date
 
 define docker_build
 	@echo "Building $(1) Docker image: $($(2))"
-	docker build \
+	$(DOCKER) build \
 		--build-arg GO_VERSION=$(GO_VERSION) \
 		--build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
 		--build-arg APP_PACKAGE=$($(3)_PACKAGE) \
@@ -905,13 +855,13 @@ endef
 
 define docker_push
 	@echo "Pushing $(1) Docker image: $($(2))"
-	docker push $($(2))
+	$(DOCKER) push $($(2))
 	@echo "$(1) image pushed"
 endef
 
 define docker_buildx
 	@echo "Building and pushing $(1) Docker image with buildx: $($(2))"
-	docker buildx build \
+	$(DOCKER) buildx build \
 		--platform $(DOCKER_PLATFORMS) \
 		--build-arg GO_VERSION=$(GO_VERSION) \
 		--build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
@@ -962,8 +912,8 @@ docker-buildx: docker-buildx-operator docker-buildx-gateway docker-buildx-api-se
 
 .PHONY: docker-buildx-builder
 docker-buildx-builder:
-	@docker buildx inspect $(DOCKER_BUILDER) >/dev/null 2>&1 || docker buildx create --use --name $(DOCKER_BUILDER)
-	@docker buildx use $(DOCKER_BUILDER)
+	@$(DOCKER) buildx inspect $(DOCKER_BUILDER) >/dev/null 2>&1 || $(DOCKER) buildx create --use --name $(DOCKER_BUILDER)
+	@$(DOCKER) buildx use $(DOCKER_BUILDER)
 
 .PHONY: docker-buildx-operator
 docker-buildx-operator: docker-buildx-builder ## Build operator Docker image with buildx
@@ -1005,8 +955,8 @@ docker-release: require-release-tag ## Build and push all Docker release images 
 .PHONY: create-namespaces
 create-namespaces: ## Create required namespaces (idempotent)
 	@echo "Creating namespaces for multi-namespace architecture..."
-	kubectl create namespace $(OPERATOR_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-	kubectl create namespace $(GATEWAY_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	$(KUBECTL) create namespace $(OPERATOR_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) create namespace $(GATEWAY_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	@echo "Namespaces created: $(OPERATOR_NAMESPACE), $(GATEWAY_NAMESPACE)"
 
 .PHONY: deploy
@@ -1014,7 +964,7 @@ deploy: manifests create-namespaces deploy-operator deploy-api-server deploy-gat
 
 .PHONY: deploy-gcp
 deploy-gcp: helm-repo-setup ## Full GCP deploy: manifests + helm (operator, api-server, gateway) to GKE. Prereqs: gcloud auth, gke-gcloud-auth-plugin, images in Artifact Registry.
-	bash scripts/deploy-gcp.sh
+	HELM="$(HELM)" KUBECTL="$(KUBECTL)" DOCKER="$(DOCKER)" TERRAFORM="$(TERRAFORM)" GCLOUD="$(GCLOUD)" OPENSSL="$(OPENSSL)" bash scripts/deploy-gcp.sh
 
 GCP_REGISTRY ?= $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)/xtrinode-operator/xtrinode-operator
 GCP_OPERATOR_IMAGE ?= $(GCP_REGISTRY)
@@ -1023,24 +973,24 @@ GCP_API_SERVER_IMAGE ?= $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)/xtrinode-
 
 .PHONY: gcp-docker-login
 gcp-docker-login: ## Configure Docker auth for GCP Artifact Registry
-	gcloud auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
+	$(GCLOUD) auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
 
 .PHONY: gcp-images-push
 gcp-images-push: gcp-docker-login ## Build and push all XTrinode images to GCP Artifact Registry
 	@echo "Building and pushing GCP images with tag $(CLOUD_IMAGE_TAG)..."
-	docker build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(OPERATOR_PACKAGE) --build-arg APP_PORT=$(OPERATOR_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG) -f $(OPERATOR_DOCKERFILE) $(OPERATOR_DIR)
-	docker push $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG)
-	docker build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(GATEWAY_PACKAGE) --build-arg APP_PORT=$(GATEWAY_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_GATEWAY_IMAGE):$(CLOUD_IMAGE_TAG) -f $(GATEWAY_DOCKERFILE) $(OPERATOR_DIR)
-	docker push $(GCP_GATEWAY_IMAGE):$(CLOUD_IMAGE_TAG)
-	docker build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(API_SERVER_PACKAGE) --build-arg APP_PORT=$(API_SERVER_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_API_SERVER_IMAGE):$(CLOUD_IMAGE_TAG) -f $(API_SERVER_DOCKERFILE) $(OPERATOR_DIR)
-	docker push $(GCP_API_SERVER_IMAGE):$(CLOUD_IMAGE_TAG)
+	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(OPERATOR_PACKAGE) --build-arg APP_PORT=$(OPERATOR_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG) -f $(OPERATOR_DOCKERFILE) $(OPERATOR_DIR)
+	$(DOCKER) push $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG)
+	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(GATEWAY_PACKAGE) --build-arg APP_PORT=$(GATEWAY_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_GATEWAY_IMAGE):$(CLOUD_IMAGE_TAG) -f $(GATEWAY_DOCKERFILE) $(OPERATOR_DIR)
+	$(DOCKER) push $(GCP_GATEWAY_IMAGE):$(CLOUD_IMAGE_TAG)
+	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(API_SERVER_PACKAGE) --build-arg APP_PORT=$(API_SERVER_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_API_SERVER_IMAGE):$(CLOUD_IMAGE_TAG) -f $(API_SERVER_DOCKERFILE) $(OPERATOR_DIR)
+	$(DOCKER) push $(GCP_API_SERVER_IMAGE):$(CLOUD_IMAGE_TAG)
 	@echo "GCP images pushed."
 
 .PHONY: gcp-operator-image-push
 gcp-operator-image-push: gcp-docker-login ## Build and push only the XTrinode operator image to GCP Artifact Registry
 	@echo "Building and pushing GCP operator image with tag $(CLOUD_IMAGE_TAG)..."
-	docker build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(OPERATOR_PACKAGE) --build-arg APP_PORT=$(OPERATOR_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG) -f $(OPERATOR_DOCKERFILE) $(OPERATOR_DIR)
-	docker push $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG)
+	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(OPERATOR_PACKAGE) --build-arg APP_PORT=$(OPERATOR_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG) -f $(OPERATOR_DOCKERFILE) $(OPERATOR_DIR)
+	$(DOCKER) push $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG)
 	@echo "GCP operator image pushed."
 
 .PHONY: release-operator-gcp
@@ -1048,37 +998,37 @@ release-operator-gcp: ## Build operator, push to GCP Artifact Registry, helm upg
 	@echo "=== Release operator to GCP ==="
 	@echo "Tag: $(CLOUD_IMAGE_TAG)"
 	$(MAKE) docker-build-operator IMAGE_TAG=$(CLOUD_IMAGE_TAG) IMG=$(REGISTRY)/$(OPERATOR_IMAGE_NAME):$(CLOUD_IMAGE_TAG)
-	docker tag $(REGISTRY)/$(OPERATOR_IMAGE_NAME):$(CLOUD_IMAGE_TAG) $(GCP_REGISTRY):$(CLOUD_IMAGE_TAG)
-	docker push $(GCP_REGISTRY):$(CLOUD_IMAGE_TAG)
+	$(DOCKER) tag $(REGISTRY)/$(OPERATOR_IMAGE_NAME):$(CLOUD_IMAGE_TAG) $(GCP_REGISTRY):$(CLOUD_IMAGE_TAG)
+	$(DOCKER) push $(GCP_REGISTRY):$(CLOUD_IMAGE_TAG)
 	@echo "Configuring kubectl for GKE..."
-	gcloud container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID)
+	$(GCLOUD) container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID)
 	@echo "Generating and applying CRDs..."
 	$(MAKE) manifests
-	kubectl apply -f $(HELM_CHART_PATH)/crds
+	$(KUBECTL) apply -f $(HELM_CHART_PATH)/crds
 	@echo "Upgrading Helm release..."
-	helm upgrade --install xtrinode-operator $(HELM_CHART_PATH) \
+	$(HELM) upgrade --install xtrinode-operator $(HELM_CHART_PATH) \
 		-n $(GCP_OPERATOR_NAMESPACE) \
 		--set image.repository=$(GCP_REGISTRY) \
 		--set image.tag=$(CLOUD_IMAGE_TAG) \
 		--set image.pullPolicy=Always \
 		--reuse-values
 	@echo "Restarting operator deployment..."
-	kubectl rollout restart deployment xtrinode-operator -n $(GCP_OPERATOR_NAMESPACE)
-	kubectl rollout status deployment xtrinode-operator -n $(GCP_OPERATOR_NAMESPACE) --timeout=120s
+	$(KUBECTL) rollout restart deployment xtrinode-operator -n $(GCP_OPERATOR_NAMESPACE)
+	$(KUBECTL) rollout status deployment xtrinode-operator -n $(GCP_OPERATOR_NAMESPACE) --timeout=120s
 	@echo "=== Release complete ==="
 
 .PHONY: deploy-aws
 deploy-aws: helm-repo-setup ## Experimental AWS provider-validation deploy: terraform + build + push + helm.
-	bash scripts/deploy-aws.sh
+	HELM="$(HELM)" KUBECTL="$(KUBECTL)" DOCKER="$(DOCKER)" TERRAFORM="$(TERRAFORM)" AWS="$(AWS)" CURL="$(CURL)" OPENSSL="$(OPENSSL)" bash scripts/deploy-aws.sh
 
 .PHONY: deploy-azure
 deploy-azure: helm-repo-setup ## Experimental Azure provider-validation deploy: terraform + build + push + helm.
-	bash scripts/deploy-azure.sh
+	HELM="$(HELM)" KUBECTL="$(KUBECTL)" DOCKER="$(DOCKER)" TERRAFORM="$(TERRAFORM)" AZ="$(AZ)" OPENSSL="$(OPENSSL)" bash scripts/deploy-azure.sh
 
 .PHONY: deploy-operator
 deploy-operator: manifests helm-deps ## Deploy operator (includes KEDA subchart when keda.enabled=true)
 	@echo "Deploying operator to namespace: $(OPERATOR_NAMESPACE)"
-	helm upgrade --install $(RELEASE_NAME) $(HELM_CHART_PATH) \
+	$(HELM) upgrade --install $(RELEASE_NAME) $(HELM_CHART_PATH) \
 		-n $(OPERATOR_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(REGISTRY)/$(OPERATOR_IMAGE_NAME) \
@@ -1089,7 +1039,7 @@ deploy-operator: manifests helm-deps ## Deploy operator (includes KEDA subchart 
 .PHONY: deploy-api-server
 deploy-api-server: ## Deploy API server to xtrinode-system namespace via Helm
 	@echo "Deploying API server to namespace: $(API_SERVER_NAMESPACE)"
-	helm upgrade --install xtrinode-api-server $(API_SERVER_HELM_CHART_PATH) \
+	$(HELM) upgrade --install xtrinode-api-server $(API_SERVER_HELM_CHART_PATH) \
 		-n $(API_SERVER_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(REGISTRY)/$(API_SERVER_IMAGE_NAME) \
@@ -1100,7 +1050,7 @@ deploy-api-server: ## Deploy API server to xtrinode-system namespace via Helm
 .PHONY: deploy-gateway
 deploy-gateway: ## Deploy gateway to xtrinode-gateway namespace via Helm
 	@echo "Deploying gateway to namespace: $(GATEWAY_NAMESPACE)"
-	helm upgrade --install xtrinode-gateway $(GATEWAY_HELM_CHART_PATH) \
+	$(HELM) upgrade --install xtrinode-gateway $(GATEWAY_HELM_CHART_PATH) \
 		-n $(GATEWAY_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(REGISTRY)/$(GATEWAY_IMAGE_NAME) \
@@ -1111,7 +1061,7 @@ deploy-gateway: ## Deploy gateway to xtrinode-gateway namespace via Helm
 .PHONY: deploy-local
 deploy-local: create-namespaces ## Deploy all components with local images (for Kind)
 	@echo "Deploying operator with local image..."
-	helm upgrade --install $(RELEASE_NAME) $(HELM_CHART_PATH) \
+	$(HELM) upgrade --install $(RELEASE_NAME) $(HELM_CHART_PATH) \
 		-n $(OPERATOR_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(OPERATOR_IMAGE_NAME) \
@@ -1119,7 +1069,7 @@ deploy-local: create-namespaces ## Deploy all components with local images (for 
 		--set image.pullPolicy=IfNotPresent \
 		--wait
 	@echo "Deploying API server with local image..."
-	helm upgrade --install xtrinode-api-server $(API_SERVER_HELM_CHART_PATH) \
+	$(HELM) upgrade --install xtrinode-api-server $(API_SERVER_HELM_CHART_PATH) \
 		-n $(API_SERVER_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(API_SERVER_IMAGE_NAME) \
@@ -1127,7 +1077,7 @@ deploy-local: create-namespaces ## Deploy all components with local images (for 
 		--set image.pullPolicy=IfNotPresent \
 		--wait
 	@echo "Deploying gateway with local image..."
-	helm upgrade --install xtrinode-gateway $(GATEWAY_HELM_CHART_PATH) \
+	$(HELM) upgrade --install xtrinode-gateway $(GATEWAY_HELM_CHART_PATH) \
 		-n $(GATEWAY_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(GATEWAY_IMAGE_NAME) \
@@ -1139,11 +1089,11 @@ deploy-local: create-namespaces ## Deploy all components with local images (for 
 .PHONY: undeploy
 undeploy: ## Remove all components from cluster
 	@echo "Removing operator from namespace: $(OPERATOR_NAMESPACE)"
-	helm uninstall $(RELEASE_NAME) -n $(OPERATOR_NAMESPACE) || true
+	$(HELM) uninstall $(RELEASE_NAME) -n $(OPERATOR_NAMESPACE) --ignore-not-found
 	@echo "Removing API server from namespace: $(API_SERVER_NAMESPACE)"
-	helm uninstall xtrinode-api-server -n $(API_SERVER_NAMESPACE) || true
+	$(HELM) uninstall xtrinode-api-server -n $(API_SERVER_NAMESPACE) --ignore-not-found
 	@echo "Removing gateway from namespace: $(GATEWAY_NAMESPACE)"
-	helm uninstall xtrinode-gateway -n $(GATEWAY_NAMESPACE) || true
+	$(HELM) uninstall xtrinode-gateway -n $(GATEWAY_NAMESPACE) --ignore-not-found
 	@echo "Undeployment complete"
 
 .PHONY: upgrade
@@ -1152,7 +1102,7 @@ upgrade: upgrade-operator upgrade-api-server upgrade-gateway ## Upgrade all comp
 .PHONY: upgrade-operator
 upgrade-operator: ## Upgrade operator deployment
 	@echo "Upgrading operator..."
-	helm upgrade $(RELEASE_NAME) $(HELM_CHART_PATH) \
+	$(HELM) upgrade $(RELEASE_NAME) $(HELM_CHART_PATH) \
 		-n $(OPERATOR_NAMESPACE) \
 		--set image.repository=$(REGISTRY)/$(OPERATOR_IMAGE_NAME) \
 		--set image.tag=$(IMAGE_TAG) \
@@ -1162,7 +1112,7 @@ upgrade-operator: ## Upgrade operator deployment
 .PHONY: upgrade-api-server
 upgrade-api-server: ## Upgrade API server deployment
 	@echo "Upgrading API server..."
-	helm upgrade xtrinode-api-server $(API_SERVER_HELM_CHART_PATH) \
+	$(HELM) upgrade xtrinode-api-server $(API_SERVER_HELM_CHART_PATH) \
 		-n $(API_SERVER_NAMESPACE) \
 		--set image.repository=$(REGISTRY)/$(API_SERVER_IMAGE_NAME) \
 		--set image.tag=$(IMAGE_TAG) \
@@ -1172,7 +1122,7 @@ upgrade-api-server: ## Upgrade API server deployment
 .PHONY: upgrade-gateway
 upgrade-gateway: ## Upgrade gateway deployment
 	@echo "Upgrading gateway..."
-	helm upgrade xtrinode-gateway $(GATEWAY_HELM_CHART_PATH) \
+	$(HELM) upgrade xtrinode-gateway $(GATEWAY_HELM_CHART_PATH) \
 		-n $(GATEWAY_NAMESPACE) \
 		--set image.repository=$(REGISTRY)/$(GATEWAY_IMAGE_NAME) \
 		--set image.tag=$(IMAGE_TAG) \
@@ -1193,7 +1143,7 @@ terraform-for-configured-clouds:
 	for cloud in $(TERRAFORM_CLOUDS); do \
 		target="terraform-$(TERRAFORM_ACTION)-$$cloud"; \
 		echo "Running $$target..."; \
-		$(MAKE) --no-print-directory "$$target" || status=$$?; \
+		$(MAKE_CMD) --no-print-directory "$$target" || status=$$?; \
 	done; \
 	exit $$status
 
@@ -1204,19 +1154,19 @@ terraform-init: ## Initialize Terraform for configured clouds
 .PHONY: terraform-init-aws
 terraform-init-aws: ## Initialize AWS Terraform
 	@echo "Initializing AWS Terraform..."
-	cd $(AWS_TF_DIR) && terraform init
+	cd $(AWS_TF_DIR) && $(TERRAFORM) init
 	@echo "AWS Terraform initialized"
 
 .PHONY: terraform-init-azure
 terraform-init-azure: ## Initialize Azure Terraform
 	@echo "Initializing Azure Terraform..."
-	cd $(AZURE_TF_DIR) && terraform init
+	cd $(AZURE_TF_DIR) && $(TERRAFORM) init
 	@echo "Azure Terraform initialized"
 
 .PHONY: terraform-init-gcp
 terraform-init-gcp: ## Initialize GCP Terraform
 	@echo "Initializing GCP Terraform..."
-	cd $(GCP_TF_DIR) && terraform init
+	cd $(GCP_TF_DIR) && $(TERRAFORM) init
 	@echo "GCP Terraform initialized"
 
 .PHONY: terraform-plan
@@ -1226,19 +1176,19 @@ terraform-plan: ## Plan Terraform deployments for configured clouds
 .PHONY: terraform-plan-aws
 terraform-plan-aws: terraform-init-aws ## Plan AWS Terraform deployment
 	@echo "Planning AWS Terraform deployment..."
-	cd $(AWS_TF_DIR) && terraform plan -var-file=$(TF_VAR_FILE) -out=tfplan
+	cd $(AWS_TF_DIR) && $(TERRAFORM) plan -var-file=$(TF_VAR_FILE) -out=tfplan
 	@echo "AWS Terraform plan complete"
 
 .PHONY: terraform-plan-azure
 terraform-plan-azure: terraform-init-azure ## Plan Azure Terraform deployment
 	@echo "Planning Azure Terraform deployment..."
-	cd $(AZURE_TF_DIR) && terraform plan -var-file=$(TF_VAR_FILE) -out=tfplan
+	cd $(AZURE_TF_DIR) && $(TERRAFORM) plan -var-file=$(TF_VAR_FILE) -out=tfplan
 	@echo "Azure Terraform plan complete"
 
 .PHONY: terraform-plan-gcp
 terraform-plan-gcp: terraform-init-gcp ## Plan GCP Terraform deployment
 	@echo "Planning GCP Terraform deployment..."
-	cd $(GCP_TF_DIR) && terraform plan -var-file=$(TF_VAR_FILE) -out=tfplan
+	cd $(GCP_TF_DIR) && $(TERRAFORM) plan -var-file=$(TF_VAR_FILE) -out=tfplan
 	@echo "GCP Terraform plan complete"
 
 .PHONY: terraform-apply
@@ -1248,25 +1198,25 @@ terraform-apply: ## Apply Terraform deployments for configured clouds
 .PHONY: terraform-apply-aws
 terraform-apply-aws: terraform-plan-aws ## Apply AWS Terraform deployment
 	@echo "Applying AWS Terraform deployment..."
-	cd $(AWS_TF_DIR) && terraform apply tfplan
+	cd $(AWS_TF_DIR) && $(TERRAFORM) apply tfplan
 	@echo "AWS Terraform deployment complete"
 
 .PHONY: terraform-apply-azure
 terraform-apply-azure: terraform-plan-azure ## Apply Azure Terraform deployment
 	@echo "Applying Azure Terraform deployment..."
-	cd $(AZURE_TF_DIR) && terraform apply tfplan
+	cd $(AZURE_TF_DIR) && $(TERRAFORM) apply tfplan
 	@echo "Azure Terraform deployment complete"
 
 .PHONY: terraform-apply-gcp
 terraform-apply-gcp: terraform-plan-gcp ## Apply GCP Terraform deployment
 	@echo "Applying GCP Terraform deployment..."
-	cd $(GCP_TF_DIR) && terraform apply tfplan
+	cd $(GCP_TF_DIR) && $(TERRAFORM) apply tfplan
 	@echo "GCP Terraform deployment complete"
 
 .PHONY: terraform-apply-gcp-cluster
 terraform-apply-gcp-cluster: terraform-init-gcp ## Create only the GCP management cluster substrate before Kubernetes provider resources
 	@echo "Applying GCP management cluster substrate..."
-	cd $(GCP_TF_DIR) && terraform apply -var-file=$(TF_VAR_FILE) \
+	cd $(GCP_TF_DIR) && $(TERRAFORM) apply -var-file=$(TF_VAR_FILE) \
 		-target=google_compute_network.xtrinode \
 		-target=google_compute_subnetwork.xtrinode \
 		-target=google_compute_firewall.xtrinode_internal \
@@ -1284,17 +1234,17 @@ terraform-destroy: ## Destroy Terraform deployments for configured clouds
 .PHONY: terraform-destroy-aws
 terraform-destroy-aws: ## Destroy AWS Terraform deployment
 	@echo "Destroying AWS Terraform deployment..."
-	cd $(AWS_TF_DIR) && terraform destroy -var-file=$(TF_VAR_FILE) -auto-approve
+	cd $(AWS_TF_DIR) && $(TERRAFORM) destroy -var-file=$(TF_VAR_FILE) -auto-approve
 	@echo "AWS Terraform destroyed"
 
 .PHONY: eks-restrict-to-my-ip
 eks-restrict-to-my-ip: ## Restrict EKS public endpoint to your current IP (run when IP changes)
 	@echo "Fetching your current public IP..."
-	@MY_IP=$$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || curl -s --max-time 5 https://api.ipify.org 2>/dev/null); \
+	@MY_IP=$$($(CURL) -fsS --max-time 5 https://checkip.amazonaws.com | tr -d '[:space:]'); \
 	if [ -z "$$MY_IP" ]; then echo "ERROR: Could not fetch IP"; exit 1; fi; \
 	echo "Your IP: $$MY_IP"; \
 	echo "Updating EKS public_access_cidrs and applying..."; \
-	cd $(AWS_TF_DIR) && terraform apply -var-file=$(TF_VAR_FILE) \
+	cd $(AWS_TF_DIR) && $(TERRAFORM) apply -var-file=$(TF_VAR_FILE) \
 		-var='eks_public_access=true' \
 		-var="eks_public_access_cidrs=[\"$$MY_IP/32\"]" \
 		-auto-approve
@@ -1303,13 +1253,13 @@ eks-restrict-to-my-ip: ## Restrict EKS public endpoint to your current IP (run w
 .PHONY: terraform-destroy-azure
 terraform-destroy-azure: ## Destroy Azure Terraform deployment
 	@echo "Destroying Azure Terraform deployment..."
-	cd $(AZURE_TF_DIR) && terraform destroy -var-file=$(TF_VAR_FILE) -auto-approve
+	cd $(AZURE_TF_DIR) && $(TERRAFORM) destroy -var-file=$(TF_VAR_FILE) -auto-approve
 	@echo "Azure Terraform destroyed"
 
 .PHONY: terraform-destroy-gcp
 terraform-destroy-gcp: ## Destroy GCP Terraform deployment
 	@echo "Destroying GCP Terraform deployment..."
-	cd $(GCP_TF_DIR) && terraform destroy -var-file=$(TF_VAR_FILE) -auto-approve
+	cd $(GCP_TF_DIR) && $(TERRAFORM) destroy -var-file=$(TF_VAR_FILE) -auto-approve
 	@echo "GCP Terraform destroyed"
 
 # GCP teardown prep: remove finalizers, patch PDBs, delete Cloud SQL, orphan PG resources, disable deletion protection
@@ -1317,33 +1267,33 @@ terraform-destroy-gcp: ## Destroy GCP Terraform deployment
 gcp-teardown-prep: ## Full cleanup before terraform destroy (dev/testing - no blockers)
 	@echo "=== GCP teardown prep ==="
 	@echo "Configuring kubectl for GKE..."
-	gcloud container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID) 2>/dev/null || true
+	$(GCLOUD) container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID) 2>/dev/null || true
 	@echo "Patching PDB, uninstalling Helm, cleaning namespaces..."
-	kubectl patch pdb xtrinode-gateway -n $(GATEWAY_NAMESPACE) -p '{"spec":{"minAvailable":0}}' 2>/dev/null || true
-	helm uninstall xtrinode-gateway -n $(GATEWAY_NAMESPACE) 2>/dev/null || true
-	helm uninstall xtrinode-api-server -n $(GCP_OPERATOR_NAMESPACE) 2>/dev/null || true
-	helm uninstall xtrinode-operator -n $(GCP_OPERATOR_NAMESPACE) 2>/dev/null || true
+	$(KUBECTL) patch pdb xtrinode-gateway -n $(GATEWAY_NAMESPACE) -p '{"spec":{"minAvailable":0}}' 2>/dev/null || true
+	$(HELM) uninstall xtrinode-gateway -n $(GATEWAY_NAMESPACE) --ignore-not-found 2>/dev/null || true
+	$(HELM) uninstall xtrinode-api-server -n $(GCP_OPERATOR_NAMESPACE) --ignore-not-found 2>/dev/null || true
+	$(HELM) uninstall xtrinode-operator -n $(GCP_OPERATOR_NAMESPACE) --ignore-not-found 2>/dev/null || true
 	NAMESPACES="$(GCP_OPERATOR_NAMESPACE) team-test $(GATEWAY_NAMESPACE) $(CAPG_WORKLOAD_NAMESPACE) gke-managed-networking-dra-driver monitoring capi-operator-system capi-system capg-system" \
 		WAIT_TIMEOUT=$(TEARDOWN_NAMESPACE_WAIT_TIMEOUT) \
 		FORCE_NAMESPACE_FINALIZERS=$(FORCE_NAMESPACE_FINALIZERS) \
 		bash scripts/k8s/cleanup-finalizers.sh
 	@echo "Disabling GKE deletion protection if the cluster still exists..."
-	gcloud container clusters update $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project=$(GCP_PROJECT_ID) --no-deletion-protection 2>/dev/null || true
+	$(GCLOUD) container clusters update $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project=$(GCP_PROJECT_ID) --no-deletion-protection 2>/dev/null || true
 	@echo "Deleting Cloud SQL (if exists) and orphaned private IP range..."
-	gcloud services enable sqladmin.googleapis.com --project=$(GCP_PROJECT_ID) 2>/dev/null || true
-	gcloud sql instances delete $(GCP_CLUSTER_NAME)-postgres --project=$(GCP_PROJECT_ID) --quiet 2>/dev/null || true
-	gcloud compute addresses delete xtrinode-private-ip-range --global --project=$(GCP_PROJECT_ID) --quiet 2>/dev/null || true
+	$(GCLOUD) services enable sqladmin.googleapis.com --project=$(GCP_PROJECT_ID) 2>/dev/null || true
+	$(GCLOUD) sql instances delete $(GCP_CLUSTER_NAME)-postgres --project=$(GCP_PROJECT_ID) --quiet 2>/dev/null || true
+	$(GCLOUD) compute addresses delete xtrinode-private-ip-range --global --project=$(GCP_PROJECT_ID) --quiet 2>/dev/null || true
 	@echo "Removing namespaces and service connection from Terraform state..."
-	cd $(GCP_TF_DIR) && terraform state rm kubernetes_namespace.xtrinode_system kubernetes_namespace.test_team 2>/dev/null || true
-	cd $(GCP_TF_DIR) && terraform state rm \
+	cd $(GCP_TF_DIR) && $(TERRAFORM) state rm kubernetes_namespace.xtrinode_system kubernetes_namespace.test_team 2>/dev/null || true
+	cd $(GCP_TF_DIR) && $(TERRAFORM) state rm \
 		'kubernetes_namespace.capg_operator[0]' \
 		'kubernetes_namespace.capi_core[0]' \
 		'kubernetes_namespace.capi_bootstrap[0]' \
 		'kubernetes_namespace.capi_control_plane[0]' \
 		'kubernetes_namespace.capg[0]' 2>/dev/null || true
-	cd $(GCP_TF_DIR) && terraform state list 2>/dev/null | awk '/^(kubernetes_|helm_release\.)/ { print }' | xargs -r terraform state rm 2>/dev/null || true
-	cd $(GCP_TF_DIR) && (terraform state rm 'google_service_networking_connection.private_vpc_connection[0]' 'google_compute_global_address.private_ip_range[0]' 2>/dev/null || \
-		terraform state rm google_service_networking_connection.private_vpc_connection google_compute_global_address.private_ip_range 2>/dev/null) || true
+	cd $(GCP_TF_DIR) && $(TERRAFORM) state list 2>/dev/null | awk '/^(kubernetes_|helm_release\.)/ { print }' | xargs -r $(TERRAFORM) state rm 2>/dev/null || true
+	cd $(GCP_TF_DIR) && ($(TERRAFORM) state rm 'google_service_networking_connection.private_vpc_connection[0]' 'google_compute_global_address.private_ip_range[0]' 2>/dev/null || \
+		$(TERRAFORM) state rm google_service_networking_connection.private_vpc_connection google_compute_global_address.private_ip_range 2>/dev/null) || true
 	@echo "=== Teardown prep complete. Run: make terraform-destroy-gcp ==="
 
 # =============================================================================
@@ -1361,6 +1311,8 @@ gcp-flow: ## Print the ordered GCP/CAPG from-zero runbook
 	@echo "  GCP_CLUSTER_NAME=$(GCP_CLUSTER_NAME)        # Terraform-created GKE management cluster"
 	@echo "  CAPG_WORKLOAD_CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME)  # CAPG-created GKE workload cluster"
 	@echo "  CAPG_WORKLOAD_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE)"
+	@echo "  CAPG_VERSION=$(CAPG_VERSION)"
+	@echo "  CLUSTERCTL=$(CLUSTERCTL)"
 	@echo ""
 	@echo "Manual sequence:"
 	@echo "  1. make gcp-preflight"
@@ -1392,15 +1344,18 @@ gcp-flow: ## Print the ordered GCP/CAPG from-zero runbook
 
 .PHONY: gcp-preflight
 gcp-preflight: ## Check local tools and print active GCP/CAPG scope
-	@command -v terraform >/dev/null || (echo "ERROR: terraform not found" && exit 1)
-	@command -v gcloud >/dev/null || (echo "ERROR: gcloud not found" && exit 1)
-	@command -v kubectl >/dev/null || (echo "ERROR: kubectl not found" && exit 1)
-	@command -v helm >/dev/null || (echo "ERROR: helm not found" && exit 1)
+	@$(TERRAFORM) version >/dev/null
+	@$(GCLOUD) version >/dev/null
+	@$(KUBECTL) version --client >/dev/null
+	@$(HELM) version >/dev/null
+	@$(CLUSTERCTL) --help >/dev/null
 	@if [ -z "$(GCP_PROJECT_ID)" ]; then echo "ERROR: GCP_PROJECT_ID is empty; set it or configure $(GCP_TF_DIR)/$(TF_VAR_FILE)"; exit 1; fi
 	@echo "GCP/CAPG scope:"
 	@echo "  project: $(GCP_PROJECT_ID)"
 	@echo "  management cluster: $(GCP_CLUSTER_NAME) ($(GCP_ZONE))"
 	@echo "  workload cluster: $(CAPG_WORKLOAD_CLUSTER_NAME) namespace $(CAPG_WORKLOAD_NAMESPACE)"
+	@echo "  CAPG provider: $(CAPG_VERSION)"
+	@echo "  clusterctl: $(CLUSTERCTL) ($(CLUSTERCTL_VERSION))"
 	@echo "  terraform dir: $(GCP_TF_DIR)"
 	@echo "  terraform var file: $(TF_VAR_FILE)"
 
@@ -1418,19 +1373,19 @@ require-gcp-destroy-confirm:
 .PHONY: gcp-configure-kubectl
 gcp-configure-kubectl: ## Configure kubectl for the Terraform-created GKE management cluster
 	@echo "Configuring kubectl for GCP management cluster..."
-	@cmd=$$(terraform -chdir=$(GCP_TF_DIR) output -raw configure_kubectl 2>/dev/null || true); \
+	@cmd=$$($(TERRAFORM) -chdir=$(GCP_TF_DIR) output -raw configure_kubectl 2>/dev/null || true); \
 	if [ -n "$$cmd" ]; then \
 		echo "$$cmd"; \
 		eval "$$cmd"; \
 	else \
-		gcloud container clusters get-credentials $(GCP_CLUSTER_NAME) --region $(GCP_REGION) --project $(GCP_PROJECT_ID) || \
-			gcloud container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID); \
+		$(GCLOUD) container clusters get-credentials $(GCP_CLUSTER_NAME) --region $(GCP_REGION) --project $(GCP_PROJECT_ID) || \
+			$(GCLOUD) container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID); \
 	fi
 
 .PHONY: gcp-capg-workload-down
 gcp-capg-workload-down: ## Delete the CAPG-created GKE workload cluster from the management cluster
-	@if $(MAKE) --no-print-directory gcp-configure-kubectl >/dev/null 2>&1; then \
-		TARGET_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE) CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME) WAIT_TIMEOUT=$(CAPG_WAIT_TIMEOUT) bash scripts/capi/delete-cluster.sh; \
+	@if $(MAKE_CMD) --no-print-directory gcp-configure-kubectl >/dev/null 2>&1; then \
+		TARGET_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE) CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME) WAIT_TIMEOUT=$(CAPG_WAIT_TIMEOUT) KUBECTL="$(KUBECTL)" bash scripts/capi/delete-cluster.sh; \
 	else \
 		echo "Management cluster is not reachable; skipping CAPG workload cluster deletion."; \
 	fi
@@ -1450,11 +1405,11 @@ gcp-management-up: terraform-apply-gcp-cluster gcp-configure-kubectl terraform-a
 .PHONY: gcp-capg-management-up
 gcp-capg-management-up: gcp-configure-kubectl ## Install/bootstrap Cluster API Operator and CAPG into the management cluster
 	@echo "Bootstrapping CAPG management components..."
-	bash scripts/capi/bootstrap.sh -var-file=$(TF_VAR_FILE) -auto-approve
-	kubectl wait deployment/capi-operator-cluster-api-operator -n capi-operator-system --for=condition=Available --timeout=5m
-	kubectl get pods -n capi-operator-system
-	kubectl get pods -n capi-system
-	kubectl get pods -n capg-system
+	TERRAFORM="$(TERRAFORM)" KUBECTL="$(KUBECTL)" bash scripts/capi/bootstrap.sh -var-file=$(TF_VAR_FILE) -auto-approve
+	$(KUBECTL) wait deployment/capi-operator-cluster-api-operator -n capi-operator-system --for=condition=Available --timeout=5m
+	$(KUBECTL) get pods -n capi-operator-system
+	$(KUBECTL) get pods -n capi-system
+	$(KUBECTL) get pods -n capg-system
 
 .PHONY: gcp-observability-up
 gcp-observability-up: gcp-configure-kubectl install-observability ## Install Prometheus and Vector on the management cluster
@@ -1462,14 +1417,14 @@ gcp-observability-up: gcp-configure-kubectl install-observability ## Install Pro
 .PHONY: gcp-control-plane-deploy
 gcp-control-plane-deploy: gcp-configure-kubectl ## Deploy XTrinode operator, API server, and gateway to the management cluster
 	@echo "Deploying XTrinode control plane to GCP management cluster..."
-	GCP_PROJECT_ID=$(GCP_PROJECT_ID) GCP_REGION=$(GCP_REGION) GCP_ZONE=$(GCP_ZONE) GCP_CLUSTER_NAME=$(GCP_CLUSTER_NAME) OPERATOR_NAMESPACE=$(GCP_OPERATOR_NAMESPACE) VERSION=$(VERSION) GATEWAY_REPLICA_COUNT=$(GATEWAY_REPLICA_COUNT) GATEWAY_REDIS_ENABLED=$(GATEWAY_REDIS_ENABLED) PROMETHEUS_ENABLED=$(PROMETHEUS_ENABLED) PROMETHEUS_STORAGE_CLASS=$(PROMETHEUS_STORAGE_CLASS) VECTOR_ENABLED=$(VECTOR_ENABLED) VECTOR_NAMESPACE=$(VECTOR_NAMESPACE) VECTOR_LOG_LEVEL=$(VECTOR_LOG_LEVEL) WEBHOOK_ENABLED=$(WEBHOOK_ENABLED) bash scripts/deploy-gcp.sh
+	GCP_PROJECT_ID=$(GCP_PROJECT_ID) GCP_REGION=$(GCP_REGION) GCP_ZONE=$(GCP_ZONE) GCP_CLUSTER_NAME=$(GCP_CLUSTER_NAME) OPERATOR_NAMESPACE=$(GCP_OPERATOR_NAMESPACE) VERSION=$(VERSION) GATEWAY_REPLICA_COUNT=$(GATEWAY_REPLICA_COUNT) GATEWAY_REDIS_ENABLED=$(GATEWAY_REDIS_ENABLED) PROMETHEUS_ENABLED=$(PROMETHEUS_ENABLED) PROMETHEUS_STORAGE_CLASS=$(PROMETHEUS_STORAGE_CLASS) VECTOR_ENABLED=$(VECTOR_ENABLED) VECTOR_NAMESPACE=$(VECTOR_NAMESPACE) VECTOR_LOG_LEVEL=$(VECTOR_LOG_LEVEL) WEBHOOK_ENABLED=$(WEBHOOK_ENABLED) HELM="$(HELM)" KUBECTL="$(KUBECTL)" GCLOUD="$(GCLOUD)" OPENSSL="$(OPENSSL)" bash scripts/deploy-gcp.sh
 
 .PHONY: gcp-gateway-redis-up
 gcp-gateway-redis-up: ## Redeploy gateway with in-chart Redis enabled
-	-kubectl delete deployment/xtrinode-gateway -n $(GATEWAY_NAMESPACE) --ignore-not-found=true --wait=true
+	$(KUBECTL) delete deployment/xtrinode-gateway -n $(GATEWAY_NAMESPACE) --ignore-not-found=true --wait=true
 	@$(MAKE) --no-print-directory gcp-control-plane-deploy GATEWAY_REDIS_ENABLED=true GATEWAY_REPLICA_COUNT=$(GATEWAY_REPLICA_COUNT)
-	kubectl rollout status deployment/xtrinode-gateway -n $(GATEWAY_NAMESPACE) --timeout=5m
-	kubectl rollout status deployment/xtrinode-gateway-redis -n $(GATEWAY_NAMESPACE) --timeout=5m
+	$(KUBECTL) rollout status deployment/xtrinode-gateway -n $(GATEWAY_NAMESPACE) --timeout=5m
+	$(KUBECTL) rollout status deployment/xtrinode-gateway-redis -n $(GATEWAY_NAMESPACE) --timeout=5m
 
 .PHONY: gcp-keda-resume-smoke
 gcp-keda-resume-smoke: gcp-configure-kubectl ## Test gateway Prometheus KEDA scale-up/down, auto-suspend, and auto-resume
@@ -1478,21 +1433,21 @@ gcp-keda-resume-smoke: gcp-configure-kubectl ## Test gateway Prometheus KEDA sca
 .PHONY: gcp-capg-workload-up
 gcp-capg-workload-up: gcp-configure-kubectl ## Create the CAPG-managed GKE workload cluster
 	@echo "Creating CAPG workload cluster..."
-	TARGET_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE) CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME) WAIT_TIMEOUT=$(CAPG_WAIT_TIMEOUT) bash scripts/capi/create-cluster.sh
+	TARGET_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE) CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME) WAIT_TIMEOUT=$(CAPG_WAIT_TIMEOUT) CAPG_VERSION=$(CAPG_VERSION) TERRAFORM="$(TERRAFORM)" KUBECTL="$(KUBECTL)" CLUSTERCTL="$(CLUSTERCTL)" bash scripts/capi/create-cluster.sh
 
 .PHONY: gcp-capg-nodepool-smoke
 gcp-capg-nodepool-smoke: gcp-configure-kubectl ## Apply a XTrinode CR that creates a managed CAPG nodepool
 	@echo "Running CAPG nodepool smoke..."
-	TARGET_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE) CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME) WAIT_TIMEOUT=$(CAPG_WAIT_TIMEOUT) bash scripts/capi/test-xtrinode-nodepool.sh
+	TARGET_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE) CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME) WAIT_TIMEOUT=$(CAPG_WAIT_TIMEOUT) KUBECTL="$(KUBECTL)" bash scripts/capi/test-xtrinode-nodepool.sh
 
 .PHONY: gcp-capg-workload-kubeconfig
 gcp-capg-workload-kubeconfig: gcp-configure-kubectl ## Write the generated CAPG workload cluster kubeconfig
-	kubectl get secret $(CAPG_WORKLOAD_CLUSTER_NAME)-user-kubeconfig -n $(CAPG_WORKLOAD_NAMESPACE) -o jsonpath='{.data.value}' | base64 -d > $(CAPG_WORKLOAD_KUBECONFIG)
+	$(KUBECTL) get secret $(CAPG_WORKLOAD_CLUSTER_NAME)-user-kubeconfig -n $(CAPG_WORKLOAD_NAMESPACE) -o jsonpath='{.data.value}' | base64 -d > $(CAPG_WORKLOAD_KUBECONFIG)
 	@echo "Wrote $(CAPG_WORKLOAD_KUBECONFIG)"
 
 .PHONY: gcp-capg-workload-nodes
 gcp-capg-workload-nodes: gcp-capg-workload-kubeconfig ## Show nodes in the CAPG-created workload cluster
-	kubectl --kubeconfig=$(CAPG_WORKLOAD_KUBECONFIG) get nodes -L xtrinode.io/node-pool,xtrinode.io/runtime
+	$(KUBECTL) --kubeconfig=$(CAPG_WORKLOAD_KUBECONFIG) get nodes -L xtrinode.io/node-pool,xtrinode.io/runtime
 
 .PHONY: gcp-recreate-all
 gcp-recreate-all: require-gcp-destroy-confirm ## From zero: teardown, recreate GCP management cluster, bootstrap CAPG, deploy XTrinode, create workload cluster, smoke nodepool
@@ -1512,9 +1467,9 @@ terraform-fmt: ## Format Terraform files for configured clouds
 	for cloud in $(TERRAFORM_CLOUDS); do \
 		dir="$(TF_DIR)/$$cloud"; \
 		echo "Formatting Terraform in $$dir..."; \
-		(cd "$$dir" && terraform fmt -recursive) || status=$$?; \
+		(cd "$$dir" && $(TERRAFORM) fmt -recursive) || status=$$?; \
 	done; \
-	exit $$status
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi
 	@echo "Terraform formatting complete"
 
 .PHONY: terraform-validate
@@ -1522,9 +1477,9 @@ terraform-validate: ## Validate Terraform for configured clouds
 	@echo "Validating Terraform for configured clouds: $(TERRAFORM_CLOUDS)"
 	@status=0; \
 	for cloud in $(TERRAFORM_CLOUDS); do \
-		$(MAKE) --no-print-directory terraform-validate-cloud CLOUD=$$cloud || status=$$?; \
+		$(MAKE_CMD) --no-print-directory terraform-validate-cloud CLOUD=$$cloud || status=$$?; \
 	done; \
-	exit $$status
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi
 	@echo "Terraform validation complete"
 
 .PHONY: terraform-validate-cloud
@@ -1538,11 +1493,11 @@ terraform-validate-cloud: ## Validate Terraform for one cloud (usage: make terra
 		exit 1; \
 	fi
 	@echo "Checking Terraform formatting for $(CLOUD)..."
-	cd $(TF_DIR)/$(CLOUD) && terraform fmt -check -recursive
+	cd $(TF_DIR)/$(CLOUD) && $(TERRAFORM) fmt -check -recursive
 	@echo "Initializing Terraform for $(CLOUD)..."
-	cd $(TF_DIR)/$(CLOUD) && terraform init -backend=false
+	cd $(TF_DIR)/$(CLOUD) && $(TERRAFORM) init -backend=false
 	@echo "Validating Terraform for $(CLOUD)..."
-	cd $(TF_DIR)/$(CLOUD) && terraform validate
+	cd $(TF_DIR)/$(CLOUD) && $(TERRAFORM) validate
 	@echo "Terraform validation complete for $(CLOUD)"
 
 .PHONY: terraform-output
@@ -1552,17 +1507,17 @@ terraform-output: ## Show Terraform outputs for configured clouds
 .PHONY: terraform-output-aws
 terraform-output-aws: ## Show AWS Terraform outputs
 	@echo "AWS Terraform Outputs:"
-	cd $(AWS_TF_DIR) && terraform output
+	cd $(AWS_TF_DIR) && $(TERRAFORM) output
 
 .PHONY: terraform-output-azure
 terraform-output-azure: ## Show Azure Terraform outputs
 	@echo "Azure Terraform Outputs:"
-	cd $(AZURE_TF_DIR) && terraform output
+	cd $(AZURE_TF_DIR) && $(TERRAFORM) output
 
 .PHONY: terraform-output-gcp
 terraform-output-gcp: ## Show GCP Terraform outputs
 	@echo "GCP Terraform Outputs:"
-	cd $(GCP_TF_DIR) && terraform output
+	cd $(GCP_TF_DIR) && $(TERRAFORM) output
 
 .PHONY: terraform-refresh
 terraform-refresh: ## Refresh Terraform state for configured clouds
@@ -1571,17 +1526,17 @@ terraform-refresh: ## Refresh Terraform state for configured clouds
 .PHONY: terraform-refresh-aws
 terraform-refresh-aws: ## Refresh AWS Terraform state
 	@echo "Refreshing AWS Terraform state..."
-	cd $(AWS_TF_DIR) && terraform refresh -var-file=$(TF_VAR_FILE)
+	cd $(AWS_TF_DIR) && $(TERRAFORM) refresh -var-file=$(TF_VAR_FILE)
 
 .PHONY: terraform-refresh-azure
 terraform-refresh-azure: ## Refresh Azure Terraform state
 	@echo "Refreshing Azure Terraform state..."
-	cd $(AZURE_TF_DIR) && terraform refresh -var-file=$(TF_VAR_FILE)
+	cd $(AZURE_TF_DIR) && $(TERRAFORM) refresh -var-file=$(TF_VAR_FILE)
 
 .PHONY: terraform-refresh-gcp
 terraform-refresh-gcp: ## Refresh GCP Terraform state
 	@echo "Refreshing GCP Terraform state..."
-	cd $(GCP_TF_DIR) && terraform refresh -var-file=$(TF_VAR_FILE)
+	cd $(GCP_TF_DIR) && $(TERRAFORM) refresh -var-file=$(TF_VAR_FILE)
 
 # =============================================================================
 # Dependency Management Commands
@@ -1590,21 +1545,21 @@ terraform-refresh-gcp: ## Refresh GCP Terraform state
 .PHONY: godeps
 godeps: ## Download Go dependencies
 	@echo "Downloading dependencies..."
-	cd $(OPERATOR_DIR) && go mod download
-	cd $(OPERATOR_DIR) && go mod verify
+	cd $(OPERATOR_DIR) && $(GO) mod download
+	cd $(OPERATOR_DIR) && $(GO) mod verify
 	@echo "Dependencies downloaded"
 
 .PHONY: godeps-update
 godeps-update: ## Update Go dependencies
 	@echo "Updating dependencies..."
-	cd $(OPERATOR_DIR) && go get -u ./...
-	cd $(OPERATOR_DIR) && go mod tidy
+	cd $(OPERATOR_DIR) && $(GO) get -u ./...
+	cd $(OPERATOR_DIR) && $(GO) mod tidy
 	@echo "Dependencies updated"
 
 .PHONY: godeps-vendor
 godeps-vendor: ## Vendor dependencies
 	@echo "Vendoring dependencies..."
-	cd $(OPERATOR_DIR) && go mod vendor
+	cd $(OPERATOR_DIR) && $(GO) mod vendor
 	@echo "Dependencies vendored"
 
 # =============================================================================
@@ -1633,7 +1588,7 @@ release-notes: ## Generate release notes from git commits
 check: gofmt govet lint-go ## Run all code quality checks
 
 .PHONY: ci-lint
-ci-lint: check lint-helm ## Run CI Go and Helm lint checks
+ci-lint: check lint-shell lint-yaml lint-helm lint-markdown ## Run CI Go, shell, YAML, Helm, and Markdown lint checks
 
 .PHONY: ci-test
 ci-test: ## Run CI test checks
@@ -1649,7 +1604,7 @@ ci-terraform-validate: terraform-validate-cloud ## Run CI Terraform validation (
 ci-terraform-validate-all: ## Run CI Terraform validation for configured clouds
 	@status=0; \
 	for cloud in $(TERRAFORM_CLOUDS); do \
-		$(MAKE) --no-print-directory ci-terraform-validate CLOUD=$$cloud || status=$$?; \
+		$(MAKE_CMD) --no-print-directory ci-terraform-validate CLOUD=$$cloud || status=$$?; \
 	done; \
 	exit $$status
 
@@ -1661,16 +1616,50 @@ print-var: ## Print a Make variable value (usage: make print-var VAR=GO_VERSION)
 	fi
 	@printf '%s\n' "$($(VAR))"
 
+.PHONY: tool-versions
+tool-versions: ## Print pinned local and CI tool versions
+	@printf '%-24s %s\n' "Go" "$(GO_VERSION)"
+	@printf '%-24s %s\n' "golangci-lint" "$(GOLANGCI_LINT_VERSION)"
+	@printf '%-24s %s\n' "controller-gen" "$(CONTROLLER_GEN_VERSION)"
+	@printf '%-24s %s\n' "setup-envtest" "$(SETUP_ENVTEST_VERSION)"
+	@printf '%-24s %s\n' "envtest Kubernetes" "$(ENVTEST_K8S_VERSION)"
+	@printf '%-24s %s\n' "Ruby" "$(RUBY_VERSION)"
+	@printf '%-24s %s\n' "godoc" "$(GODOC_VERSION)"
+	@printf '%-24s %s\n' "Node.js minimum" "$(NODE_VERSION)"
+	@printf '%-24s %s\n' "npm" "$(NPM_VERSION)"
+	@printf '%-24s %s\n' "markdownlint-cli" "$(MARKDOWNLINT_CLI_VERSION)"
+	@printf '%-24s %s\n' "Helm" "$(HELM_VERSION)"
+	@printf '%-24s %s\n' "kubectl" "$(KUBECTL_VERSION)"
+	@printf '%-24s %s\n' "Terraform" "$(TERRAFORM_VERSION)"
+	@printf '%-24s %s\n' "tflint" "$(TFLINT_VERSION)"
+	@printf '%-24s %s\n' "k3d" "$(K3D_VERSION)"
+	@printf '%-24s %s\n' "Tilt" "$(TILT_VERSION)"
+	@printf '%-24s %s\n' "uv" "$(UV_VERSION)"
+	@printf '%-24s %s\n' "clusterctl" "$(CLUSTERCTL_VERSION)"
+	@printf '%-24s %s\n' "CAPG" "$(CAPG_VERSION)"
+
 .PHONY: ci-tool-versions-output
 ci-tool-versions-output: ## Write CI tool versions to GITHUB_OUTPUT
 	@: "$${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 	@printf 'alpine=%s\n' "$(ALPINE_VERSION)" >> "$$GITHUB_OUTPUT"
 	@printf 'go=%s\n' "$(GO_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'golangci_lint=%s\n' "$(GOLANGCI_LINT_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'controller_gen=%s\n' "$(CONTROLLER_GEN_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'setup_envtest=%s\n' "$(SETUP_ENVTEST_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'ruby=%s\n' "$(RUBY_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'godoc=%s\n' "$(GODOC_VERSION)" >> "$$GITHUB_OUTPUT"
 	@printf 'helm=%s\n' "$(HELM_VERSION)" >> "$$GITHUB_OUTPUT"
 	@printf 'k3d=%s\n' "$(K3D_VERSION)" >> "$$GITHUB_OUTPUT"
 	@printf 'kubectl=%s\n' "$(KUBECTL_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'node=%s\n' "$(NODE_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'npm=%s\n' "$(NPM_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'markdownlint_cli=%s\n' "$(MARKDOWNLINT_CLI_VERSION)" >> "$$GITHUB_OUTPUT"
 	@printf 'terraform=%s\n' "$(TERRAFORM_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'tflint=%s\n' "$(TFLINT_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'tilt=%s\n' "$(TILT_VERSION)" >> "$$GITHUB_OUTPUT"
 	@printf 'uv=%s\n' "$(UV_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'clusterctl=%s\n' "$(CLUSTERCTL_VERSION)" >> "$$GITHUB_OUTPUT"
+	@printf 'capg=%s\n' "$(CAPG_VERSION)" >> "$$GITHUB_OUTPUT"
 
 .PHONY: ci-image-matrix-output
 ci-image-matrix-output: ## Write the Docker image matrix to GITHUB_OUTPUT
@@ -1699,8 +1688,8 @@ ci-create-release-tag: ## Create the release tag after release CI passes
 
 .PHONY: ci-helm-deps-release
 ci-helm-deps-release: helm-repo-setup ## Build Helm dependencies for release packaging
-	helm dependency build $(HELM_CHART_PATH)
-	helm dependency build $(UMBRELLA_HELM_CHART_PATH)
+	$(HELM) dependency build $(HELM_CHART_PATH)
+	$(HELM) dependency build $(UMBRELLA_HELM_CHART_PATH)
 
 .PHONY: ci-package-helm-release
 ci-package-helm-release: ## Package all release Helm charts (usage: RELEASE_VERSION=1.2.3 make ci-package-helm-release)
@@ -1709,37 +1698,37 @@ ci-package-helm-release: ## Package all release Helm charts (usage: RELEASE_VERS
 		exit 1; \
 	fi
 	mkdir -p dist
-	helm package "$(UMBRELLA_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
-	helm package "$(HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
-	helm package "$(API_SERVER_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
-	helm package "$(GATEWAY_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
+	$(HELM) package "$(UMBRELLA_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
+	$(HELM) package "$(HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
+	$(HELM) package "$(API_SERVER_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
+	$(HELM) package "$(GATEWAY_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
 
 .PHONY: ci-release-notes
 ci-release-notes: ## Write release notes to GITHUB_OUTPUT
 	scripts/ci/release-notes.sh
 
 .PHONY: ci-scan-image
-ci-scan-image: ensure-trivy ## Scan a built container image with Trivy (usage: make ci-scan-image IMAGE=repo/name:tag)
+ci-scan-image: ## Scan a built container image with Trivy (usage: make ci-scan-image IMAGE=repo/name:tag)
 	@if [ -z "$(IMAGE)" ]; then \
 		echo "ERROR: IMAGE is required"; \
 		exit 1; \
 	fi
-	trivy image --severity $(TRIVY_SEVERITY) --exit-code 1 "$(IMAGE)"
+	$(TRIVY) image --severity $(TRIVY_SEVERITY) --exit-code 1 "$(IMAGE)"
 
 .PHONY: security-scan-fs
-security-scan-fs: ensure-trivy ## Run Trivy filesystem scan and write SARIF output
+security-scan-fs: ## Run Trivy filesystem scan and write SARIF output
 	@echo "Running Trivy filesystem scan..."
-	trivy fs --severity $(TRIVY_SEVERITY) $(TRIVY_IGNORE_ARGS) --exit-code 1 --format sarif --output $(TRIVY_FS_SARIF) .
+	$(TRIVY) fs --severity $(TRIVY_SEVERITY) $(TRIVY_IGNORE_ARGS) --exit-code 1 --format sarif --output $(TRIVY_FS_SARIF) .
 	@echo "Filesystem scan complete: $(TRIVY_FS_SARIF)"
 
 .PHONY: security-scan-config
-security-scan-config: ensure-trivy helm-template ## Run Trivy config scan and fail on findings
+security-scan-config: helm-template ## Run Trivy config scan and fail on findings
 	@echo "Running Trivy config scan..."
 	@status=0; \
 	for target in $(TRIVY_CONFIG_TARGETS); do \
 		echo "Scanning $$target..."; \
 		output_file="$$(mktemp)"; \
-		trivy config --severity $(TRIVY_SEVERITY) --exit-code 1 \
+		$(TRIVY) config --severity $(TRIVY_SEVERITY) --exit-code 1 \
 			$(TRIVY_IGNORE_ARGS) \
 			--k8s-version "$(TRIVY_K8S_VERSION)" \
 			--helm-kube-version "$(TRIVY_HELM_KUBE_VERSION)" \
@@ -1777,34 +1766,21 @@ ci-release: ci-build ## CI release validation; publishing is handled by the rele
 # =============================================================================
 
 .PHONY: godocs
-godocs: ## Generate Go documentation
-	@echo "Generating Go documentation..."
-	@if ! command -v godoc >/dev/null 2>&1; then \
-		echo "Installing godoc..."; \
-		go install golang.org/x/tools/cmd/godoc@latest; \
-	fi
-	@echo "Go documentation generated. Run 'make godocs-serve' to view."
+godocs: ## Smoke-render Go documentation
+	@echo "Rendering Go documentation smoke page..."
+	@$(GODOC) -url=/pkg/fmt/ >/dev/null
+	@echo "Go documentation rendered. Run 'make godocs-serve' to view locally."
 
 .PHONY: godocs-serve
 godocs-serve: ## Serve Go documentation locally
 	@echo "Starting godoc server on http://localhost:6060"
 	@echo "Press Ctrl+C to stop"
-	@if ! command -v godoc >/dev/null 2>&1; then \
-		echo "Installing godoc..."; \
-		go install golang.org/x/tools/cmd/godoc@latest; \
-	fi
-	$$(go env GOPATH)/bin/godoc -http=:6060
+	$(GODOC) -http=:6060
 
 .PHONY: godocs-open
 godocs-open: ## Open Go documentation in browser
 	@echo "Opening Go documentation in browser..."
-	@if command -v xdg-open >/dev/null 2>&1; then \
-		xdg-open http://localhost:6060/pkg/github.com/xtrinode/xtrinode/; \
-	elif command -v open >/dev/null 2>&1; then \
-		open http://localhost:6060/pkg/github.com/xtrinode/xtrinode/; \
-	else \
-		echo "Please open http://localhost:6060/pkg/github.com/xtrinode/xtrinode/ in your browser"; \
-	fi
+	$(OPEN) http://localhost:6060/pkg/github.com/xtrinode/xtrinode/
 
 .PHONY: verify
 verify: verify-manifests check test terraform-validate ## Verify everything (manifests, code quality, tests, terraform)

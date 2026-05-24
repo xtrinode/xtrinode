@@ -17,7 +17,7 @@
 > exercised against a live upstream system.
 >
 > For production use, validate each non-PostgreSQL/non-Iceberg connector against
-> the Trino version tracked in [COMPATIBILITY_MATRIX.md](COMPATIBILITY_MATRIX.md).
+> the Trino version tracked in [TOOLING.md](TOOLING.md#runtime-and-provider-compatibility).
 > When a typed field does not expose the exact setting you need, use the
 > `properties` map or the `Custom` connector type with the exact property names
 > from the [official Trino connector documentation](https://trino.io/docs/current/connector.html).

@@ -5,17 +5,10 @@ coordinator/worker pair.
 
 ## Prerequisites
 
-- Docker
-- kubectl
-- Helm
-- jq
-- Tilt, for the interactive dev loop
-
-k3d must be installed separately or passed with `K3D=/path/to/k3d`. `make ensure-k3d` only verifies availability:
-
-```bash
-make ensure-k3d
-```
+Install the local stack tools listed in [../docs/TOOLING.md](../docs/TOOLING.md): Docker with Buildx, `kubectl`, Helm,
+k3d, Tilt, `uv`, Python, `jq`, and `curl`. The Makefile defaults to local `bin/k3d`, `bin/tilt`, and `bin/uv`. Override
+command paths with variables such as `K3D=/path/to/k3d`, `TILT=/path/to/tilt`, `UV=/path/to/uv`, `HELM=/path/to/helm`,
+or `KUBECTL=/path/to/kubectl` when needed.
 
 ## Headless E2E
 
@@ -156,7 +149,7 @@ giving Tilt a good interactive workflow.
 Useful Tilt args:
 
 ```bash
-tilt up -f tilt/Tiltfile -- --image_tag=tilt --trino_tag=480
+bin/tilt up -f tilt/Tiltfile -- --image_tag=tilt --trino_tag=480 --uv=bin/uv --k3d=bin/k3d
 ```
 
 Manual Tilt e2e resources:

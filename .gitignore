@@ -19,6 +19,9 @@ dist/
 __pycache__/
 *.py[cod]
 
+# Node
+node_modules/
+
 # IDE
 .agents/
 .codex/

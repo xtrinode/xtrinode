@@ -7,6 +7,8 @@ TRINO_IMAGE_REPOSITORY="${TRINO_IMAGE_REPOSITORY:-trinodb/trino}"
 TRINO_IMAGE_TAG="${TRINO_IMAGE_TAG:-480}"
 LOCAL_PRELOAD_IMAGES_ENABLED="${LOCAL_PRELOAD_IMAGES_ENABLED:-true}"
 LOCAL_PRELOAD_SKIP_PULL="${LOCAL_PRELOAD_SKIP_PULL:-false}"
+K3D="${K3D:-k3d}"
+DOCKER="${DOCKER:-docker}"
 
 DEFAULT_LOCAL_PRELOAD_IMAGES="${TRINO_IMAGE_REPOSITORY}:${TRINO_IMAGE_TAG}
 postgres:16-alpine
@@ -25,33 +27,17 @@ ghcr.io/kedacore/keda-admission-webhooks:2.19.0"
 
 LOCAL_PRELOAD_IMAGES="${LOCAL_PRELOAD_IMAGES:-$DEFAULT_LOCAL_PRELOAD_IMAGES}"
 
-resolve_k3d() {
-  if [ -n "${K3D:-}" ]; then
-    if command -v "$K3D" >/dev/null 2>&1; then
-      command -v "$K3D"
-    else
-      printf '%s\n' "$K3D"
-    fi
-    return
-  fi
-  if command -v k3d >/dev/null 2>&1; then
-    command -v k3d
-    return
-  fi
-}
-
 if [ "$LOCAL_PRELOAD_IMAGES_ENABLED" != "true" ]; then
   echo "Local image preload is disabled"
   exit 0
 fi
 
-K3D_BIN="$(resolve_k3d)"
-if [ -z "$K3D_BIN" ] || [ ! -x "$K3D_BIN" ]; then
-  echo "ERROR: k3d not found. Run: make ensure-k3d" >&2
+if ! "$K3D" version >/dev/null 2>&1; then
+  echo "ERROR: k3d is required. Install it or set K3D=/path/to/k3d." >&2
   exit 1
 fi
 
-if ! "$K3D_BIN" cluster list "$K3D_CLUSTER_NAME" >/dev/null 2>&1; then
+if ! "$K3D" cluster list "$K3D_CLUSTER_NAME" >/dev/null 2>&1; then
   echo "ERROR: k3d cluster not found: ${K3D_CLUSTER_NAME}. Run: make k3d-up" >&2
   exit 1
 fi
@@ -67,7 +53,7 @@ trap cleanup EXIT
 pull_if_needed() {
   local image="$1"
 
-  if docker image inspect "$image" >/dev/null 2>&1; then
+  if "$DOCKER" image inspect "$image" >/dev/null 2>&1; then
     echo "Image already present locally: ${image}"
     return
   fi
@@ -78,7 +64,7 @@ pull_if_needed() {
   fi
 
   echo "Pulling local preload image: ${image}"
-  docker pull "$image"
+  "$DOCKER" pull "$image"
 }
 
 tagged_images=()
@@ -95,7 +81,7 @@ done
 
 if [ "${#tagged_images[@]}" -gt 0 ]; then
   echo "Importing tagged images into k3d cluster ${K3D_CLUSTER_NAME}"
-  "$K3D_BIN" image import --cluster "$K3D_CLUSTER_NAME" "${tagged_images[@]}"
+  "$K3D" image import --cluster "$K3D_CLUSTER_NAME" "${tagged_images[@]}"
 fi
 
 for image in "${digest_images[@]}"; do
@@ -103,9 +89,9 @@ for image in "${digest_images[@]}"; do
   tar_file="${TMPDIR:-/tmp}/xtrinode-preload-${safe_name}.tar"
   tar_files+=("$tar_file")
   echo "Saving digest image archive: ${image}"
-  docker save -o "$tar_file" "$image"
+  "$DOCKER" save -o "$tar_file" "$image"
   echo "Importing digest image archive into k3d cluster ${K3D_CLUSTER_NAME}: ${image}"
-  "$K3D_BIN" image import --cluster "$K3D_CLUSTER_NAME" "$tar_file"
+  "$K3D" image import --cluster "$K3D_CLUSTER_NAME" "$tar_file"
 done
 
 echo "Local k3d image preload complete"

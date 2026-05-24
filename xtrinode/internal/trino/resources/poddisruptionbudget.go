@@ -11,19 +11,14 @@ import (
 	"github.com/xtrinode/xtrinode/internal/config"
 )
 
-// parseIntOrString converts interface{} to intstr.IntOrString
-// Handles int64, float64, and string types from YAML/JSON unmarshaling
 func parseIntOrString(v interface{}) (intstr.IntOrString, bool) {
-	switch val := v.(type) {
-	case int64:
-		return intstr.FromInt32(int32(val)), true
-	case float64:
-		return intstr.FromInt32(int32(val)), true
-	case string:
-		return intstr.FromString(val), true
-	default:
-		return intstr.FromInt32(0), false
+	if val, ok := ParseInt32(v); ok {
+		return intstr.FromInt32(val), true
 	}
+	if val, ok := v.(string); ok {
+		return intstr.Parse(val), true
+	}
+	return intstr.IntOrString{}, false
 }
 
 // BuildCoordinatorPodDisruptionBudget builds a PodDisruptionBudget for the coordinator

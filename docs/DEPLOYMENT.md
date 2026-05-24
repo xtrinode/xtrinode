@@ -51,11 +51,8 @@ exact non-wildcard CORS origins, and tenant-aware authorization is still not imp
 
 ### Prerequisites
 
-- `gcloud` CLI authenticated
-- `gke-gcloud-auth-plugin` (for kubectl)
-- Helm 3.x
-- Terraform (for infra)
-- Docker (for building images)
+Install the baseline deployment tools in [TOOLING.md](TOOLING.md), then authenticate `gcloud` and install
+`gke-gcloud-auth-plugin` for `kubectl` access to GKE.
 
 ### Quick Deploy (infra + images already exist)
 
@@ -68,7 +65,7 @@ Runs `scripts/deploy-gcp.sh`, which:
 1. Configures kubectl for the GKE cluster
 2. Creates namespaces (`xtrinode-system`, `xtrinode-gateway`)
 3. Runs `make manifests` (CRDs → helm chart)
-4. Ensures Helm repositories are configured, then updates Helm dependencies
+4. Runs Helm repo setup, then updates Helm dependencies
 5. Deploys observability when enabled
 6. Deploys operator, API server, gateway via Helm
 
@@ -135,11 +132,7 @@ pod placement to the managed pool label.
 
 ### Prerequisites
 
-- AWS CLI configured
-- Terraform
-- Docker
-- Helm 3.x
-- kubectl
+Install the baseline deployment tools in [TOOLING.md](TOOLING.md), then configure the AWS CLI for the target account.
 
 ### Full Deploy (from scratch)
 
@@ -201,12 +194,8 @@ Key environment variables:
 
 ### Prerequisites
 
-- Azure CLI authenticated with `az login`
-- Terraform
-- Docker
-- Helm 3.x
-- kubectl
-- Network path to the AKS API server. The Terraform defaults create a private
+Install the baseline deployment tools in [TOOLING.md](TOOLING.md), then authenticate the Azure CLI with `az login`.
+You also need a network path to the AKS API server. The Terraform defaults create a private
   cluster, so run the Helm portion from the VNet, VPN, bastion, or an equivalent
   private access path.
 

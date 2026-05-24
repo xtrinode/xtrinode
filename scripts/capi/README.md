@@ -45,11 +45,10 @@ This is optional and separate from the Terraform-created management GKE cluster:
 scripts/capi/create-cluster.sh
 ```
 
-The script installs `clusterctl` into the user cache when it is not on `PATH`.
-Set `XTRINODE_TOOL_CACHE_DIR` to override that location. It uses Terraform outputs
-or `terraform.tfvars` for GCP settings, creates the target namespace, runs a server-side
-dry-run, applies the generated manifest, and patches in the existing Terraform subnet
-for manual-mode VPCs.
+Install the CAPG tools listed in [../../docs/TOOLING.md](../../docs/TOOLING.md) before running this flow.
+The script uses Terraform outputs for GCP settings, creates the target namespace, runs a server-side dry-run, applies
+the generated manifest, and patches in the existing Terraform subnet for manual-mode VPCs. Override command paths with
+`TERRAFORM`, `KUBECTL`, or `CLUSTERCTL` when needed.
 
 It runs:
 
@@ -65,6 +64,7 @@ Defaults:
 - `CLUSTER_NAME=xtrinode-capg-workload`
 - `TARGET_NAMESPACE=xtrinode-capg-real`
 - `WORKER_MACHINE_COUNT=0`
+- `CLUSTERCTL=bin/clusterctl` when invoked through Make; direct script runs default to `clusterctl`
 - `CAPG_VERSION=v1.11.1`
 - `GCP_NETWORK_NAME=xtrinode-network`
 - `GCP_SUBNET_NAME=xtrinode-subnet`

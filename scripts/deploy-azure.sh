@@ -5,12 +5,9 @@
 # End-to-end: provision Azure infrastructure with Terraform, build Docker
 # images locally, push to ACR, and deploy XTrinode to AKS with Helm.
 #
-# Prerequisites:
+# Prerequisites: see docs/TOOLING.md for versions.
 #   - Azure CLI authenticated (`az login`)
-#   - Docker running
-#   - Terraform >= 1.0
-#   - Helm >= 3.x
-#   - kubectl
+#   - Docker, Terraform, Helm, kubectl, and openssl
 #
 # Usage:
 #   ./scripts/deploy-azure.sh                  # Full deploy
@@ -26,6 +23,13 @@ TF_DIR="$ROOT_DIR/terraform/azure"
 OPERATOR_DIR="$ROOT_DIR/xtrinode"
 HELM_DIR="$ROOT_DIR/helm"
 DOCKERFILE="$ROOT_DIR/docker/Dockerfile"
+DOCKER="${DOCKER:-docker}"
+TERRAFORM="${TERRAFORM:-terraform}"
+HELM="${HELM:-helm}"
+KUBECTL="${KUBECTL:-kubectl}"
+MAKE="${MAKE:-make}"
+AZ="${AZ:-az}"
+OPENSSL="${OPENSSL:-openssl}"
 
 DEFAULT_IMAGE_VERSION="$(
   awk '/^appVersion:/ {print $2; exit}' "$ROOT_DIR/helm/xtrinode/Chart.yaml" 2>/dev/null |
@@ -87,16 +91,8 @@ ok() { printf 'OK: %s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-check_tool() {
-  command -v "$1" >/dev/null 2>&1 || fail "$1 is required but not installed."
-}
-
 random_token() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
-  else
-    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
-  fi
+  "$OPENSSL" rand -hex 32
 }
 
 postgres_enabled() {
@@ -127,7 +123,7 @@ append_terraform_vars() {
 
 terraform_output_raw() {
   local output_name="$1"
-  terraform -chdir="$TF_DIR" output -raw "$output_name" 2>/dev/null || true
+  "$TERRAFORM" -chdir="$TF_DIR" output -raw "$output_name" 2>/dev/null || true
 }
 
 resolve_acr_login_server() {
@@ -144,7 +140,7 @@ resolve_acr_login_server() {
   fi
 
   local discovered
-  discovered="$(az acr list --resource-group "$RESOURCE_GROUP_NAME" --query '[0].loginServer' -o tsv 2>/dev/null || true)"
+  discovered="$("$AZ" acr list --resource-group "$RESOURCE_GROUP_NAME" --query '[0].loginServer' -o tsv 2>/dev/null || true)"
   if [ -n "$discovered" ]; then
     printf '%s\n' "$discovered"
     return
@@ -153,19 +149,11 @@ resolve_acr_login_server() {
   fail "Could not determine ACR login server. Set ACR_LOGIN_SERVER or run Terraform first."
 }
 
-info "Preflight checks"
-check_tool az
-check_tool docker
-check_tool terraform
-check_tool helm
-check_tool kubectl
-check_tool make
-
 if [ -n "$AZURE_SUBSCRIPTION_ID" ]; then
-  az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+  "$AZ" account set --subscription "$AZURE_SUBSCRIPTION_ID"
 fi
 
-AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv 2>/dev/null)" \
+AZURE_SUBSCRIPTION_ID="$("$AZ" account show --query id -o tsv 2>/dev/null)" \
   || fail "Azure CLI is not authenticated. Run: az login"
 [ -n "$AZURE_SUBSCRIPTION_ID" ] || fail "Azure subscription ID is empty."
 ok "Azure subscription: $AZURE_SUBSCRIPTION_ID  Region: $AZURE_REGION"
@@ -180,17 +168,17 @@ if [ "$DESTROY" = true ]; then
   [ "$confirm" = "yes" ] || { echo "Aborted."; exit 0; }
 
   info "Removing Helm releases"
-  az aks get-credentials \
+  "$AZ" aks get-credentials \
     --resource-group "$RESOURCE_GROUP_NAME" \
     --name "$CLUSTER_NAME" \
     --overwrite-existing 2>/dev/null || true
-  helm uninstall xtrinode-gateway -n "$GATEWAY_NAMESPACE" 2>/dev/null || true
-  helm uninstall xtrinode-api-server -n "$OPERATOR_NAMESPACE" 2>/dev/null || true
-  helm uninstall xtrinode-operator -n "$OPERATOR_NAMESPACE" 2>/dev/null || true
+  "$HELM" uninstall xtrinode-gateway -n "$GATEWAY_NAMESPACE" 2>/dev/null || true
+  "$HELM" uninstall xtrinode-api-server -n "$OPERATOR_NAMESPACE" 2>/dev/null || true
+  "$HELM" uninstall xtrinode-operator -n "$OPERATOR_NAMESPACE" 2>/dev/null || true
 
   info "Running terraform destroy"
   cd "$TF_DIR"
-  terraform destroy -auto-approve "${terraform_vars[@]}" \
+  "$TERRAFORM" destroy -auto-approve "${terraform_vars[@]}" \
     -var "postgres_admin_password=${POSTGRES_PASSWORD:-dummy}"
   ok "All Azure resources destroyed"
   exit 0
@@ -208,21 +196,21 @@ if [ "$SKIP_TERRAFORM" = false ]; then
   fi
 
   cd "$TF_DIR"
-  terraform init -upgrade
-  terraform plan "${terraform_vars[@]}" -out=tfplan
-  terraform apply tfplan
+  "$TERRAFORM" init -upgrade
+  "$TERRAFORM" plan "${terraform_vars[@]}" -out=tfplan
+  "$TERRAFORM" apply tfplan
   ok "Terraform apply complete"
 else
   info "Step 1/5: Skipping Terraform (--skip-terraform)"
 fi
 
 info "Step 2/5: Configuring kubectl for AKS"
-az aks get-credentials \
+"$AZ" aks get-credentials \
   --resource-group "$RESOURCE_GROUP_NAME" \
   --name "$CLUSTER_NAME" \
   --overwrite-existing
 
-kubectl cluster-info >/dev/null 2>&1 \
+"$KUBECTL" cluster-info >/dev/null 2>&1 \
   || fail "Cannot connect to AKS. For private clusters, run this from the VNet, Azure Cloud Shell command invoke, VPN, or bastion."
 ok "kubectl configured; cluster reachable"
 
@@ -247,7 +235,7 @@ if [ "$SKIP_BUILD" = false ]; then
     image_name="xtrinode-${name}"
     tag="${ACR_LOGIN_SERVER}/${image_name}:${VERSION}"
     info "Building ${image_name}"
-    docker build \
+    "$DOCKER" build \
       --build-arg APP_PACKAGE="$app_package" \
       --build-arg APP_PORT="$app_port" \
       --build-arg VERSION="$VERSION" \
@@ -260,13 +248,13 @@ if [ "$SKIP_BUILD" = false ]; then
   done
 
   info "Step 4/5: Pushing images to ACR"
-  az acr login --name "$ACR_NAME"
+  "$AZ" acr login --name "$ACR_NAME"
 
   for comp in "${COMPONENTS[@]}"; do
     IFS=':' read -r name _ <<< "$comp"
     image_name="xtrinode-${name}"
-    docker push "${ACR_LOGIN_SERVER}/${image_name}:${VERSION}"
-    docker push "${ACR_LOGIN_SERVER}/${image_name}:latest"
+    "$DOCKER" push "${ACR_LOGIN_SERVER}/${image_name}:${VERSION}"
+    "$DOCKER" push "${ACR_LOGIN_SERVER}/${image_name}:latest"
   done
 else
   info "Step 3/5: Skipping Docker build (--skip-build)"
@@ -274,9 +262,9 @@ else
 fi
 
 info "Step 5/5: Deploying to AKS via Helm"
-kubectl create namespace "$OPERATOR_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace "$GATEWAY_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace team-test --dry-run=client -o yaml | kubectl apply -f -
+"$KUBECTL" create namespace "$OPERATOR_NAMESPACE" --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create namespace "$GATEWAY_NAMESPACE" --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create namespace team-test --dry-run=client -o yaml | "$KUBECTL" apply -f -
 
 if [ -z "$API_SERVER_AUTH_TOKEN" ]; then
   API_SERVER_AUTH_TOKEN="$(random_token)"
@@ -291,22 +279,22 @@ gateway_auth_keys_file="$(mktemp)"
 trap 'rm -f "$auth_token_file" "$resume_auth_token_file" "$gateway_auth_keys_file"' EXIT
 printf '%s' "$API_SERVER_AUTH_TOKEN" > "$auth_token_file"
 printf '%s' "$API_SERVER_RESUME_AUTH_TOKEN" > "$resume_auth_token_file"
-kubectl create secret generic "$API_SERVER_AUTH_SECRET" \
+"$KUBECTL" create secret generic "$API_SERVER_AUTH_SECRET" \
   --namespace "$OPERATOR_NAMESPACE" \
   --from-file=token="$auth_token_file" \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl create secret generic "$API_SERVER_RESUME_AUTH_SECRET" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create secret generic "$API_SERVER_RESUME_AUTH_SECRET" \
   --namespace "$OPERATOR_NAMESPACE" \
   --from-file=token="$resume_auth_token_file" \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl create secret generic "$API_SERVER_RESUME_AUTH_SECRET" \
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
+"$KUBECTL" create secret generic "$API_SERVER_RESUME_AUTH_SECRET" \
   --namespace "$GATEWAY_NAMESPACE" \
   --from-file=token="$resume_auth_token_file" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | "$KUBECTL" apply -f -
 
 if [ "$GATEWAY_AUTH_ENABLED" = "true" ]; then
   existing_gateway_keys="$(
-    kubectl get secret "$GATEWAY_AUTH_SECRET" \
+    "$KUBECTL" get secret "$GATEWAY_AUTH_SECRET" \
       --namespace "$GATEWAY_NAMESPACE" \
       -o "go-template={{ index .data \"$GATEWAY_AUTH_SECRET_KEY\" }}" 2>/dev/null |
       base64 -d 2>/dev/null || true
@@ -318,23 +306,23 @@ if [ "$GATEWAY_AUTH_ENABLED" = "true" ]; then
   else
     printf '%s: "%s"\n' "$GATEWAY_API_KEY_ID" "$(random_token)" > "$gateway_auth_keys_file"
   fi
-  kubectl create secret generic "$GATEWAY_AUTH_SECRET" \
+  "$KUBECTL" create secret generic "$GATEWAY_AUTH_SECRET" \
     --namespace "$GATEWAY_NAMESPACE" \
     --from-file="$GATEWAY_AUTH_SECRET_KEY=$gateway_auth_keys_file" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | "$KUBECTL" apply -f -
 fi
 
 info "Generating manifests (CRDs)"
-cd "$ROOT_DIR" && make manifests
-kubectl apply -f "$HELM_DIR/xtrinode-operator/crds"
+cd "$ROOT_DIR" && "$MAKE" manifests
+"$KUBECTL" apply -f "$HELM_DIR/xtrinode-operator/crds"
 
 info "Building Helm dependencies"
-helm dependency build "$HELM_DIR/xtrinode-operator"
-helm dependency build "$HELM_DIR/xtrinode-observability"
+"$HELM" dependency build "$HELM_DIR/xtrinode-operator"
+"$HELM" dependency build "$HELM_DIR/xtrinode-observability"
 
 if [ "$PROMETHEUS_ENABLED" = "true" ] || [ "$VECTOR_ENABLED" = "true" ]; then
   info "Deploying xtrinode-observability"
-  helm upgrade --install xtrinode-observability "$HELM_DIR/xtrinode-observability" \
+  "$HELM" upgrade --install xtrinode-observability "$HELM_DIR/xtrinode-observability" \
     --namespace "$OBSERVABILITY_NAMESPACE" \
     --create-namespace \
     --set prometheus-stack.enabled="$PROMETHEUS_ENABLED" \
@@ -363,7 +351,7 @@ if [ "$PROMETHEUS_ENABLED" = "true" ] || [ "$VECTOR_ENABLED" = "true" ]; then
 fi
 
 info "Deploying xtrinode-operator"
-helm upgrade --install xtrinode-operator "$HELM_DIR/xtrinode-operator" \
+"$HELM" upgrade --install xtrinode-operator "$HELM_DIR/xtrinode-operator" \
   --take-ownership \
   --namespace "$OPERATOR_NAMESPACE" \
   --set image.repository="${ACR_LOGIN_SERVER}/xtrinode-operator" \
@@ -377,7 +365,7 @@ helm upgrade --install xtrinode-operator "$HELM_DIR/xtrinode-operator" \
   --wait --timeout 5m
 
 info "Deploying xtrinode-api-server"
-helm upgrade --install xtrinode-api-server "$HELM_DIR/xtrinode-api-server" \
+"$HELM" upgrade --install xtrinode-api-server "$HELM_DIR/xtrinode-api-server" \
   --take-ownership \
   --namespace "$OPERATOR_NAMESPACE" \
   --set image.repository="${ACR_LOGIN_SERVER}/xtrinode-api-server" \
@@ -391,7 +379,7 @@ helm upgrade --install xtrinode-api-server "$HELM_DIR/xtrinode-api-server" \
   --wait --timeout 5m
 
 info "Deploying xtrinode-gateway"
-helm upgrade --install xtrinode-gateway "$HELM_DIR/xtrinode-gateway" \
+"$HELM" upgrade --install xtrinode-gateway "$HELM_DIR/xtrinode-gateway" \
   --force \
   --namespace "$GATEWAY_NAMESPACE" \
   --set image.repository="${ACR_LOGIN_SERVER}/xtrinode-gateway" \

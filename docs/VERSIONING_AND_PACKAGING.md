@@ -35,7 +35,7 @@ We use [Semantic Versioning](https://semver.org/) (SemVer) for releases:
    make docker-build VERSION=0.1.0
    ```
 
-3. **Git Tag Detection** (Fallback):
+3. **Git Tag Detection**:
    - Exact `vMAJOR.MINOR.PATCH` tags are used as the default version, with the leading `v` stripped.
    - If the current commit is not exactly tagged, the default version is `dev`.
    - Set `VERSION=0.1.0` explicitly for manual component image builds.
@@ -213,11 +213,14 @@ make build-operator
 
 ### **On Pull Request or Push to Main**
 
-1. **Lint**: Go fmt, vet, golangci-lint, and Helm lint
+1. **Lint**: Go fmt, vet, golangci-lint, Helm lint, and markdown lint
 2. **Test**: Unit tests with coverage
 3. **Verify**: Manifests up to date
 4. **Security**: Trivy filesystem/config checks
 5. **Image Build**: Skipped; image publishing is limited to the release path
+
+CI and local toolchain versions are centralized in [TOOLING.md](TOOLING.md). Node-based documentation tooling is pinned
+through `package.json` and `package-lock.json`.
 
 ### **On Release PR Merge**
 

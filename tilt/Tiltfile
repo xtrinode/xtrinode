@@ -1,15 +1,23 @@
 config.define_string('image_tag')
 config.define_string('trino_tag')
 config.define_string('uv')
+config.define_string('helm')
+config.define_string('k3d')
+config.define_string('kubectl')
+config.define_string('docker')
 cfg = config.parse()
 
 image_tag = cfg.get('image_tag', 'tilt')
 trino_tag = cfg.get('trino_tag', '480')
 uv = cfg.get('uv', 'uv')
+helm = cfg.get('helm', 'helm')
+k3d = cfg.get('k3d', 'k3d')
+kubectl = cfg.get('kubectl', 'kubectl')
+docker = cfg.get('docker', 'docker')
 
 local_resource(
     'k3d',
-    'cd .. && ./tilt/scripts/k3d-up.sh',
+    'cd .. && K3D=%s KUBECTL=%s ./tilt/scripts/k3d-up.sh' % (k3d, kubectl),
     deps=['scripts/k3d-up.sh'],
     auto_init=False,
 )
@@ -34,7 +42,7 @@ def image_build(name, package, port):
 
 def helm_template(name, chart, namespace, values, sets=[]):
     args = [
-        'helm', 'template', name, chart,
+        helm, 'template', name, chart,
         '--namespace', namespace,
         '--values', values,
         '--include-crds',
@@ -46,15 +54,13 @@ def helm_template(name, chart, namespace, values, sets=[]):
 def robot_cmd(args):
     return (
         "cd .. && " +
-        "if ! command -v %s >/dev/null 2>&1; then " +
-        "echo 'ERROR: uv is required for local e2e. Install uv or run Make with ROBOT_RUNNER=robot.'; " +
-        "exit 1; " +
-        "fi; " +
         "UV_CACHE_DIR=/tmp/xtrinode-uv-cache %s run --project tilt/e2e robot %s"
-    ) % (uv, uv, args)
+    ) % (uv, args)
 
 def preload_cmd():
-    return "cd .. && TRINO_IMAGE_TAG=%s ./tilt/scripts/preload-local-images.sh" % trino_tag
+    return (
+        "cd .. && K3D=%s DOCKER=%s TRINO_IMAGE_TAG=%s ./tilt/scripts/preload-local-images.sh"
+    ) % (k3d, docker, trino_tag)
 
 image_build('xtrinode-operator', './cmd/operator', '8081')
 image_build('xtrinode-api-server', './cmd/api-server', '8081')
