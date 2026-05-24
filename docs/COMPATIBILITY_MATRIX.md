@@ -6,11 +6,12 @@ This matrix records the versions the repository is built and tested against. Kee
 | Component | Current version | Source |
 | --- | --- | --- |
 | Go toolchain | `1.26.3` | `xtrinode/go.mod`, `tools/go.mod` |
+| Local Kubernetes target | `v1.32.3` | `Makefile` `K3D_K3S_IMAGE`, `KUBECTL_VERSION` |
 | Kubernetes API libraries | `v0.35.0` | `xtrinode/go.mod` |
 | controller-runtime | `v0.22.4` | `xtrinode/go.mod` |
 | controller-tools / controller-gen | `v0.20.1` | `tools/go.mod` |
 | KEDA Go module | `v2.18.3` | `xtrinode/go.mod` |
-| KEDA Helm chart | `2.18.0` | `helm/xtrinode-operator/Chart.yaml` |
+| KEDA Helm chart | `2.19.0` | `helm/xtrinode-operator/Chart.yaml` |
 | XTrinode Helm chart version | `0.1.0` | `helm/xtrinode*/Chart.yaml` `version` fields and umbrella dependencies |
 | XTrinode component image version | `0.1.0` | `helm/xtrinode*/Chart.yaml` `appVersion` fields |
 | Default Trino runtime image tag | `480` | `Makefile` `TRINO_IMAGE_TAG`, `internal/config` |

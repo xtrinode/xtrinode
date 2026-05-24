@@ -83,7 +83,7 @@ func TestValuesOverlayJMXExporterBuildsChartAlignedResources(t *testing.T) {
 	require.NotNil(t, jmxConfigMap)
 	assert.Contains(t, jmxConfigMap.Data["jmx-exporter-config.yaml"], "hostPort: localhost:19080")
 
-	deployment, err := BuildWorkerDeployment(xtrinode, &preset, "trino-test-trino-worker-rev", nil, "rev", "hash", nil)
+	deployment, err := BuildWorkerDeployment(xtrinode, "trino-test-trino-worker-rev", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
 	assert.True(t, hasContainerPort(&deployment.Spec.Template.Spec.Containers[0], "jmx-registry", 19080))

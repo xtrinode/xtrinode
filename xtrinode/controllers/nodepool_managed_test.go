@@ -312,6 +312,51 @@ func TestEnsureGCPManagedMachinePool(t *testing.T) {
 	assert.False(t, found, "bare GKE versions should be omitted to avoid repeated GKE upgrade operations")
 }
 
+func TestEnsureGCPManagedMachinePool_SchedulePodsAddsStableNodeLabel(t *testing.T) {
+	xtrinode := &analyticsv1.XTrinode{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "analytics.xtrinode.io/v1",
+			Kind:       "XTrinode",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-xtrinode",
+			Namespace: "default",
+			UID:       types.UID("test-uid"),
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			NodePool: &analyticsv1.NodePoolSpec{
+				Name:              "runtime-pool",
+				Provider:          "gcp",
+				ProviderMode:      "managed",
+				KubernetesVersion: "v1.28.0",
+				SchedulePods:      true,
+				GCP: &analyticsv1.GCPNodePoolSpec{
+					MachineType: "n1-standard-4",
+				},
+			},
+		},
+	}
+
+	client := newTestClient(newTestSchemeAnalyticsOnly())
+	adapter := NewNodePoolAdapter(client, newTestLogger())
+
+	require.NoError(t, adapter.ensureGCPManagedMachinePool(context.Background(), xtrinode))
+
+	infraPool := &unstructured.Unstructured{}
+	infraPool.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "infrastructure.cluster.x-k8s.io",
+		Version: "v1beta1",
+		Kind:    "GCPManagedMachinePool",
+	})
+	require.NoError(t, client.Get(context.Background(), types.NamespacedName{
+		Name:      "runtime-pool",
+		Namespace: xtrinode.Namespace,
+	}, infraPool))
+
+	kubernetesLabels, _, _ := unstructured.NestedStringMap(infraPool.Object, "spec", "kubernetesLabels")
+	assert.Equal(t, "runtime-pool", kubernetesLabels[config.NodePoolSchedulingLabel])
+}
+
 func TestEnsureGCPManagedMachinePool_RetainsExactGKEVersion(t *testing.T) {
 	xtrinode := &analyticsv1.XTrinode{
 		TypeMeta: metav1.TypeMeta{

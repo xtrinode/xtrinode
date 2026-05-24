@@ -31,6 +31,23 @@ func getNodePoolName(nodePool *analyticsv1.NodePoolSpec, xtrinodeName string) st
 	return xtrinodeName + config.NodePoolNameSuffix
 }
 
+func effectiveNodePoolLabels(nodePool *analyticsv1.NodePoolSpec, poolName string) map[string]string {
+	if nodePool == nil {
+		return nil
+	}
+	labels := make(map[string]string, len(nodePool.NodeLabels)+1)
+	for key, value := range nodePool.NodeLabels {
+		labels[key] = value
+	}
+	if nodePool.SchedulePods {
+		labels[config.NodePoolSchedulingLabel] = poolName
+	}
+	if len(labels) == 0 {
+		return nil
+	}
+	return labels
+}
+
 // getNodePoolDefaults extracts default values from node pool spec
 // Priority: Per-XTrinode spec → Operator-level defaults → Code defaults
 func getNodePoolDefaults(nodePool *analyticsv1.NodePoolSpec, xtrinode *analyticsv1.XTrinode) NodePoolDefaults {

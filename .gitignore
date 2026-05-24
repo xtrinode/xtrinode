@@ -34,6 +34,7 @@ docs/issues/
 xtrinode/coverage.html
 trivy-fs-results.sarif
 tilt/e2e/results/
+tilt/e2e/results-gke/
 
 # Terraform
 *.tfstate

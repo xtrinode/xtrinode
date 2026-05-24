@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -97,6 +99,27 @@ func TestXTrinode_Default_MachineTypeAutoPopulation(t *testing.T) {
 			},
 			expectedInstanceType: "m5.16xlarge",
 		},
+		{
+			name: "auto-populates from typed worker resources",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-dummy"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					Resources: &RuntimeResourcesSpec{
+						Worker: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("32"),
+								corev1.ResourceMemory: resource.MustParse("128Gi"),
+							},
+						},
+					},
+					NodePool: &NodePoolSpec{
+						Provider: "gcp",
+					},
+				},
+			},
+			expectedMachineType: "n1-standard-32",
+		},
 	}
 
 	for _, tt := range tests {
@@ -169,6 +192,28 @@ func TestValidateNodePool_WithRecommendations(t *testing.T) {
 			wantErr:          true,
 			errorContains:    "recommended for size 'l'",
 			recommendedValue: "n1-standard-32",
+		},
+		{
+			name: "GCP missing machineType recommends from typed worker resources",
+			xtrinode: &XTrinode{
+				Spec: XTrinodeSpec{
+					Size: "s",
+					Resources: &RuntimeResourcesSpec{
+						Worker: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("16"),
+								corev1.ResourceMemory: resource.MustParse("64Gi"),
+							},
+						},
+					},
+					NodePool: &NodePoolSpec{
+						Provider: "gcp",
+					},
+				},
+			},
+			wantErr:          true,
+			errorContains:    "recommended for resolved worker resources",
+			recommendedValue: "n1-standard-16",
 		},
 	}
 

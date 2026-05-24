@@ -7,11 +7,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
-	"github.com/xtrinode/xtrinode/internal/sizing"
 )
 
 func TestTrinoDeploymentsDisableServiceAccountTokenMount(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -22,19 +20,18 @@ func TestTrinoDeploymentsDisableServiceAccountTokenMount(t *testing.T) {
 		},
 	}
 
-	coordinator, err := BuildCoordinatorDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	coordinator, err := BuildCoordinatorDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotNil(t, coordinator.Spec.Template.Spec.AutomountServiceAccountToken)
 	require.False(t, *coordinator.Spec.Template.Spec.AutomountServiceAccountToken)
 
-	worker, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	worker, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotNil(t, worker.Spec.Template.Spec.AutomountServiceAccountToken)
 	require.False(t, *worker.Spec.Template.Spec.AutomountServiceAccountToken)
 }
 
 func TestTrinoDeploymentsEnableServiceAccountTokenForWorkloadIdentity(t *testing.T) {
-	preset := sizing.Presets["s"]
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-trino",
@@ -52,12 +49,12 @@ func TestTrinoDeploymentsEnableServiceAccountTokenForWorkloadIdentity(t *testing
 		},
 	}
 
-	coordinator, err := BuildCoordinatorDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	coordinator, err := BuildCoordinatorDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotNil(t, coordinator.Spec.Template.Spec.AutomountServiceAccountToken)
 	require.True(t, *coordinator.Spec.Template.Spec.AutomountServiceAccountToken)
 
-	worker, err := BuildWorkerDeployment(xtrinode, &preset, "test-config", nil, "rev", "hash", nil)
+	worker, err := BuildWorkerDeployment(xtrinode, "test-config", nil, "rev", "hash", nil)
 	require.NoError(t, err)
 	require.NotNil(t, worker.Spec.Template.Spec.AutomountServiceAccountToken)
 	require.True(t, *worker.Spec.Template.Spec.AutomountServiceAccountToken)

@@ -9,6 +9,7 @@ import (
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 )
@@ -370,8 +371,15 @@ func (s *Server) pickCandidateFromRoutes(ctx context.Context, routingGroup strin
 			continue // Skip non-resumable states (Ready, Error, etc.)
 		}
 
-		// Use size as a simple capacity heuristic (xs=1, s=2, m=3, l=4, xl=5)
-		capacity := sizeToCapacity(t.Spec.Size)
+		shape, err := runtimeshape.Resolve(t)
+		if err != nil {
+			s.log.Error(err, "Failed to resolve runtime shape for candidate selection",
+				"namespace", t.Namespace,
+				"name", t.Name,
+				"routingGroup", routingGroup)
+			continue
+		}
+		capacity := int(shape.CapacityUnits)
 
 		if best == nil ||
 			priority < bestPriority ||
@@ -467,23 +475,4 @@ func (s *Server) triggerResume(ctx context.Context, namespace, name, key, keyTyp
 		"key", key,
 		"keyType", keyType)
 	return nil
-}
-
-// sizeToCapacity converts a size string to a capacity number for comparison
-// xs=1, s=2, m=3, l=4, xl=5, default=3
-func sizeToCapacity(size string) int {
-	switch size {
-	case "xs":
-		return 1
-	case "s":
-		return 2
-	case "m":
-		return 3
-	case "l":
-		return 4
-	case "xl":
-		return 5
-	default:
-		return 3 // Default to medium
-	}
 }

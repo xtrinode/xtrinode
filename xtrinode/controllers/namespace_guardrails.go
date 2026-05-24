@@ -3,12 +3,17 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/go-logr/logr"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -17,7 +22,7 @@ import (
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/events"
 	"github.com/xtrinode/xtrinode/internal/retry"
-	"github.com/xtrinode/xtrinode/internal/sizing"
+	"github.com/xtrinode/xtrinode/internal/runtimeshape"
 	"github.com/xtrinode/xtrinode/internal/status"
 )
 
@@ -119,42 +124,6 @@ type namespaceGuardrailLimits struct {
 	RuntimeCount        int
 }
 
-// calculateResourceLimits calculates CPU and memory limits based on preset and XTrinode spec
-func (r *XTrinodeReconciler) calculateResourceLimits(xtrinode *analyticsv1.XTrinode, preset *sizing.SizePreset) (maxCPU, maxMemory, workerCPULim, workerMemLim resource.Quantity, err error) {
-	maxWorkers := preset.MaxWorkers
-	if xtrinode.Spec.MaxWorkers != nil {
-		maxWorkers = *xtrinode.Spec.MaxWorkers
-	}
-
-	coordinatorCPULim, err := resource.ParseQuantity(preset.CoordinatorCPULim)
-	if err != nil {
-		return resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, fmt.Errorf("failed to parse coordinator CPU limit: %w", err)
-	}
-	workerCPULim, err = resource.ParseQuantity(preset.WorkerCPULim)
-	if err != nil {
-		return resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, fmt.Errorf("failed to parse worker CPU limit: %w", err)
-	}
-	maxCPU = coordinatorCPULim.DeepCopy()
-	workerCPULimScaled := workerCPULim.DeepCopy()
-	workerCPULimScaled.SetMilli(int64(maxWorkers) * workerCPULimScaled.MilliValue())
-	maxCPU.Add(workerCPULimScaled)
-
-	coordinatorMemLim, err := resource.ParseQuantity(preset.CoordinatorMemLim)
-	if err != nil {
-		return resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, fmt.Errorf("failed to parse coordinator memory limit: %w", err)
-	}
-	workerMemLim, err = resource.ParseQuantity(preset.WorkerMemLim)
-	if err != nil {
-		return resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, fmt.Errorf("failed to parse worker memory limit: %w", err)
-	}
-	maxMemory = coordinatorMemLim.DeepCopy()
-	workerMemLimScaled := workerMemLim.DeepCopy()
-	workerMemLimScaled.Set(int64(maxWorkers) * workerMemLimScaled.Value())
-	maxMemory.Add(workerMemLimScaled)
-
-	return maxCPU, maxMemory, workerCPULim, workerMemLim, nil
-}
-
 func (r *XTrinodeReconciler) calculateNamespaceGuardrailLimits(ctx context.Context, current *analyticsv1.XTrinode) (namespaceGuardrailLimits, error) {
 	xtrinodes, err := r.listNamespaceXTrinodes(ctx, current)
 	if err != nil {
@@ -167,23 +136,15 @@ func (r *XTrinodeReconciler) calculateNamespaceGuardrailLimits(ctx context.Conte
 	}
 	for i := range xtrinodes {
 		xtrinode := &xtrinodes[i]
-		preset, ok := sizing.GetPreset(xtrinode.Spec.Size)
-		if !ok {
-			return namespaceGuardrailLimits{}, fmt.Errorf("unknown size %q for XTrinode %s/%s", xtrinode.Spec.Size, xtrinode.Namespace, xtrinode.Name)
-		}
-
-		maxCPU, maxMemory, workerCPULimit, workerMemoryLimit, err := r.calculateResourceLimits(xtrinode, &preset)
+		shape, err := runtimeshape.Resolve(xtrinode)
 		if err != nil {
-			return namespaceGuardrailLimits{}, fmt.Errorf("failed to calculate resource limits for XTrinode %s/%s: %w", xtrinode.Namespace, xtrinode.Name, err)
+			return namespaceGuardrailLimits{}, fmt.Errorf("failed to resolve runtime shape for XTrinode %s/%s: %w", xtrinode.Namespace, xtrinode.Name, err)
 		}
-		workerCPURequest, err := resource.ParseQuantity(preset.WorkerCPUReq)
-		if err != nil {
-			return namespaceGuardrailLimits{}, fmt.Errorf("failed to parse worker CPU request for XTrinode %s/%s: %w", xtrinode.Namespace, xtrinode.Name, err)
-		}
-		workerMemoryRequest, err := resource.ParseQuantity(preset.WorkerMemReq)
-		if err != nil {
-			return namespaceGuardrailLimits{}, fmt.Errorf("failed to parse worker memory request for XTrinode %s/%s: %w", xtrinode.Namespace, xtrinode.Name, err)
-		}
+		maxCPU, maxMemory := shapeQuotaLimits(xtrinode, shape)
+		workerCPURequest := resourceFromList(shape.Worker.Requests, corev1.ResourceCPU)
+		workerMemoryRequest := resourceFromList(shape.Worker.Requests, corev1.ResourceMemory)
+		workerCPULimit := resourceFromList(shape.Worker.Limits, corev1.ResourceCPU)
+		workerMemoryLimit := resourceFromList(shape.Worker.Limits, corev1.ResourceMemory)
 
 		limits.MaxCPU.Add(maxCPU)
 		limits.MaxMemory.Add(maxMemory)
@@ -195,6 +156,119 @@ func (r *XTrinodeReconciler) calculateNamespaceGuardrailLimits(ctx context.Conte
 	limits.RuntimeCount = len(xtrinodes)
 
 	return limits, nil
+}
+
+func shapeQuotaLimits(xtrinode *analyticsv1.XTrinode, shape *runtimeshape.ResolvedRuntimeShape) (maxCPU, maxMemory resource.Quantity) {
+	coordinatorQuotaPods := int32(1) + rolloutSurgeReplicas(xtrinode, "coordinator", 1)
+	workerQuotaPods := shape.QuotaWorkers + rolloutSurgeReplicas(xtrinode, "worker", shape.QuotaWorkers)
+
+	maxCPU = resourceFromList(shape.Coordinator.Limits, corev1.ResourceCPU)
+	maxCPU.SetMilli(int64(coordinatorQuotaPods) * maxCPU.MilliValue())
+	workerCPULimit := resourceFromList(shape.Worker.Limits, corev1.ResourceCPU)
+	workerCPULimitScaled := workerCPULimit.DeepCopy()
+	workerCPULimitScaled.SetMilli(int64(workerQuotaPods) * workerCPULimitScaled.MilliValue())
+	maxCPU.Add(workerCPULimitScaled)
+
+	maxMemory = resourceFromList(shape.Coordinator.Limits, corev1.ResourceMemory)
+	maxMemory.Set(int64(coordinatorQuotaPods) * maxMemory.Value())
+	workerMemoryLimit := resourceFromList(shape.Worker.Limits, corev1.ResourceMemory)
+	workerMemoryLimitScaled := workerMemoryLimit.DeepCopy()
+	workerMemoryLimitScaled.Set(int64(workerQuotaPods) * workerMemoryLimitScaled.Value())
+	maxMemory.Add(workerMemoryLimitScaled)
+	return maxCPU, maxMemory
+}
+
+func rolloutSurgeReplicas(xtrinode *analyticsv1.XTrinode, role string, replicas int32) int32 {
+	if replicas <= 0 {
+		return 0
+	}
+	maxSurge, hasSurge := rolloutMaxSurge(xtrinode, role)
+	if !hasSurge {
+		return 0
+	}
+	value, err := intstr.GetScaledValueFromIntOrPercent(maxSurge, int(replicas), true)
+	if err != nil || value < 0 {
+		return 0
+	}
+	if value > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(value)
+}
+
+func rolloutMaxSurge(xtrinode *analyticsv1.XTrinode, role string) (*intstr.IntOrString, bool) {
+	maxSurge := intstr.FromString("25%")
+	hasSurge := true
+
+	if xtrinode.Spec.RolloutPolicy != nil && xtrinode.Spec.RolloutPolicy.RollingUpdateStrategy != nil {
+		if configured := xtrinode.Spec.RolloutPolicy.RollingUpdateStrategy.MaxSurge; configured != nil {
+			maxSurge = *configured
+		}
+	}
+
+	valuesOverlay := xtrinode.Spec.GetValuesOverlayMap()
+	roleConfig, ok := valuesOverlay[role].(map[string]interface{})
+	if !ok {
+		return &maxSurge, hasSurge
+	}
+	deploymentConfig, ok := roleConfig["deployment"].(map[string]interface{})
+	if !ok {
+		return &maxSurge, hasSurge
+	}
+	strategyConfig, ok := deploymentConfig["strategy"].(map[string]interface{})
+	if !ok {
+		return &maxSurge, hasSurge
+	}
+	if strategyType, hasType := strategyConfig["type"].(string); hasType && strings.EqualFold(strategyType, string(appsv1.RecreateDeploymentStrategyType)) {
+		return nil, false
+	}
+	rollingUpdate, ok := strategyConfig["rollingUpdate"].(map[string]interface{})
+	if !ok {
+		return &maxSurge, hasSurge
+	}
+	if configured, ok := intOrStringFromOverlay(rollingUpdate["maxSurge"]); ok {
+		maxSurge = configured
+	}
+	return &maxSurge, hasSurge
+}
+
+func intOrStringFromOverlay(value interface{}) (intstr.IntOrString, bool) {
+	switch typed := value.(type) {
+	case nil:
+		return intstr.IntOrString{}, false
+	case int:
+		return intstr.FromInt(typed), true
+	case int32:
+		return intstr.FromInt32(typed), true
+	case int64:
+		if typed < 0 || typed > math.MaxInt32 {
+			return intstr.IntOrString{}, false
+		}
+		return intstr.FromInt32(int32(typed)), true
+	case float64:
+		if typed < 0 || typed > math.MaxInt32 || typed != math.Trunc(typed) {
+			return intstr.IntOrString{}, false
+		}
+		return intstr.FromInt32(int32(typed)), true
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return intstr.IntOrString{}, false
+		}
+		if parsed, err := strconv.ParseInt(trimmed, 10, 32); err == nil {
+			return intstr.FromInt32(int32(parsed)), true
+		}
+		return intstr.Parse(trimmed), true
+	default:
+		return intstr.IntOrString{}, false
+	}
+}
+
+func resourceFromList(list corev1.ResourceList, name corev1.ResourceName) resource.Quantity {
+	if quantity, ok := list[name]; ok {
+		return quantity.DeepCopy()
+	}
+	return resource.MustParse("0")
 }
 
 func (r *XTrinodeReconciler) listNamespaceXTrinodes(ctx context.Context, current *analyticsv1.XTrinode) ([]analyticsv1.XTrinode, error) {

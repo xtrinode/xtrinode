@@ -494,7 +494,7 @@ An `XTrinode` runtime is a Trino compute unit with a stable routing identity.
 
 | Area | Behavior |
 | --- | --- |
-| Coordinator | One coordinator Deployment per runtime. Its Service is the backend URL stored in the gateway route. |
+| Coordinator | One coordinator Deployment per runtime with 0 or 1 replica. Trino does not support multi-coordinator leader election in this runtime model. Its Service is the backend URL stored in the gateway route. |
 | Workers | Fixed count by default, optionally managed by KEDA. Workers can scale down when suspended. |
 | Services | Coordinator, worker, and optional metrics Services are generated from the resource builders. |
 | Config | Coordinator, worker, catalog, session property, access-control, resource-group, and JMX exporter ConfigMaps are generated when configured. |
@@ -505,6 +505,28 @@ An `XTrinode` runtime is a Trino compute unit with a stable routing identity.
 | Routing | Dedicated runtimes normally get namespace-qualified routing groups; shared pools can contain multiple backends. |
 | Node pools | Optional provider-specific node-pool resources support stronger workload isolation. |
 
+### Resolved Runtime Shape
+
+Every reconcile resolves one standard runtime shape from the `XTrinode` spec
+before rendering resources. That resolved shape is the shared contract for
+Trino pod resources, worker counts, placement, route capacity, resume ranking,
+namespace guardrails, node-pool binding, and `status.observedRuntimeShape`.
+
+Resolution starts with `spec.size`, then folds in typed runtime fields:
+`spec.resources`, `spec.placement`, `spec.routing.capacityUnits`, worker-count
+settings, KEDA/native-HPA mode, and `spec.nodePool`. `valuesOverlay` remains a
+privileged surface for pod, image, networking, Secret, and Trino configuration
+that is outside the standard runtime shape.
+
+Coordinator scale is intentionally binary. A runtime can have no coordinator
+while suspended or scaled down, and one coordinator while active. Capacity and
+autoscaling only vary worker count and worker resources.
+
+Namespace guardrails use the resolved coordinator resources plus the resolved
+quota worker count. They also reserve rolling-update surge headroom so the
+quota does not block the operator's own Deployment updates. `Recreate`
+strategies do not reserve surge.
+
 ### Runtime Configuration Layers
 
 Runtime configuration is layered so common cases stay simple while platform
@@ -513,16 +535,22 @@ owners still have controlled escape hatches:
 1. `spec.size` chooses a preset (`xs`, `s`, `m`, `l`, `xl`) for coordinator and
    worker CPU/memory requests and limits, default worker counts, and recommended
    cloud machine types.
-2. `spec.nodePool` overrides node-pool-level choices such as provider, machine
+2. `spec.resources`, `spec.placement`, and `spec.routing.capacityUnits` are the
+   preferred typed fields for runtime resources, pod placement, and explicit
+   gateway capacity.
+3. `spec.nodePool` configures optional provider node-pool provisioning and
+   node-pool-level choices such as provider, machine
    type, node count range, disk size, zones, spot settings, labels, taints, and
-   prewarm behavior while keeping preset pod resources.
-3. `spec.valuesOverlay` is a privileged, chart-shaped override surface read by
+   prewarm behavior. It does not move pods onto that pool unless
+   `spec.nodePool.schedulePods=true` or placement explicitly targets the pool.
+4. `spec.valuesOverlay` is a privileged, chart-shaped override surface read by
    native resource builders. It is not a raw Helm pass-through.
 
-Use presets as the default. Override the node-pool machine type first when pod
+Use presets as the default. Use typed fields when changing resources,
+placement, or route capacity. Override the node-pool machine type when pod
 resources are acceptable but node capacity, I/O, or worker density needs to
 change. Use `valuesOverlay` only for advanced runtime requirements that are not
-yet modeled as typed CRD fields.
+yet modeled as typed CRD fields or intentionally remain privileged.
 
 ### Size Presets And Overrides
 
@@ -536,10 +564,12 @@ boundaries.
 | Need | Preferred Mechanism |
 | --- | --- |
 | Standard runtime sizing | Set `spec.size` and keep generated pod resources. |
+| Different coordinator or worker requests/limits | Set `spec.resources.coordinator` or `spec.resources.worker`. |
+| Schedule onto an existing node pool | Set `spec.placement.nodeSelector`, for example `cloud.google.com/gke-nodepool: existing-pool`. Do not set `spec.nodePool` unless XTrinode should provision a CAPI node-pool resource. |
+| Override route/resume capacity | Set `spec.routing.capacityUnits`. |
 | Bigger or different nodes with the same pod resources | Set `spec.nodePool` provider and machine type fields. |
 | More workers or provider node-pool bounds | Set `spec.nodePool.minNodes`, `maxNodes`, prewarm, spot, labels, taints, disk, or zone fields. |
-| Different coordinator or worker requests/limits | Use `spec.valuesOverlay.coordinator.resources` or `spec.valuesOverlay.worker.resources`. |
-| Chart-shaped pod, image, scheduling, or Trino config changes | Use `spec.valuesOverlay`, subject to privileged overlay admission. |
+| Chart-shaped pod, image, or Trino config changes | Use `spec.valuesOverlay`, subject to privileged overlay admission. |
 
 Prefer the smallest preset that fits steady-state query needs, then increase the
 node-pool size when scheduling overhead or worker density is the problem. Raise
@@ -553,7 +583,7 @@ The supported overlay surface includes:
 | `image` | Overrides Trino image repository, tag, and pull policy. |
 | `server`, `server.config` | Overrides selected Trino server config properties. |
 | `server.autoscaling` | Creates a worker HPA from CPU and/or memory targets. |
-| `coordinator`, `worker` | Role-specific resources, probes, lifecycle, volumes, mounts, labels, annotations, scheduling, exposed ports, and termination grace period. |
+| `coordinator`, `worker` | Role-specific probes, lifecycle, volumes, mounts, labels, annotations, exposed ports, and termination grace period. |
 | `auth` | Supports password and group file authentication through inline Secret generation or existing Secret references. |
 | `env`, `envFrom` | Adds environment variables and environment sources. |
 | `securityContext`, `containerSecurityContext`, `shareProcessNamespace` | Applies pod/container security context settings. |

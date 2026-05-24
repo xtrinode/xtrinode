@@ -18,8 +18,8 @@ type XTrinodeSpec struct {
 	// Size preset: xs|s|m|l|xl
 	Size string `json:"size"`
 
-	// MaxWorkers is the maximum number of worker replicas (KEDA max)
-	// +kubebuilder:validation:Minimum=1
+	// MaxWorkers is the fixed worker count when autoscaling is disabled and the maximum when autoscaling is enabled.
+	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=500
 	MaxWorkers *int32 `json:"maxWorkers,omitempty"`
 
@@ -39,6 +39,14 @@ type XTrinodeSpec struct {
 
 	// WakeTTL is how long to keep the pre-warm floor after resume
 	WakeTTL *metav1.Duration `json:"wakeTTL,omitempty"`
+
+	// Resources overrides the selected size preset's pod resources.
+	// If omitted, resources come from spec.size.
+	Resources *RuntimeResourcesSpec `json:"resources,omitempty"`
+
+	// Placement configures scheduler constraints for coordinator and worker pods.
+	// The top-level fields apply to both roles unless role-specific fields override them.
+	Placement *PlacementSpec `json:"placement,omitempty"`
 
 	// NodePool configuration
 	NodePool *NodePoolSpec `json:"nodePool,omitempty"`
@@ -247,6 +255,12 @@ type NodePoolSpec struct {
 	// in the referenced bootstrap template instead.
 	// +optional
 	NodeLabels map[string]string `json:"nodeLabels,omitempty"`
+
+	// SchedulePods binds coordinator and worker placement to this managed node pool.
+	// When true, XTrinode applies a stable node-pool label to managed pools and
+	// adds the matching nodeSelector to the resolved runtime placement.
+	// +optional
+	SchedulePods bool `json:"schedulePods,omitempty"`
 
 	// NodeTaints are Kubernetes node taints applied to managed node pools for scheduling.
 	// For self-managed clusters, configure nodeRegistration.taints in the referenced
@@ -483,6 +497,64 @@ type RoutingSpec struct {
 	// Default indicates if this is the default runtime (fallback route)
 	// Only one runtime should be marked as default
 	Default bool `json:"default,omitempty"`
+
+	// CapacityUnits overrides the routing capacity derived from the resolved runtime shape.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	CapacityUnits *int32 `json:"capacityUnits,omitempty"`
+}
+
+// RuntimeResourcesSpec configures coordinator and worker pod resources.
+type RuntimeResourcesSpec struct {
+	// Coordinator overrides coordinator pod resources from the size preset.
+	// +optional
+	Coordinator *corev1.ResourceRequirements `json:"coordinator,omitempty"`
+
+	// Worker overrides worker pod resources from the size preset.
+	// +optional
+	Worker *corev1.ResourceRequirements `json:"worker,omitempty"`
+}
+
+// PlacementSpec configures scheduler constraints for runtime pods.
+type PlacementSpec struct {
+	// NodeSelector applies to both coordinator and worker pods.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Tolerations apply to both coordinator and worker pods.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// Affinity applies to both coordinator and worker pods.
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+
+	// Coordinator overrides placement for coordinator pods.
+	// +optional
+	Coordinator *RolePlacementSpec `json:"coordinator,omitempty"`
+
+	// Worker overrides placement for worker pods.
+	// +optional
+	Worker *RolePlacementSpec `json:"worker,omitempty"`
+}
+
+// RolePlacementSpec configures scheduler constraints for one Trino role.
+type RolePlacementSpec struct {
+	// NodeSelector selects nodes for this role.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Tolerations allow this role to schedule onto tainted nodes.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// Affinity configures Kubernetes affinity for this role.
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+
+	// TopologySpreadConstraints spread pods for this role across topology domains.
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
 }
 
 // LimitsSpec defines resource limits
@@ -796,6 +868,11 @@ type XTrinodeStatus struct {
 	// +optional
 	ObservedSessionPropsDigest string `json:"observedSessionPropsDigest,omitempty"`
 
+	// ObservedRuntimeShape is the compact resolved runtime shape from the latest
+	// successful resolution.
+	// +optional
+	ObservedRuntimeShape *ObservedRuntimeShapeStatus `json:"observedRuntimeShape,omitempty"`
+
 	// Wake tracks the ephemeral wake window state after resume
 	// When set, KEDA minReplicas is temporarily raised to wake.minWorkers
 	// After wake.expiresAt, this field is cleared and KEDA returns to normal min=0
@@ -805,6 +882,82 @@ type XTrinodeStatus struct {
 
 	// Conditions is a list of conditions
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// ObservedRuntimeShapeStatus exposes the resolved runtime shape used by
+// guardrails, route capacity, pod rendering, and resume ranking.
+type ObservedRuntimeShapeStatus struct {
+	// Hash is a stable hash of the resolved runtime shape.
+	Hash string `json:"hash,omitempty"`
+
+	// Preset is the size preset used as the base shape.
+	Preset string `json:"preset,omitempty"`
+
+	// AutoscalingMode is fixed, keda, or hpa.
+	AutoscalingMode string `json:"autoscalingMode,omitempty"`
+
+	// Coordinator contains resolved coordinator resources.
+	Coordinator ObservedRuntimeResourcesStatus `json:"coordinator,omitempty"`
+
+	// Worker contains resolved worker resources.
+	Worker ObservedRuntimeResourcesStatus `json:"worker,omitempty"`
+
+	// Workers contains the resolved worker counts used by shape consumers.
+	Workers ObservedRuntimeWorkersStatus `json:"workers,omitempty"`
+
+	// CapacityUnits is the routing and resume capacity weight.
+	CapacityUnits int32 `json:"capacityUnits,omitempty"`
+
+	// NodePool summarizes node-pool provisioning and scheduling binding intent.
+	NodePool ObservedRuntimeNodePoolStatus `json:"nodePool,omitempty"`
+}
+
+// ObservedRuntimeResourcesStatus exposes resolved Kubernetes resources.
+type ObservedRuntimeResourcesStatus struct {
+	// Requests are resolved resource requests.
+	// +optional
+	Requests corev1.ResourceList `json:"requests,omitempty"`
+
+	// Limits are resolved resource limits.
+	// +optional
+	Limits corev1.ResourceList `json:"limits,omitempty"`
+}
+
+// ObservedRuntimeWorkersStatus exposes resolved worker count semantics.
+type ObservedRuntimeWorkersStatus struct {
+	// Fixed is set for fixed-replica runtimes.
+	// +optional
+	Fixed *int32 `json:"fixed,omitempty"`
+
+	// Min is the minimum autoscaled worker count, or the fixed count for fixed runtimes.
+	Min int32 `json:"min,omitempty"`
+
+	// Max is the maximum autoscaled worker count, or the fixed count for fixed runtimes.
+	Max int32 `json:"max,omitempty"`
+
+	// Quota is the worker count used for namespace guardrails.
+	Quota int32 `json:"quota,omitempty"`
+
+	// Capacity is the worker count used for default route capacity.
+	Capacity int32 `json:"capacity,omitempty"`
+}
+
+// ObservedRuntimeNodePoolStatus exposes resolved node-pool intent.
+type ObservedRuntimeNodePoolStatus struct {
+	// ProvisioningRequested is true when spec.nodePool is set.
+	ProvisioningRequested bool `json:"provisioningRequested,omitempty"`
+
+	// Provider is the node-pool provider.
+	Provider string `json:"provider,omitempty"`
+
+	// ProviderMode is managed or self-managed when configured.
+	ProviderMode string `json:"providerMode,omitempty"`
+
+	// Name is the resolved node-pool name.
+	Name string `json:"name,omitempty"`
+
+	// SchedulePods is true when runtime pods are bound to the managed pool.
+	SchedulePods bool `json:"schedulePods,omitempty"`
 }
 
 // WakeState tracks ephemeral wake window after resume
