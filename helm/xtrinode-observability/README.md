@@ -8,7 +8,7 @@ This chart owns the GCP/local observability stack for XTrinode:
 The chart intentionally disables generic cluster infrastructure monitors by default (`nodeExporter`,
 kubelet, API server, scheduler, etc.) so it can coexist with an existing cluster monitoring stack.
 XTrinode charts render their own `ServiceMonitor` resources when Prometheus is enabled.
-The chart follows XTrinode's Kubernetes target and requires Kubernetes 1.32 or newer. Its CRD
+The chart supports Kubernetes 1.32 or newer. Its CRD
 upgrade job is enabled by default so existing installs receive Prometheus Operator CRD updates
 during chart upgrades.
 This chart also renders an optional Grafana dashboard ConfigMap for lifecycle drain state and API

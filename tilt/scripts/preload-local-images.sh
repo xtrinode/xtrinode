@@ -20,7 +20,7 @@ quay.io/prometheus-operator/prometheus-config-reloader:v0.90.1
 quay.io/prometheus/prometheus:v3.11.3-distroless
 ghcr.io/jkroepke/kube-webhook-certgen:1.8.2
 docker.io/busybox:latest
-registry.k8s.io/kubectl:v1.32.3
+registry.k8s.io/kubectl:v1.34.8
 ghcr.io/kedacore/keda:2.19.0
 ghcr.io/kedacore/keda-metrics-apiserver:2.19.0
 ghcr.io/kedacore/keda-admission-webhooks:2.19.0"

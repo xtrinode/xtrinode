@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
+	"github.com/xtrinode/xtrinode/internal/serverapply"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -465,7 +466,7 @@ func applyUnstructured(cli client.Client, ctx context.Context, obj *unstructured
 	if !gvk.Empty() {
 		obj.SetGroupVersionKind(gvk)
 	}
-	return cli.Patch(ctx, obj, client.Apply, client.FieldOwner("xtrinode-operator"))
+	return serverapply.Unstructured(ctx, cli, obj, "xtrinode-operator", false)
 }
 
 // createOrApplyUnstructured creates primary CAPI resources on first reconcile so

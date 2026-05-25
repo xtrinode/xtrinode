@@ -8,5 +8,5 @@ tool sigs.k8s.io/controller-tools/cmd/controller-gen
 
 require (
 	github.com/golangci/golangci-lint/v2 v2.12.2
-	sigs.k8s.io/controller-tools v0.21.0
+	sigs.k8s.io/controller-tools v0.19.0
 )
