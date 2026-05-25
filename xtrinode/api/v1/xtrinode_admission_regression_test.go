@@ -1209,6 +1209,9 @@ func TestXTrinodeCatalogWebhook_Adapters(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expected new XTrinodeCatalog")
 
+	_, err = hook.ValidateDelete(context.Background(), valid)
+	assert.NoError(t, err)
+
 	_, err = hook.ValidateDelete(context.Background(), &XTrinode{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expected XTrinodeCatalog")
@@ -1244,6 +1247,9 @@ func TestXTrinodeWebhook_Adapters(t *testing.T) {
 	_, err = hook.ValidateUpdate(context.Background(), valid, &XTrinodeCatalog{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expected new XTrinode")
+
+	_, err = hook.ValidateDelete(context.Background(), valid)
+	assert.NoError(t, err)
 
 	_, err = hook.ValidateDelete(context.Background(), &XTrinodeCatalog{})
 	assert.Error(t, err)

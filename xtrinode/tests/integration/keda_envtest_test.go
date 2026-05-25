@@ -373,14 +373,17 @@ func workerDeployment(xtrinode *analyticsv1.XTrinode) *appsv1.Deployment {
 func kedaCRDDirectory(t *testing.T) string {
 	t.Helper()
 
-	moduleDir := os.Getenv("KEDA_MODULE_DIR")
-	if moduleDir == "" {
-		out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/kedacore/keda/v2").Output()
-		require.NoError(t, err)
-		moduleDir = strings.TrimSpace(string(out))
+	dir := os.Getenv("KEDA_CRD_DIR")
+	if dir == "" {
+		moduleDir := os.Getenv("KEDA_MODULE_DIR")
+		if moduleDir == "" {
+			out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/kedacore/keda/v2").Output()
+			require.NoError(t, err)
+			moduleDir = strings.TrimSpace(string(out))
+		}
+		dir = filepath.Join(moduleDir, "config", "crd", "bases")
 	}
 
-	dir := filepath.Join(moduleDir, "config", "crd", "bases")
 	_, err := os.Stat(filepath.Join(dir, "keda.sh_scaledobjects.yaml"))
 	require.NoError(t, err)
 	_, err = os.Stat(filepath.Join(dir, "keda.sh_triggerauthentications.yaml"))

@@ -58,6 +58,7 @@ Postgres Catalog Modification Rolls Coordinator And Worker
     Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Deployment Pod Template Annotation Should Not Equal    ${NAMESPACE}    trino-${XTRINODE_NAME}-worker    ${WORKER_ROLLOUT_HASH_OUTPUT}    ${worker_before}
     Command Should Succeed    kubectl    rollout    status    deployment/trino-${XTRINODE_NAME}-coordinator    -n    ${NAMESPACE}    --timeout=300s
     Command Should Succeed    kubectl    rollout    status    deployment/trino-${XTRINODE_NAME}-worker    -n    ${NAMESPACE}    --timeout=300s
+    Wait For Gateway Backend Ready
     ${body}=    Set Variable    /tmp/xtrinode-postgres-count-query-after-catalog-update.json
     Gateway Statement Should Return Status    ${body}    SELECT count(*) FROM postgres.public.orders    200
     Drain Trino Query Preserving Data    ${body}

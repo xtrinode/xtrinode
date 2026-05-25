@@ -16,13 +16,13 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/events"
 	"github.com/xtrinode/xtrinode/internal/retry"
 	"github.com/xtrinode/xtrinode/internal/runtimeshape"
+	"github.com/xtrinode/xtrinode/internal/serverapply"
 	"github.com/xtrinode/xtrinode/internal/status"
 )
 
@@ -335,12 +335,7 @@ func (r *XTrinodeReconciler) ensureNamespaceWithLabels(ctx context.Context, xtri
 // ensureResourceQuota creates or updates ResourceQuota for the namespace
 func (r *XTrinodeReconciler) ensureResourceQuota(ctx context.Context, xtrinode *analyticsv1.XTrinode, maxCPU, maxMemory resource.Quantity, log logr.Logger) error {
 	resourceQuota := buildNamespaceResourceQuota(xtrinode.Namespace, maxCPU, maxMemory)
-	gvk, err := apiutil.GVKForObject(resourceQuota, r.Scheme)
-	if err != nil {
-		return fmt.Errorf("failed to get GVK for ResourceQuota: %w", err)
-	}
-	resourceQuota.GetObjectKind().SetGroupVersionKind(gvk)
-	if err := r.Patch(ctx, resourceQuota, client.Apply, client.FieldOwner("xtrinode-operator"), client.ForceOwnership); err != nil {
+	if err := serverapply.Object(ctx, r.Client, r.Scheme, resourceQuota, "xtrinode-operator", true); err != nil {
 		return fmt.Errorf("failed to create/update ResourceQuota: %w", err)
 	}
 	log.Info("Ensured namespace ResourceQuota", "namespace", xtrinode.Namespace, "name", resourceQuota.Name, "cpu", maxCPU.String(), "memory", maxMemory.String())
@@ -350,12 +345,7 @@ func (r *XTrinodeReconciler) ensureResourceQuota(ctx context.Context, xtrinode *
 // ensureLimitRange creates or updates LimitRange for the namespace
 func (r *XTrinodeReconciler) ensureLimitRange(ctx context.Context, xtrinode *analyticsv1.XTrinode, workerCPUReq, workerMemReq, workerCPULim, workerMemLim resource.Quantity, log logr.Logger) error {
 	limitRange := buildNamespaceLimitRange(xtrinode.Namespace, workerCPUReq, workerMemReq, workerCPULim, workerMemLim)
-	gvk, err := apiutil.GVKForObject(limitRange, r.Scheme)
-	if err != nil {
-		return fmt.Errorf("failed to get GVK for LimitRange: %w", err)
-	}
-	limitRange.GetObjectKind().SetGroupVersionKind(gvk)
-	if err := r.Patch(ctx, limitRange, client.Apply, client.FieldOwner("xtrinode-operator"), client.ForceOwnership); err != nil {
+	if err := serverapply.Object(ctx, r.Client, r.Scheme, limitRange, "xtrinode-operator", true); err != nil {
 		return fmt.Errorf("failed to create/update LimitRange: %w", err)
 	}
 	log.Info("Ensured namespace LimitRange", "namespace", xtrinode.Namespace, "name", limitRange.Name)

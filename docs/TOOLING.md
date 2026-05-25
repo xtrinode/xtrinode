@@ -19,9 +19,9 @@ make tool-versions
 | `curl`, `jq`, `yq`, `openssl` | Current stable | Deployment scripts and smoke workflows | Local install |
 | Go | `1.26.3` | Build, test, code generation, Go lint | `xtrinode/go.mod`, `tools/go.mod`, `GO_VERSION` |
 | golangci-lint | `v2.12.2` | `make lint-go` | `tools/go.mod`, `GOLANGCI_LINT_VERSION` |
-| controller-gen | `v0.21.0` | `make manifests`, `make verify-manifests` | `tools/go.mod`, `CONTROLLER_GEN_VERSION` |
+| controller-gen | `v0.19.0` | `make manifests`, `make verify-manifests` | `tools/go.mod`, `CONTROLLER_GEN_VERSION` |
 | setup-envtest | `v0.24.0` | `make test-integration` | `SETUP_ENVTEST_VERSION` |
-| envtest Kubernetes assets | `1.32.0` | `make test-integration` | `ENVTEST_K8S_VERSION` |
+| envtest Kubernetes assets | `1.34.0` | `make test-integration` | `ENVTEST_K8S_VERSION` |
 | Ruby | `4.0.5` | `make lint-yaml` | `.ruby-version`, `RUBY_VERSION` |
 | godoc | `v0.1.0-deprecated` | `make godocs*` | `GODOC_VERSION`, local `$HOME/go/bin/godoc` |
 | Node.js | `>=22` | Markdown tooling | `.nvmrc`, `package.json`, `NODE_VERSION` |
@@ -29,7 +29,7 @@ make tool-versions
 | markdownlint-cli | `0.48.0` | `make lint-markdown` | `package.json`, `package-lock.json`, `MARKDOWNLINT_CLI_VERSION` |
 | Docker with Buildx | Current stable | Image builds, k3d, local registry workflows | Local install |
 | Helm | `v3.20.0` | Helm dependency, lint, template, deploy targets | `HELM_VERSION` |
-| kubectl | `v1.32.3` | Cluster and deploy targets | `KUBECTL_VERSION` |
+| kubectl | `v1.34.8` | Cluster and deploy targets | `KUBECTL_VERSION` |
 | Terraform | `1.15.4` | Terraform init, plan, validate, apply targets | `TERRAFORM_VERSION` |
 | tflint | `0.60.0` | `make lint-terraform` | `TFLINT_VERSION` |
 | k3d | `v5.8.3` | Local Kubernetes stack | `K3D_VERSION`, local `bin/k3d` |
@@ -61,15 +61,20 @@ Override `GOLANGCI_LINT`, `CONTROLLER_GEN`, `SETUP_ENVTEST`, or `GODOC` when usi
 
 | Component | Current version | Source |
 | --- | --- | --- |
-| Local Kubernetes target | `v1.32.3` | `K3D_K3S_IMAGE`, `KUBECTL_VERSION` |
-| Kubernetes API libraries | `v0.35.0` | `xtrinode/go.mod` |
-| controller-runtime | `v0.22.4` | `xtrinode/go.mod` |
-| KEDA Go module | `v2.18.3` | `xtrinode/go.mod` |
+| Local Kubernetes target | `v1.34.8` | `K3D_K3S_IMAGE`, `KUBECTL_VERSION` |
+| Kubernetes API libraries | `v0.34.3` | `xtrinode/go.mod` replace directives |
+| controller-runtime | `v0.22.4` | `xtrinode/go.mod` replace directives |
+| KEDA API types | `github.com/kedacore/keda/v2 v2.19.0` | `xtrinode/go.mod` |
 | KEDA Helm chart | `2.19.0` | `helm/xtrinode-operator/Chart.yaml` |
 | XTrinode Helm chart version | `0.1.0` | `helm/xtrinode*/Chart.yaml` `version` fields and umbrella dependencies |
 | XTrinode component image version | `0.1.0` | `helm/xtrinode*/Chart.yaml` `appVersion` fields |
 | Default Trino runtime image tag | `480` | `TRINO_IMAGE_TAG`, `internal/config` |
 | Trino runtime compatibility target | `trino-1.42.2` / app `480` | Upstream Trino chart reference and runtime image pin |
+
+KEDA 2.19.0 publishes Kubernetes `v1.32 - v1.34` as its tested support window. Keep local Kubernetes on
+the `v1.34` minor until the KEDA chart line used here documents Kubernetes 1.35 support and its importable Go API
+aligns with controller-runtime `v0.23` or newer. Treat Kubernetes or KEDA bumps as requiring a real local scale-out
+e2e run covering both metrics-api and Prometheus-backed scaling.
 
 ## Provider Validation
 
@@ -83,8 +88,11 @@ Override `GOLANGCI_LINT`, `CONTROLLER_GEN`, `SETUP_ENVTEST`, or `GODOC` when usi
 
 - Do not bump Kubernetes libraries, controller-runtime, or controller-tools independently unless generated CRDs/manifests
   are regenerated and `make ci-verify-manifests` passes.
-- Keep the KEDA Go module and Helm chart versions intentionally reviewed together. They do not have to be byte-identical,
-  but drift should be explained in the changing PR.
+- Keep `controller-gen` on the controller-tools line matching the Kubernetes API library minor; for Kubernetes `v0.34.x`
+  this is controller-tools `v0.19.x`.
+- For KEDA 2.19.0, keep the main module's Go `replace` directives aligned with KEDA's Kubernetes `v0.34.3` and
+  controller-runtime `v0.22.4` pins. Dependency module `replace` directives do not propagate into this module.
+- Revisit the KEDA-aligned `replace` directives only when the imported KEDA Go API no longer needs those pins.
 - Keep all XTrinode chart `version` fields and umbrella dependency versions aligned with the XTrinode release version.
 - Keep all XTrinode chart `appVersion` fields aligned with the same XTrinode release version. Do not use the Trino
   runtime tag or upstream Trino chart version as the operator, API server, or gateway image or chart version.

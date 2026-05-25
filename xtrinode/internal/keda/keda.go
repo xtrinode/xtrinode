@@ -11,6 +11,7 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/runtimeshape"
+	"github.com/xtrinode/xtrinode/internal/serverapply"
 	"github.com/xtrinode/xtrinode/internal/trino/controlauth"
 	"github.com/xtrinode/xtrinode/pkg/metrics"
 	appsv1 "k8s.io/api/apps/v1"
@@ -20,7 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
 // EnsureScaledObject creates or updates a KEDA ScaledObject for worker autoscaling.
@@ -170,13 +170,7 @@ func EnsureScaledObject(ctx context.Context, cli client.Client, scheme *runtime.
 		}
 	}
 
-	// Server-side Apply requires GVK to be set
-	gvk, err := apiutil.GVKForObject(scaledObject, scheme)
-	if err != nil {
-		return fmt.Errorf("failed to get GVK for ScaledObject: %w", err)
-	}
-	scaledObject.GetObjectKind().SetGroupVersionKind(gvk)
-	if err := cli.Patch(ctx, scaledObject, client.Apply, client.FieldOwner("xtrinode-operator"), client.ForceOwnership); err != nil {
+	if err := serverapply.Object(ctx, cli, scheme, scaledObject, "xtrinode-operator", true); err != nil {
 		log.Error(err, "failed to create/update KEDA ScaledObject", "name", scaledObjectName)
 		return fmt.Errorf("failed to create/update KEDA ScaledObject: %w", err)
 	}
@@ -685,12 +679,7 @@ func buildMetricsAPIAuthDataAndRefs(xtrinode *analyticsv1.XTrinode, authName str
 }
 
 func applyKEDAObject(ctx context.Context, cli client.Client, scheme *runtime.Scheme, obj client.Object) error {
-	gvk, err := apiutil.GVKForObject(obj, scheme)
-	if err != nil {
-		return fmt.Errorf("failed to get GVK for %T: %w", obj, err)
-	}
-	obj.GetObjectKind().SetGroupVersionKind(gvk)
-	return cli.Patch(ctx, obj, client.Apply, client.FieldOwner("xtrinode-operator"), client.ForceOwnership)
+	return serverapply.Object(ctx, cli, scheme, obj, "xtrinode-operator", true)
 }
 
 func cleanupMetricsAPIAuth(ctx context.Context, cli client.Client, releaseName, namespace string, log logr.Logger) error {
@@ -769,7 +758,7 @@ func buildKEDATriggers(scalerType, scalingMetric, threshold, prometheusServer, p
 			return []kedav1alpha1.ScaleTriggers{
 				{
 					Type:       normalizeKEDAKeyword(scalingMetric),
-					MetricType: "Utilization",
+					MetricType: autoscalingv2.UtilizationMetricType,
 					Metadata: map[string]string{
 						"value": threshold,
 					},
