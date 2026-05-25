@@ -190,10 +190,12 @@ resource "helm_release" "cert_manager" {
   wait             = true
   timeout          = 300
 
-  set {
-    name  = "crds.enabled"
-    value = "true"
-  }
+  set = [
+    {
+      name  = "crds.enabled"
+      value = "true"
+    }
+  ]
 
   depends_on = [google_container_node_pool.xtrinode]
 }
