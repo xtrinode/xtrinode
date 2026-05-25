@@ -3,15 +3,15 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 5.0"
+      version = "~> 7.32"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.23"
+      version = "~> 3.1"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.11"
+      version = "~> 3.1"
     }
   }
 }
@@ -28,7 +28,7 @@ provider "kubernetes" {
 }
 
 provider "helm" {
-  kubernetes {
+  kubernetes = {
     host                   = "https://${google_container_cluster.xtrinode.endpoint}"
     token                  = data.google_client_config.default.access_token
     cluster_ca_certificate = base64decode(google_container_cluster.xtrinode.master_auth[0].cluster_ca_certificate)
@@ -312,30 +312,28 @@ resource "helm_release" "xtrinode_operator" {
   version          = var.xtrinode_operator_version
   create_namespace = false
 
-  set {
-    name  = "image.repository"
-    value = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.xtrinode_operator.repository_id}/xtrinode-operator"
-  }
-
-  set {
-    name  = "image.tag"
-    value = var.xtrinode_operator_version
-  }
-
-  set {
-    name  = "replicaCount"
-    value = 1
-  }
-
-  set {
-    name  = "webhook.enabled"
-    value = true
-  }
-
-  set {
-    name  = "operator.prometheus.address"
-    value = local.prometheus_service_url
-  }
+  set = [
+    {
+      name  = "image.repository"
+      value = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.xtrinode_operator.repository_id}/xtrinode-operator"
+    },
+    {
+      name  = "image.tag"
+      value = var.xtrinode_operator_version
+    },
+    {
+      name  = "replicaCount"
+      value = "1"
+    },
+    {
+      name  = "webhook.enabled"
+      value = "true"
+    },
+    {
+      name  = "operator.prometheus.address"
+      value = local.prometheus_service_url
+    }
+  ]
 
   depends_on = [
     kubernetes_namespace.xtrinode_system,
