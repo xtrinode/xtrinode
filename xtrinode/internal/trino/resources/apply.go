@@ -9,25 +9,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
+	"github.com/xtrinode/xtrinode/internal/serverapply"
 )
 
 // applyObject sets GVK on obj and patches with server-side apply (required for API server to accept Apply)
 func applyObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, obj client.Object, fieldOwner string, forceOwnership bool) error {
-	gvk, err := apiutil.GVKForObject(obj, scheme)
-	if err != nil {
-		return fmt.Errorf("failed to get GVK: %w", err)
-	}
-	obj.GetObjectKind().SetGroupVersionKind(gvk)
-	opts := []client.PatchOption{client.FieldOwner(fieldOwner)}
-	if forceOwnership {
-		opts = append(opts, client.ForceOwnership)
-	}
-	return c.Patch(ctx, obj, client.Apply, opts...)
+	return serverapply.Object(ctx, c, scheme, obj, fieldOwner, forceOwnership)
 }
 
 func applyOptionalCRDObject(ctx context.Context, c client.Client, scheme *runtime.Scheme, obj client.Object, fieldOwner string, forceOwnership bool, resourceName string) error {

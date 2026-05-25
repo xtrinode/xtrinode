@@ -83,7 +83,7 @@ XTrinodeCatalog Admission Webhook Rejects Multiple Connectors
     Create File    ${manifest}    ${json}
     ${apply}=    Run Command Allow Failure    kubectl    apply    --validate=false    -f    ${manifest}
     Should Not Be Equal As Integers    ${apply.rc}    0
-    Should Match Regexp    ${apply.stdout}    exactly one connector field must be set|at most 1 properties|must have at most 1 items
+    Should Match Regexp    ${apply.stdout}    exactly one connector field must be set|at most 1 properties|must have at most 1 items?
 
 Gateway Route Config Contains Local Backend
     ${routes}=    Kubectl Output    get    configmap    trino-gateway-routes    -n    ${GATEWAY_NAMESPACE}    -o    ${GATEWAY_ROUTES_OUTPUT}
