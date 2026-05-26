@@ -555,6 +555,80 @@ func TestXTrinode_ValidateCreate_ValuesOverlayWarns(t *testing.T) {
 	assert.Contains(t, warnings, buildValuesOverlayChangeWarning())
 }
 
+func TestXTrinode_ValidateCreate_ValuesOverlayRejectsTypedFieldConflicts(t *testing.T) {
+	xtrinode := &XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "overlay-conflict"},
+		Spec: XTrinodeSpec{
+			Size: "s",
+			ValuesOverlay: valuesOverlayFromMap(map[string]interface{}{
+				"coordinator": map[string]interface{}{
+					"resources": map[string]interface{}{
+						"limits": map[string]interface{}{
+							"memory": "8Gi",
+						},
+					},
+				},
+				"worker": map[string]interface{}{
+					"nodeSelector": map[string]interface{}{
+						"pool": "analytics",
+					},
+					"deployment": map[string]interface{}{
+						"revisionHistoryLimit": 3,
+					},
+				},
+			}),
+		},
+	}
+
+	_, err := xtrinode.ValidateCreate()
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.valuesOverlay.coordinator.resources")
+	assert.Contains(t, err.Error(), "spec.resources.coordinator")
+	assert.Contains(t, err.Error(), "spec.valuesOverlay.worker.nodeSelector")
+	assert.Contains(t, err.Error(), "spec.placement")
+	assert.Contains(t, err.Error(), "spec.valuesOverlay.worker.deployment.revisionHistoryLimit")
+	assert.Contains(t, err.Error(), "spec.rolloutPolicy.revisionHistoryLimit")
+}
+
+func TestXTrinode_ValidateCreate_ValuesOverlayRejectsHighRiskPodFields(t *testing.T) {
+	xtrinode := &XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "overlay-risk"},
+		Spec: XTrinodeSpec{
+			Size: "s",
+			ValuesOverlay: valuesOverlayFromMap(map[string]interface{}{
+				"containerSecurityContext": map[string]interface{}{
+					"privileged": true,
+					"capabilities": map[string]interface{}{
+						"add": []interface{}{"SYS_ADMIN"},
+					},
+				},
+				"coordinator": map[string]interface{}{
+					"additionalVolumes": []interface{}{
+						map[string]interface{}{
+							"name": "host",
+							"hostPath": map[string]interface{}{
+								"path": "/var/run",
+							},
+						},
+					},
+				},
+				"service": map[string]interface{}{
+					"type": "LoadBalancer",
+				},
+			}),
+		},
+	}
+
+	_, err := xtrinode.ValidateCreate()
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.valuesOverlay.containerSecurityContext.privileged")
+	assert.Contains(t, err.Error(), "spec.valuesOverlay.containerSecurityContext.capabilities.add")
+	assert.Contains(t, err.Error(), "spec.valuesOverlay.coordinator.additionalVolumes[0].hostPath")
+	assert.Contains(t, err.Error(), "spec.valuesOverlay.service.type")
+}
+
 func TestXTrinodeWebhook_ValidateCreate_ValuesOverlayRequiresPrivilegedSubject(t *testing.T) {
 	xtrinode := &XTrinode{
 		ObjectMeta: metav1.ObjectMeta{Name: "overlay", Namespace: "team-a"},
@@ -585,7 +659,7 @@ func TestXTrinodeWebhook_ValidateCreate_ValuesOverlayRequiresPrivilegedSubject(t
 	assert.Error(t, err)
 	assert.Contains(t, warnings, buildValuesOverlayChangeWarning())
 	assert.Contains(t, err.Error(), "spec.valuesOverlay")
-	assert.Contains(t, err.Error(), "xtrinodes/status")
+	assert.Contains(t, err.Error(), "xtrinodes/valuesoverlay")
 	assert.Contains(t, err.Error(), "tenant role denied")
 	assert.True(t, authorizer.called)
 	assert.Equal(t, "team-a", authorizer.namespace)
@@ -670,7 +744,7 @@ func TestXTrinodeWebhook_ValidateCreate_HelmPodSpecFieldsRequirePrivilegedSubjec
 	_, err := hook.ValidateCreate(ctx, xtrinode)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "spec.helmChartConfig")
-	assert.Contains(t, err.Error(), "xtrinodes/status")
+	assert.Contains(t, err.Error(), "xtrinodes/valuesoverlay")
 	assert.True(t, authorizer.called)
 }
 
@@ -744,7 +818,7 @@ func TestXTrinodeWebhook_ValidateCreate_HelmPolicyExposureFieldsRequirePrivilege
 			_, err := hook.ValidateCreate(ctx, xtrinode)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "spec.helmChartConfig")
-			assert.Contains(t, err.Error(), "xtrinodes/status")
+			assert.Contains(t, err.Error(), "xtrinodes/valuesoverlay")
 			assert.True(t, authorizer.called)
 		})
 	}

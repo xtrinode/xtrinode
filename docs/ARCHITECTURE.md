@@ -401,6 +401,15 @@ creating the KEDA trigger. If KEDA is disabled or lacks a complete scaler
 configuration, the operator removes stale `ScaledObject` resources and leaves
 workers fixed.
 
+KEDA is a platform dependency for the operator install because the controller
+registers watches for KEDA `ScaledObject` and `TriggerAuthentication` resources.
+The operator Helm chart installs KEDA by default; if that subchart is disabled,
+KEDA CRDs and the KEDA controller must already exist in the cluster. Runtime
+`spec.keda.enabled=false` only selects fixed workers for that runtime; it does
+not mean the platform can omit KEDA APIs. If a runtime enables KEDA while the
+ScaledObject API is unavailable, status reports `KEDAReady=False` with reason
+`KEDAPlatformMissing`.
+
 ## Control Plane
 
 The operator is the reconciliation owner. Entrypoints stay mostly wiring-only,
@@ -446,9 +455,12 @@ The effective order is important:
    a `RESUMING` route and a requeue; only a ready runtime gets the `RUNNING` route
    and `Ready` status.
 
-Namespace `ResourceQuota` and `LimitRange` guardrails are shared resources, so
-their spec, label, annotation, create, and delete events enqueue all `XTrinode`s
-in that namespace for drift repair while ignoring quota status churn.
+Namespace `ResourceQuota` and `LimitRange` guardrails are shared resources. The
+operator owns only its configured guardrail object names
+(`namespaceGuardrails.resourceQuotaName` and `namespaceGuardrails.limitRangeName`)
+and labels those objects for watch ownership. Their spec, label, annotation,
+create, and delete events enqueue all `XTrinode`s in that namespace for drift
+repair while ignoring quota status churn.
 
 ## API Server Resume Gate
 
@@ -510,13 +522,15 @@ An `XTrinode` runtime is a Trino compute unit with a stable routing identity.
 Every reconcile resolves one standard runtime shape from the `XTrinode` spec
 before rendering resources. That resolved shape is the shared contract for
 Trino pod resources, worker counts, placement, route capacity, resume ranking,
-namespace guardrails, node-pool binding, and `status.observedRuntimeShape`.
+namespace guardrails, node-pool binding, and the versioned
+`status.observedRuntimeShape`.
 
 Resolution starts with `spec.size`, then folds in typed runtime fields:
 `spec.resources`, `spec.placement`, `spec.routing.capacityUnits`, worker-count
-settings, KEDA/native-HPA mode, and `spec.nodePool`. `valuesOverlay` remains a
-privileged surface for pod, image, networking, Secret, and Trino configuration
-that is outside the standard runtime shape.
+settings, KEDA/native-HPA mode, `spec.placement.existingNodePool`, and
+`spec.nodePool`. `valuesOverlay` remains a privileged surface for pod, image,
+networking, Secret, and Trino configuration that is outside the standard runtime
+shape.
 
 Coordinator scale is intentionally binary. A runtime can have no coordinator
 while suspended or scaled down, and one coordinator while active. Capacity and
@@ -526,6 +540,14 @@ Namespace guardrails use the resolved coordinator resources plus the resolved
 quota worker count. They also reserve rolling-update surge headroom so the
 quota does not block the operator's own Deployment updates. `Recreate`
 strategies do not reserve surge.
+
+Runtime status also carries focused operational conditions. `SchedulingReady`
+summarizes pod and deployment scheduling blockers, and `PlacementReady`,
+`TaintsReady`, `QuotaReady`, and `CapacityReady` classify common placement,
+taint/toleration, namespace quota, and node capacity failures. `NodePoolFitReady`
+records best-effort fit checks between resolved pod resources and known provider
+machine types. Kubernetes Events and pod status remain the detailed source of
+truth.
 
 ### Runtime Configuration Layers
 
@@ -565,9 +587,9 @@ boundaries.
 | --- | --- |
 | Standard runtime sizing | Set `spec.size` and keep generated pod resources. |
 | Different coordinator or worker requests/limits | Set `spec.resources.coordinator` or `spec.resources.worker`. |
-| Schedule onto an existing node pool | Set `spec.placement.nodeSelector`, for example `cloud.google.com/gke-nodepool: existing-pool`. Do not set `spec.nodePool` unless XTrinode should provision a CAPI node-pool resource. |
+| Schedule onto an existing node pool | Set `spec.placement.existingNodePool` for AKS/EKS/GKE default labels, or `spec.placement.nodeSelector` for explicit custom labels. Do not set `spec.nodePool` unless XTrinode should provision a CAPI node-pool resource. |
 | Override route/resume capacity | Set `spec.routing.capacityUnits`. |
-| Bigger or different nodes with the same pod resources | Set `spec.nodePool` provider and machine type fields. |
+| Bigger or different nodes with the same pod resources | Set `spec.nodePool` provider and machine type fields; use `spec.nodePool.deletionPolicy` to choose delete, retain, or scale-to-zero behavior on XTrinode deletion. |
 | More workers or provider node-pool bounds | Set `spec.nodePool.minNodes`, `maxNodes`, prewarm, spot, labels, taints, disk, or zone fields. |
 | Chart-shaped pod, image, or Trino config changes | Use `spec.valuesOverlay`, subject to privileged overlay admission. |
 
@@ -585,19 +607,21 @@ The supported overlay surface includes:
 | `server.autoscaling` | Creates a worker HPA from CPU and/or memory targets. |
 | `coordinator`, `worker` | Role-specific probes, lifecycle, volumes, mounts, labels, annotations, exposed ports, and termination grace period. |
 | `auth` | Supports password and group file authentication through inline Secret generation or existing Secret references. |
-| `env`, `envFrom` | Adds environment variables and environment sources. |
-| `securityContext`, `containerSecurityContext`, `shareProcessNamespace` | Applies pod/container security context settings. |
-| `sidecarContainers` | Adds sidecars to Trino pods. |
+| `env` | Adds environment variables. Global overlay `envFrom` is denied by admission and not rendered; use typed `helmChartConfig.envFrom` for that privileged path. |
+| `securityContext`, `containerSecurityContext`, `shareProcessNamespace` | Applies allowed pod/container security context settings. Privileged containers, privilege escalation, added capabilities, and host namespaces are denied by admission. |
+| `sidecarContainers` | Denied by admission and not rendered by the resource builders. |
 | `configMounts`, `secretMounts` | Adds global config and secret volumes/mounts. Referenced objects are watched and hashed for pod rollouts. |
 | `sessionProperties`, `kafka`, `resourceGroups`, `jmx` | Creates and mounts those Trino configuration areas when configured. |
 | `networkPolicy`, `service` | Applies selected network policy labels/selectors and Service settings such as port. |
 
 Overlay fields are not tenant-safe by default. They can alter images, pod
 security context, volume mounts, environment sources, and networking behavior.
-The admission webhook warns when `valuesOverlay` is present or changed and
-requires operator-level authorization to create or change privileged overlay
-content. Multi-tenant installations can add ValidatingAdmissionPolicy, OPA
-Gatekeeper, Kyverno, or an equivalent policy layer for stricter local rules.
+The admission webhook warns when `valuesOverlay` is present or changed, requires
+`update` on `analytics.xtrinode.io/xtrinodes/valuesoverlay`, and rejects
+typed-shape conflicts plus high-risk pod/security/exposure fields. Multi-tenant
+installations can add ValidatingAdmissionPolicy, OPA Gatekeeper, Kyverno, or an
+equivalent policy layer for stricter local registry, Secret, and annotation
+rules.
 
 When Trino HTTP authentication is enabled, configure `spec.trinoControlAuth` so
 the operator and worker shutdown hooks can call internal Trino lifecycle APIs:
@@ -632,7 +656,7 @@ that state at request time.
 | --- | --- | --- |
 | `RUNNING` | Runtime readiness has passed and the operator publishes the ready route. | Eligible for new queries and sticky continuations. |
 | `RESUMING` | Resources are being created or runtime readiness has not passed. | Not eligible for new queries; can be selected as a resume candidate. |
-| `PAUSED` | `spec.suspended=true`, phase is `Suspended`, or the backend is in an error/unknown paused path. | Not eligible for new queries; preferred resume candidate. |
+| `PAUSED` | `spec.suspended=true`, including fresh suspend before query-drain checks, phase is `Suspended`, or the backend is in an error/unknown paused path. | Not eligible for new queries; preferred resume candidate. |
 | `DRAINING` | Finalization starts route drain before deletion. | New queries are rejected, but existing sticky query IDs may continue. |
 | `REMOVED` | Backend is removed from the ConfigMap by deregistration. | No route remains for that backend. |
 
@@ -685,10 +709,11 @@ reconciliation.
 
 ### Suspend
 
-Suspension is a graceful scale-down path. The control plane checks for active
-work, disables or constrains scaling, reduces workers, waits for termination,
-records the suspended state, and leaves the route in a non-new-query state so
-gateway demand can trigger resume later.
+Suspension is a graceful scale-down path. The operator first publishes a
+`PAUSED` route for `spec.suspended=true` so new gateway queries stop selecting
+the backend, then checks active work, disables or constrains scaling, reduces
+workers, waits for termination, records the suspended state, and leaves the route
+in a non-new-query state so gateway demand can trigger resume later.
 
 ### Resume
 
@@ -703,7 +728,11 @@ Deletion uses finalizers because route state lives in a shared ConfigMap and
 cannot be cleaned up by owner references alone. Finalization first marks the
 backend `DRAINING`, waits for the drain window and query shutdown checks, removes
 the gateway backend, deletes KEDA and Trino resources, deletes optional node-pool
-resources, reconciles namespace guardrails, and removes the finalizer.
+resources when `spec.nodePool.deletionPolicy=Delete`, reconciles namespace
+guardrails, and removes the finalizer. `deletionPolicy: Retain` removes
+XTrinode owner references and leaves managed node-pool resources in place, while
+`deletionPolicy: ScaleToZero` scales the pool down through the node-pool scale
+path and then retains the object.
 
 ## Catalog Flow
 
@@ -824,6 +853,9 @@ XTrinode supports three worker modes:
 - Native HPA-managed workers, which are available through the privileged
   `valuesOverlay.server.autoscaling` escape hatch.
 
+KEDA APIs are part of the operator platform contract even though individual
+runtimes default to fixed workers.
+
 KEDA is reconciled after wake TTL handling. This lets resume or wake requests
 temporarily raise the worker floor, while expired wake windows can lower KEDA
 `minReplicaCount` without waiting for another reconciliation pass. The gateway
@@ -853,6 +885,7 @@ policy, secret policy, cloud IAM, and admission controls.
 | Many clients trigger resume together | API server Lease gating lets one resume operation win and tells other clients to retry. |
 | A backend is not runtime-ready yet | Operator publishes or keeps a `RESUMING` route and requeues until readiness passes. |
 | Metric source is unavailable | Fixed-worker mode is unaffected; KEDA behavior follows the configured scaler and surfaces status/events. |
+| KEDA ScaledObject API is unavailable | Operator install is misconfigured; KEDA-enabled runtimes report `KEDAPlatformMissing`. |
 | Cloud node pool cannot provision | XTrinode status and Kubernetes events expose scheduling and provider failures. |
 | Gateway route ConfigMap has invalid YAML or no valid entries | Gateway keeps the last-good in-memory routes instead of replacing them with invalid state. |
 | Deletion is interrupted | Finalizers, drain annotations, and explicit deregistration let reconciliation resume cleanup. |

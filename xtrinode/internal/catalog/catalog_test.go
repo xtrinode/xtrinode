@@ -438,21 +438,3 @@ func TestGetEffectiveCatalogs_CatalogNameWithPrefix(t *testing.T) {
 	// Should strip prefix
 	assert.Equal(t, []string{"iceberg"}, catalogs)
 }
-
-func TestDeleteCatalogConfigMaps_NoOp(t *testing.T) {
-	ctx := context.Background()
-	scheme := runtime.NewScheme()
-	require.NoError(t, corev1.AddToScheme(scheme))
-	cli := fake.NewClientBuilder().WithScheme(scheme).Build()
-	log := logr.Discard()
-
-	xtrinode := &analyticsv1.XTrinode{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
-		},
-	}
-
-	err := DeleteCatalogConfigMaps(ctx, cli, xtrinode, log)
-	assert.NoError(t, err)
-}

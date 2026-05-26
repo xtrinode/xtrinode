@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -18,6 +19,7 @@ import (
 	"github.com/xtrinode/xtrinode/internal/events"
 	"github.com/xtrinode/xtrinode/internal/status"
 	"github.com/xtrinode/xtrinode/internal/trino/controlendpoint"
+	trinoresources "github.com/xtrinode/xtrinode/internal/trino/resources"
 	"github.com/xtrinode/xtrinode/pkg/metrics"
 )
 
@@ -51,6 +53,7 @@ func (r *XTrinodeReconciler) transitionToReady(ctx context.Context, xtrinode *an
 	}
 
 	status.SetConditionWithEvents(xtrinode, status.ConditionTypeReady, metav1.ConditionTrue, status.ConditionReasonAllComponentsReady, "All components ready", r.EventRecorder)
+	setSchedulingReadyConditions(xtrinode)
 	status.SetCondition(xtrinode, status.ConditionTypeReconciling, metav1.ConditionFalse, status.ConditionReasonReconciling, "Reconciliation complete")
 	status.SetConditionWithEvents(xtrinode, status.ConditionTypeSuspended, metav1.ConditionFalse, status.ConditionReasonNotSuspended, "XTrinode is not suspended", r.EventRecorder)
 	status.SetConditionWithEvents(xtrinode, status.ConditionTypeError, metav1.ConditionFalse, status.ConditionReasonNoError, "No errors", r.EventRecorder)
@@ -71,6 +74,174 @@ func (r *XTrinodeReconciler) transitionToReady(ctx context.Context, xtrinode *an
 	metrics.ReconcileTotal.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "success").Inc()
 
 	return nil
+}
+
+func (r *XTrinodeReconciler) syncSchedulingCondition(ctx context.Context, xtrinode *analyticsv1.XTrinode, log logr.Logger) {
+	pods := &corev1.PodList{}
+	selector := trinoresources.TrinoSelectorLabels(xtrinode, "")
+	if err := r.List(ctx, pods, client.InNamespace(xtrinode.Namespace), client.MatchingLabels(selector)); err != nil {
+		log.Error(err, "failed to list runtime pods for scheduling condition")
+		setSchedulingUnknownConditions(xtrinode, fmt.Sprintf("Failed to inspect runtime pod scheduling: %v", err))
+		return
+	}
+
+	deployments := &appsv1.DeploymentList{}
+	if err := r.List(ctx, deployments, client.InNamespace(xtrinode.Namespace), client.MatchingLabels(selector)); err != nil {
+		log.Error(err, "failed to list runtime deployments for scheduling condition")
+		setSchedulingUnknownConditions(xtrinode, fmt.Sprintf("Failed to inspect runtime deployment scheduling: %v", err))
+		return
+	}
+
+	blockers := schedulingBlockerSet{}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type != corev1.PodScheduled || condition.Status != corev1.ConditionFalse {
+				continue
+			}
+			reason := strings.TrimSpace(condition.Reason)
+			if reason == "" {
+				reason = "PodNotScheduled"
+			}
+			message := strings.TrimSpace(condition.Message)
+			if message == "" {
+				message = "pod is not scheduled"
+			}
+			component := pod.Labels[trinoresources.AppComponentLabel]
+			if component == "" {
+				component = "runtime"
+			}
+			blockers.add(reason, message, fmt.Sprintf("%s pod %s: %s: %s", component, pod.Name, reason, message))
+		}
+	}
+	for i := range deployments.Items {
+		deployment := &deployments.Items[i]
+		for _, condition := range deployment.Status.Conditions {
+			if condition.Type != appsv1.DeploymentReplicaFailure || condition.Status != corev1.ConditionTrue {
+				continue
+			}
+			reason := strings.TrimSpace(condition.Reason)
+			if reason == "" {
+				reason = "ReplicaFailure"
+			}
+			message := strings.TrimSpace(condition.Message)
+			if message == "" {
+				message = "deployment cannot create runtime pods"
+			}
+			component := deployment.Labels[trinoresources.AppComponentLabel]
+			if component == "" {
+				component = "runtime"
+			}
+			blockers.add(reason, message, fmt.Sprintf("%s deployment %s: %s: %s", component, deployment.Name, reason, message))
+		}
+	}
+	if blockers.hasAny() {
+		setSchedulingBlockedConditions(xtrinode, &blockers)
+		return
+	}
+	setSchedulingReadyConditions(xtrinode)
+}
+
+type schedulingBlockerSet struct {
+	all       []string
+	placement []string
+	taints    []string
+	quota     []string
+	capacity  []string
+}
+
+func (b *schedulingBlockerSet) add(reason, message, summary string) {
+	b.all = append(b.all, summary)
+	classification := classifySchedulingBlocker(reason, message)
+	if classification.placement {
+		b.placement = append(b.placement, summary)
+	}
+	if classification.taints {
+		b.taints = append(b.taints, summary)
+	}
+	if classification.quota {
+		b.quota = append(b.quota, summary)
+	}
+	if classification.capacity {
+		b.capacity = append(b.capacity, summary)
+	}
+}
+
+func (b *schedulingBlockerSet) hasAny() bool {
+	return len(b.all) > 0
+}
+
+type schedulingBlockerClassification struct {
+	placement bool
+	taints    bool
+	quota     bool
+	capacity  bool
+}
+
+func classifySchedulingBlocker(reason, message string) schedulingBlockerClassification {
+	text := strings.ToLower(reason + " " + message)
+	return schedulingBlockerClassification{
+		placement: containsAnySchedulingPhrase(text,
+			"node affinity",
+			"node selector",
+			"nodeselector",
+			"didn't match pod",
+			"did not match pod",
+			"didn't match node selector",
+			"did not match node selector",
+		),
+		taints: containsAnySchedulingPhrase(text, "taint", "tolerat"),
+		quota:  containsAnySchedulingPhrase(text, "quota", "resourcequota", "exceeded quota"),
+		capacity: containsAnySchedulingPhrase(text,
+			"insufficient cpu",
+			"insufficient memory",
+			"insufficient ephemeral-storage",
+			"insufficient pods",
+			"too many pods",
+			"max node group size",
+		),
+	}
+}
+
+func containsAnySchedulingPhrase(text string, phrases ...string) bool {
+	for _, phrase := range phrases {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func setSchedulingReadyConditions(xtrinode *analyticsv1.XTrinode) {
+	status.SetCondition(xtrinode, status.ConditionTypeSchedulingReady, metav1.ConditionTrue, status.ConditionReasonSchedulingReady, "Runtime pods are scheduled or no scheduling blockers are currently reported")
+	status.SetCondition(xtrinode, status.ConditionTypePlacementReady, metav1.ConditionTrue, status.ConditionReasonPlacementReady, "No placement selector blockers are currently reported")
+	status.SetCondition(xtrinode, status.ConditionTypeTaintsReady, metav1.ConditionTrue, status.ConditionReasonTaintsReady, "No taint or toleration blockers are currently reported")
+	status.SetCondition(xtrinode, status.ConditionTypeQuotaReady, metav1.ConditionTrue, status.ConditionReasonQuotaReady, "No namespace quota blockers are currently reported")
+	status.SetCondition(xtrinode, status.ConditionTypeCapacityReady, metav1.ConditionTrue, status.ConditionReasonCapacityReady, "No node capacity blockers are currently reported")
+}
+
+func setSchedulingUnknownConditions(xtrinode *analyticsv1.XTrinode, message string) {
+	status.SetCondition(xtrinode, status.ConditionTypeSchedulingReady, metav1.ConditionUnknown, status.ConditionReasonSchedulingUnknown, message)
+	status.SetCondition(xtrinode, status.ConditionTypePlacementReady, metav1.ConditionUnknown, status.ConditionReasonPlacementUnknown, message)
+	status.SetCondition(xtrinode, status.ConditionTypeTaintsReady, metav1.ConditionUnknown, status.ConditionReasonTaintsUnknown, message)
+	status.SetCondition(xtrinode, status.ConditionTypeQuotaReady, metav1.ConditionUnknown, status.ConditionReasonQuotaUnknown, message)
+	status.SetCondition(xtrinode, status.ConditionTypeCapacityReady, metav1.ConditionUnknown, status.ConditionReasonCapacityUnknown, message)
+}
+
+func setSchedulingBlockedConditions(xtrinode *analyticsv1.XTrinode, blockers *schedulingBlockerSet) {
+	status.SetCondition(xtrinode, status.ConditionTypeSchedulingReady, metav1.ConditionFalse, status.ConditionReasonSchedulingBlocked, strings.Join(blockers.all, "; "))
+	setSchedulingCategoryCondition(xtrinode, status.ConditionTypePlacementReady, status.ConditionReasonPlacementReady, status.ConditionReasonPlacementBlocked, blockers.placement, "No placement selector blockers are currently reported")
+	setSchedulingCategoryCondition(xtrinode, status.ConditionTypeTaintsReady, status.ConditionReasonTaintsReady, status.ConditionReasonTaintsBlocked, blockers.taints, "No taint or toleration blockers are currently reported")
+	setSchedulingCategoryCondition(xtrinode, status.ConditionTypeQuotaReady, status.ConditionReasonQuotaReady, status.ConditionReasonQuotaBlocked, blockers.quota, "No namespace quota blockers are currently reported")
+	setSchedulingCategoryCondition(xtrinode, status.ConditionTypeCapacityReady, status.ConditionReasonCapacityReady, status.ConditionReasonCapacityBlocked, blockers.capacity, "No node capacity blockers are currently reported")
+}
+
+func setSchedulingCategoryCondition(xtrinode *analyticsv1.XTrinode, conditionType, readyReason, blockedReason string, blockers []string, readyMessage string) {
+	if len(blockers) == 0 {
+		status.SetCondition(xtrinode, conditionType, metav1.ConditionTrue, readyReason, readyMessage)
+		return
+	}
+	status.SetCondition(xtrinode, conditionType, metav1.ConditionFalse, blockedReason, strings.Join(blockers, "; "))
 }
 
 type trinoRuntimeReadiness struct {

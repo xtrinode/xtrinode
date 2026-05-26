@@ -155,23 +155,6 @@ func buildWorkerDeployment(
 		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, jmxContainer)
 	}
 
-	// Add sidecar containers from valuesOverlay
-	if xtrinode.Spec.GetValuesOverlayMap() != nil {
-		if sidecarContainers, ok := xtrinode.Spec.GetValuesOverlayMap()["sidecarContainers"].(map[string]interface{}); ok {
-			if workerSidecars, ok := sidecarContainers["worker"].([]interface{}); ok {
-				for _, sidecar := range workerSidecars {
-					if sidecarMap, ok := sidecar.(map[string]interface{}); ok {
-						container, err := buildContainerFromMap(sidecarMap)
-						if err != nil {
-							return nil, fmt.Errorf("failed to build sidecar container: %w", err)
-						}
-						deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, container)
-					}
-				}
-			}
-		}
-	}
-
 	applySchedulingShape(&deployment.Spec.Template.Spec, shape.Placement.Worker)
 	if len(deployment.Spec.Template.Spec.TopologySpreadConstraints) == 0 {
 		if xtrinode.Spec.HelmChartConfig != nil &&
@@ -207,19 +190,10 @@ func buildWorkerDeployment(
 		}
 	}
 
-	// Add deployment settings from valuesOverlay (can override rolloutPolicy)
+	// Apply deployment metadata from valuesOverlay.
 	if xtrinode.Spec.GetValuesOverlayMap() != nil {
 		if worker, ok := xtrinode.Spec.GetValuesOverlayMap()["worker"].(map[string]interface{}); ok {
 			if deploymentMap, ok := worker["deployment"].(map[string]interface{}); ok {
-				if strategyMap, ok := deploymentMap["strategy"].(map[string]interface{}); ok {
-					strategy, err := buildDeploymentStrategyFromMap(strategyMap)
-					if err != nil {
-						return nil, fmt.Errorf("failed to build deployment strategy: %w", err)
-					}
-					if strategy != nil {
-						deployment.Spec.Strategy = *strategy
-					}
-				}
 				if annotations, ok := deploymentMap["annotations"].(map[string]interface{}); ok {
 					if deployment.Annotations == nil {
 						deployment.Annotations = make(map[string]string)
@@ -232,9 +206,6 @@ func buildWorkerDeployment(
 				}
 				if progressDeadline, ok := ParseInt32(deploymentMap["progressDeadlineSeconds"]); ok {
 					deployment.Spec.ProgressDeadlineSeconds = &progressDeadline
-				}
-				if revisionHistoryLimit, ok := ParseInt32(deploymentMap["revisionHistoryLimit"]); ok {
-					deployment.Spec.RevisionHistoryLimit = &revisionHistoryLimit
 				}
 			}
 		}

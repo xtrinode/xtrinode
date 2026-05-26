@@ -77,6 +77,22 @@ spec:
       maxQueryMemory: 512MB
       maxTotalMemoryPerNode: 512MB
 
+  resources:
+    coordinator:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+    worker:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+
   valuesOverlay:
     image:
       repository: trinodb/trino
@@ -88,13 +104,6 @@ spec:
       additionalJVMConfig:
         - -Xmx768M
         - -XX:ReservedCodeCacheSize=128M
-      resources:
-        requests:
-          cpu: 250m
-          memory: 1Gi
-        limits:
-          cpu: "1"
-          memory: 1536Mi
       startupProbe:
         exec:
           command:
@@ -107,13 +116,6 @@ spec:
       additionalJVMConfig:
         - -Xmx768M
         - -XX:ReservedCodeCacheSize=128M
-      resources:
-        requests:
-          cpu: 250m
-          memory: 1Gi
-        limits:
-          cpu: "1"
-          memory: 1536Mi
       startupProbe:
         exec:
           command:

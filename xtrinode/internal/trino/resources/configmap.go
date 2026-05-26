@@ -255,9 +255,9 @@ func buildNodeProperties(xtrinode *analyticsv1.XTrinode) string {
 func buildJVMConfig(xtrinode *analyticsv1.XTrinode, preset *sizing.SizePreset, role string) string {
 	var maxHeapSize string
 	if role == "coordinator" {
-		maxHeapSize = preset.CoordinatorMemLim
+		maxHeapSize = roleMemoryLimit(xtrinode, preset.CoordinatorMemLim, "coordinator")
 	} else {
-		maxHeapSize = preset.WorkerMemLim
+		maxHeapSize = roleMemoryLimit(xtrinode, preset.WorkerMemLim, "worker")
 	}
 
 	// Convert memory limit to JVM format (e.g., "8Gi" -> "8G")
@@ -424,9 +424,9 @@ func buildConfigProperties(xtrinode *analyticsv1.XTrinode, preset *sizing.SizePr
 	// (query.max-memory-per-node + heap_headroom must be <= heap; headroom ~30% of query mem)
 	var memLim string
 	if role == "coordinator" {
-		memLim = preset.CoordinatorMemLim
+		memLim = roleMemoryLimit(xtrinode, preset.CoordinatorMemLim, "coordinator")
 	} else {
-		memLim = preset.WorkerMemLim
+		memLim = roleMemoryLimit(xtrinode, preset.WorkerMemLim, "worker")
 	}
 	maxMemoryPerNode := safeQueryMemoryPerNode(memLim)
 	// Convert to format Trino expects (remove 'i' from Gi/Mi)
@@ -539,6 +539,27 @@ func buildConfigProperties(xtrinode *analyticsv1.XTrinode, preset *sizing.SizePr
 	}
 
 	return strings.Join(props, "\n")
+}
+
+func roleMemoryLimit(xtrinode *analyticsv1.XTrinode, fallback, role string) string {
+	if xtrinode.Spec.Resources == nil {
+		return fallback
+	}
+	var requirements *corev1.ResourceRequirements
+	switch role {
+	case "coordinator":
+		requirements = xtrinode.Spec.Resources.Coordinator
+	case "worker":
+		requirements = xtrinode.Spec.Resources.Worker
+	}
+	if requirements == nil {
+		return fallback
+	}
+	limit, ok := requirements.Limits[corev1.ResourceMemory]
+	if !ok || limit.Sign() <= 0 {
+		return fallback
+	}
+	return limit.String()
 }
 
 // BuildSessionPropertyConfigMap builds the session properties ConfigMap

@@ -2,11 +2,14 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,6 +38,13 @@ func (r *XTrinodeReconciler) reconcileKEDA(ctx context.Context, xtrinode *analyt
 	}
 	var existingScaledObject kedav1alpha1.ScaledObject
 	if err := r.Get(ctx, scaledObjectKey, &existingScaledObject); err != nil {
+		if isKEDAPlatformUnavailableError(err) {
+			message := fmt.Sprintf("runtime KEDA is active, but the KEDA ScaledObject API is unavailable: %v", err)
+			status.SetCondition(xtrinode, status.ConditionTypeKEDAReady, metav1.ConditionFalse, status.ConditionReasonKEDAPlatformMissing, message)
+			//nolint:errcheck // best-effort status update; main error is already being returned
+			_ = setXTrinodeErrorStatusAndUpdate(ctx, r.Client, r.Status(), xtrinode, log, status.ConditionReasonKEDAPlatformMissing, message, r.EventRecorder)
+			return errors.New(message)
+		}
 		if !k8serrors.IsNotFound(err) {
 			// Real error (RBAC, timeout, etc.) - return it
 			log.Error(err, "failed to check ScaledObject existence")
@@ -76,6 +86,19 @@ func (r *XTrinodeReconciler) reconcileKEDA(ctx context.Context, xtrinode *analyt
 	}
 	log.Info("KEDA ScaledObject created successfully", "xtrinode", xtrinode.Name)
 	return nil
+}
+
+func isKEDAPlatformUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if meta.IsNoMatchError(err) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no matches for kind") ||
+		strings.Contains(message, "the server could not find the requested resource") ||
+		(strings.Contains(message, "scaledobjects") && strings.Contains(message, "not found"))
 }
 
 // reconcileGateway registers gateway route

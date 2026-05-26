@@ -252,6 +252,41 @@ func (n *NodePoolAdapter) DeleteNodePool(ctx context.Context, xtrinode *analytic
 	}
 }
 
+// RetainNodePool removes XTrinode owner references from node-pool resources.
+func (n *NodePoolAdapter) RetainNodePool(ctx context.Context, xtrinode *analyticsv1.XTrinode) error {
+	if xtrinode.Spec.NodePool == nil {
+		return nil
+	}
+
+	nodePool := xtrinode.Spec.NodePool
+	n.log.Info("Retaining node pool", "xtrinode", xtrinode.Name, "provider", nodePool.Provider, "mode", nodePool.ProviderMode)
+
+	providerMode := nodePool.ProviderMode
+	if providerMode == "" {
+		providerMode = "self-managed"
+	}
+
+	switch nodePool.Provider {
+	case "azure":
+		if providerMode == "managed" {
+			return retainNodePoolManagedResources(n.client, ctx, xtrinode, n.log, "azure")
+		}
+		return retainNodePoolResources(n.client, ctx, xtrinode, n.log, "azure", true)
+	case "aws":
+		if providerMode == "managed" {
+			return retainNodePoolManagedResources(n.client, ctx, xtrinode, n.log, "aws")
+		}
+		return retainNodePoolResources(n.client, ctx, xtrinode, n.log, "aws", false)
+	case "gcp":
+		if providerMode == "managed" {
+			return retainNodePoolManagedResources(n.client, ctx, xtrinode, n.log, "gcp")
+		}
+		return retainNodePoolResources(n.client, ctx, xtrinode, n.log, "gcp", false)
+	default:
+		return fmt.Errorf("unsupported provider: %s", nodePool.Provider)
+	}
+}
+
 // ensureAzureMachinePool creates or updates an Azure CAPZ MachinePool
 func (n *NodePoolAdapter) ensureAzureMachinePool(ctx context.Context, xtrinode *analyticsv1.XTrinode) error {
 	nodePool := xtrinode.Spec.NodePool

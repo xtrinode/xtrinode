@@ -300,21 +300,6 @@ func buildTrinoContainer(
 		}
 	}
 
-	// Add envFrom from valuesOverlay
-	if xtrinode.Spec.GetValuesOverlayMap() != nil {
-		if envFromList, ok := xtrinode.Spec.GetValuesOverlayMap()["envFrom"].([]interface{}); ok {
-			for _, envFromItem := range envFromList {
-				if envFromMap, ok := envFromItem.(map[string]interface{}); ok {
-					envFrom, err := buildEnvFromSourceFromMap(envFromMap)
-					if err != nil {
-						return corev1.Container{}, fmt.Errorf("failed to build envFrom: %w", err)
-					}
-					container.EnvFrom = append(container.EnvFrom, envFrom)
-				}
-			}
-		}
-	}
-
 	if roleConfig != nil {
 		if additionalMounts, ok := roleConfig["additionalVolumeMounts"].([]interface{}); ok {
 			for _, mountItem := range additionalMounts {

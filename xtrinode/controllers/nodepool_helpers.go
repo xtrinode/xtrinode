@@ -32,6 +32,13 @@ func getNodePoolName(nodePool *analyticsv1.NodePoolSpec, xtrinodeName string) st
 	return xtrinodeName + config.NodePoolNameSuffix
 }
 
+func nodePoolDeletionPolicy(nodePool *analyticsv1.NodePoolSpec) string {
+	if nodePool == nil || nodePool.DeletionPolicy == "" {
+		return analyticsv1.NodePoolDeletionPolicyDelete
+	}
+	return nodePool.DeletionPolicy
+}
+
 func effectiveNodePoolLabels(nodePool *analyticsv1.NodePoolSpec, poolName string) map[string]string {
 	if nodePool == nil {
 		return nil
@@ -620,6 +627,34 @@ func deleteNodePoolResources(
 	return nil
 }
 
+func retainNodePoolResources(
+	cli client.Client,
+	ctx context.Context,
+	xtrinode *analyticsv1.XTrinode,
+	log logr.Logger,
+	provider string,
+	isMachinePool bool,
+) error {
+	nodePool := xtrinode.Spec.NodePool
+	resourceName := getNodePoolName(nodePool, xtrinode.Name)
+
+	machineResourceGVK := getMachineResourceGVK(isMachinePool)
+	machineResource := buildUnstructuredForDeletion(machineResourceGVK, resourceName, xtrinode.Namespace)
+	if err := removeXTrinodeOwnerReference(cli, ctx, machineResource, xtrinode, log); err != nil {
+		return err
+	}
+
+	infrastructureGVK := getInfrastructureTemplateGVK(provider, isMachinePool)
+	infrastructureName := resourceName + config.NodePoolTemplateSuffix
+	infrastructureTemplate := buildUnstructuredForDeletion(infrastructureGVK, infrastructureName, xtrinode.Namespace)
+	if err := removeXTrinodeOwnerReference(cli, ctx, infrastructureTemplate, xtrinode, log); err != nil {
+		return err
+	}
+
+	log.Info(fmt.Sprintf("Retained %s %s", provider, machineResourceGVK.Kind), "name", resourceName)
+	return nil
+}
+
 // getInfrastructureAPIVersion returns the correct API version for a provider's infrastructure CRDs
 // AWS uses v1beta2, while Azure and GCP use v1beta1
 func getInfrastructureAPIVersion(provider string) string {
@@ -642,6 +677,50 @@ func setXTrinodeOwnerReference(obj *unstructured.Unstructured, xtrinode *analyti
 func setXTrinodeNonControllerOwnerReference(obj *unstructured.Unstructured, xtrinode *analyticsv1.XTrinode) error {
 	obj.SetOwnerReferences(buildNonControllerOwnerReference(xtrinode))
 	return nil
+}
+
+func removeXTrinodeOwnerReference(
+	cli client.Client,
+	ctx context.Context,
+	obj *unstructured.Unstructured,
+	xtrinode *analyticsv1.XTrinode,
+	log logr.Logger,
+) error {
+	existing := obj.DeepCopy()
+	if err := cli.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+		if k8serrors.IsNotFound(err) {
+			log.V(1).Info("Node-pool resource already absent while retaining", "kind", obj.GetKind(), "name", obj.GetName())
+			return nil
+		}
+		return fmt.Errorf("failed to get node-pool resource %s/%s for retention: %w", obj.GetKind(), obj.GetName(), err)
+	}
+
+	ownerRefs := existing.GetOwnerReferences()
+	filtered := ownerRefs[:0]
+	removed := false
+	for _, ref := range ownerRefs {
+		if ownerReferenceMatchesXTrinode(&ref, xtrinode) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, ref)
+	}
+	if !removed {
+		return nil
+	}
+	existing.SetOwnerReferences(filtered)
+	if err := cli.Update(ctx, existing); err != nil {
+		return fmt.Errorf("failed to remove XTrinode owner reference from %s/%s: %w", existing.GetKind(), existing.GetName(), err)
+	}
+	log.Info("Removed XTrinode owner reference from retained node-pool resource", "kind", existing.GetKind(), "name", existing.GetName())
+	return nil
+}
+
+func ownerReferenceMatchesXTrinode(ref *metav1.OwnerReference, xtrinode *analyticsv1.XTrinode) bool {
+	if ref.APIVersion != analyticsv1.GroupVersion.String() || ref.Kind != "XTrinode" || ref.Name != xtrinode.Name {
+		return false
+	}
+	return xtrinode.UID == "" || ref.UID == "" || ref.UID == xtrinode.UID
 }
 
 // managedMachinePoolConfig holds the parameters for building a managed MachinePool (CAPI core)
@@ -812,6 +891,32 @@ func deleteNodePoolManagedResources(
 	}
 
 	log.Info(fmt.Sprintf("Deleted managed %s MachinePool", provider), "name", resourceName)
+	return nil
+}
+
+func retainNodePoolManagedResources(
+	cli client.Client,
+	ctx context.Context,
+	xtrinode *analyticsv1.XTrinode,
+	log logr.Logger,
+	provider string,
+) error {
+	nodePool := xtrinode.Spec.NodePool
+	resourceName := getNodePoolName(nodePool, xtrinode.Name)
+
+	machinePoolGVK := getMachineResourceGVK(true)
+	machinePool := buildUnstructuredForDeletion(machinePoolGVK, resourceName, xtrinode.Namespace)
+	if err := removeXTrinodeOwnerReference(cli, ctx, machinePool, xtrinode, log); err != nil {
+		return err
+	}
+
+	infraGVK := getManagedInfrastructureGVK(provider)
+	infraResource := buildUnstructuredForDeletion(infraGVK, resourceName, xtrinode.Namespace)
+	if err := removeXTrinodeOwnerReference(cli, ctx, infraResource, xtrinode, log); err != nil {
+		return err
+	}
+
+	log.Info(fmt.Sprintf("Retained managed %s MachinePool", provider), "name", resourceName)
 	return nil
 }
 

@@ -20,29 +20,39 @@ import (
 const (
 	FinalizerName = "xtrinode.analytics.xtrinode.io/finalizer"
 
-	namespaceResourceQuotaName = "xtrinode-namespace-quota"
-	namespaceLimitRangeName    = "xtrinode-namespace-limits"
-	guardrailScopeLabel        = "xtrinode.analytics.xtrinode.io/guardrail-scope"
-	guardrailScopeNamespace    = "namespace"
-	managedByLabel             = "app.kubernetes.io/managed-by"
-	managedByXTrinodeOperator  = "xtrinode-operator"
+	DefaultNamespaceResourceQuotaName = "xtrinode-namespace-quota"
+	DefaultNamespaceLimitRangeName    = "xtrinode-namespace-limits"
+	guardrailScopeLabel               = "xtrinode.analytics.xtrinode.io/guardrail-scope"
+	guardrailScopeNamespace           = "namespace"
+	managedByLabel                    = "app.kubernetes.io/managed-by"
+	managedByXTrinodeOperator         = "xtrinode-operator"
+)
+
+const (
+	NamespaceGuardrailModeManaged    = "managed"
+	NamespaceGuardrailModeCreateOnly = "createOnly"
+	NamespaceGuardrailModeObserve    = "observe"
+	NamespaceGuardrailModeDisabled   = "disabled"
 )
 
 // XTrinodeReconciler reconciles a XTrinode object
 type XTrinodeReconciler struct {
 	client.Client
-	Scheme                  *runtime.Scheme
-	EventRecorder           events.Recorder                  // Event recorder for Kubernetes events (injected)
-	NodePoolAdapter         NodePoolAdapterInterface         // Node pool adapter for provisioning (injected)
-	GatewayService          GatewayServiceInterface          // Gateway service for route management (injected)
-	KEDAService             KEDAServiceInterface             // KEDA service for autoscaling (injected)
-	CatalogService          CatalogServiceInterface          // Catalog service for catalog discovery (injected)
-	TrinoResourcesService   TrinoResourcesServiceInterface   // Trino resources service for resource management (injected)
-	AutosuspendService      AutosuspendServiceInterface      // Autosuspend service for auto-suspend logic (injected)
-	GracefulShutdownService GracefulShutdownServiceInterface // Graceful shutdown service for query checks (injected)
-	OperatorVersion         string                           // Operator version for resource revisioning
-	DrainDuration           time.Duration                    // Maximum route-drain fallback window
-	DrainRequeueInterval    time.Duration                    // Interval for query-aware drain rechecks
+	Scheme                     *runtime.Scheme
+	EventRecorder              events.Recorder                  // Event recorder for Kubernetes events (injected)
+	NodePoolAdapter            NodePoolAdapterInterface         // Node pool adapter for provisioning (injected)
+	GatewayService             GatewayServiceInterface          // Gateway service for route management (injected)
+	KEDAService                KEDAServiceInterface             // KEDA service for autoscaling (injected)
+	CatalogService             CatalogServiceInterface          // Catalog service for catalog discovery (injected)
+	TrinoResourcesService      TrinoResourcesServiceInterface   // Trino resources service for resource management (injected)
+	AutosuspendService         AutosuspendServiceInterface      // Autosuspend service for auto-suspend logic (injected)
+	GracefulShutdownService    GracefulShutdownServiceInterface // Graceful shutdown service for query checks (injected)
+	OperatorVersion            string                           // Operator version for resource revisioning
+	DrainDuration              time.Duration                    // Maximum route-drain fallback window
+	DrainRequeueInterval       time.Duration                    // Interval for query-aware drain rechecks
+	NamespaceGuardrailMode     string                           // managed, createOnly, observe, or disabled
+	NamespaceResourceQuotaName string                           // ResourceQuota object name for namespace guardrails
+	NamespaceLimitRangeName    string                           // LimitRange object name for namespace guardrails
 }
 
 // +kubebuilder:rbac:groups=analytics.xtrinode.io,resources=xtrinodes,verbs=get;list;watch;create;update;patch;delete

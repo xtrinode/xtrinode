@@ -375,9 +375,8 @@ spec:
                           The Secret must exist in the same namespace as the XTrinodeCatalog.
                         type: object
                       warehouseURI:
-                        description: |-
-                          WarehouseURI is the Hive Metastore URI when catalogType is hive/hive_metastore.
-                          This field name is kept for API compatibility.
+                        description: WarehouseURI is the Hive Metastore URI when catalogType
+                          is hive/hive_metastore.
                         type: string
                     required:
                     - catalogType

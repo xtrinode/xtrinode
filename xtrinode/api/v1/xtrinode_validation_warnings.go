@@ -116,6 +116,11 @@ func buildNodePoolPrewarmChangeWarning() string {
 	return "node pool prewarm change alters node provisioning behavior"
 }
 
+// buildNodePoolDeletionPolicyChangeWarning returns a warning for nodePool deletion policy changes
+func buildNodePoolDeletionPolicyChangeWarning() string {
+	return "nodePool deletionPolicy change affects whether provider node-pool resources are deleted or retained during finalization"
+}
+
 // buildSuspendedChangeWarning returns a warning for suspended changes
 func buildSuspendedChangeWarning() string {
 	return "suspending runtime implies service disruption"

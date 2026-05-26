@@ -344,6 +344,7 @@ func (s *waitForRuntimeReadyStep) Execute(ctx context.Context, xtrinode *analyti
 		s.reconciler.EventRecorder.Warningf(xtrinode, events.ReasonStepFailed, "Runtime readiness check failed: %v", err)
 		return ctrl.Result{RequeueAfter: config.RuntimeReadinessRequeueInterval}, false, err
 	}
+	s.reconciler.syncSchedulingCondition(ctx, xtrinode, state.Log)
 
 	if !readiness.Ready {
 		if err := s.reconciler.syncPendingGatewayRoute(ctx, xtrinode, readiness); err != nil {

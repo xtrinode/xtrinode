@@ -28,6 +28,7 @@ SCALEOUT_THRESHOLD="${SCALEOUT_THRESHOLD:-0.5}"
 SCALEOUT_QUERY="${SCALEOUT_QUERY:-SELECT count(*) FROM \"local-tpch\".sf1000.lineitem WHERE rand() >= 0}"
 SCALEOUT_WAIT_SECONDS="${SCALEOUT_WAIT_SECONDS:-420}"
 SCALEOUT_POLL_INTERVAL_SECONDS="${SCALEOUT_POLL_INTERVAL_SECONDS:-1}"
+KUBECTL="${KUBECTL:-kubectl}"
 RESUME_REQUESTED_ANNOTATION="xtrinode.analytics.xtrinode.io/resume-requested"
 RESUME_REQUESTED_AT_ANNOTATION="xtrinode.analytics.xtrinode.io/resume-requested-at"
 SUSPEND_REQUESTED_ANNOTATION="xtrinode.analytics.xtrinode.io/suspend-requested"
@@ -43,9 +44,13 @@ require_cmd() {
   fi
 }
 
-require_cmd kubectl
+require_cmd "$KUBECTL"
 require_cmd curl
 require_cmd jq
+
+kctl() {
+  "$KUBECTL" "$@"
+}
 
 cleanup() {
   if [ -n "${SCALEOUT_POLL_PID:-}" ]; then
@@ -97,6 +102,50 @@ wait_for_jsonpath() {
   return 1
 }
 
+wait_for_gateway_route_state() {
+  local expected="$1"
+  local deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+  local state=""
+  local config_json=""
+  local routes_yaml=""
+
+  echo "Waiting for gateway route state ${expected}..."
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    config_json="$(mktemp)"
+    routes_yaml="$(mktemp)"
+    if kctl get configmap trino-gateway-routes -n "$GATEWAY_NAMESPACE" -o json >"$config_json" 2>/dev/null; then
+      jq -r '.data["routes.yaml"] // ""' "$config_json" >"$routes_yaml"
+      state="$(
+        awk -v name="$XTRINODE_NAME" -v ns="$NAMESPACE" '
+          {
+            key = $1
+            value = $2
+            if ($1 == "-" && $2 == "name:") {
+              key = "name:"
+              value = $3
+            }
+          }
+          key == "name:" && value == name { seen_name = 1; seen_namespace = 0 }
+          seen_name && key == "namespace:" && value == ns { seen_namespace = 1 }
+          seen_name && seen_namespace && key == "state:" { print value; exit }
+        ' "$routes_yaml" || true
+      )"
+    else
+      state=""
+    fi
+    rm -f "$config_json" "$routes_yaml"
+    if [ "$state" = "$expected" ]; then
+      echo "  gateway route state=${state}"
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "Timed out waiting for gateway route state ${expected}; last state: ${state:-<empty>}" >&2
+  kctl get configmap trino-gateway-routes -n "$GATEWAY_NAMESPACE" -o go-template='{{ index .data "routes.yaml" }}' || true
+  return 1
+}
+
 wait_for_last_activity_since() {
   local min_epoch="$1"
   local deadline=$((SECONDS + 180))
@@ -105,7 +154,7 @@ wait_for_last_activity_since() {
 
   echo "Waiting for autosuspend lastActivity to observe short query..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    last_activity="$(kubectl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o jsonpath='{.status.lastActivity}' 2>/dev/null || true)"
+    last_activity="$(kctl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o jsonpath='{.status.lastActivity}' 2>/dev/null || true)"
     if [ -n "$last_activity" ]; then
       last_epoch="$(date -u -d "$last_activity" +%s 2>/dev/null || echo 0)"
       if [ "$last_epoch" -ge "$min_epoch" ]; then
@@ -128,7 +177,7 @@ wait_for_deployment_available() {
 
   echo "Waiting for ${deployment} availableReplicas >= ${min_available}..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    available="$(kubectl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)"
+    available="$(kctl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)"
     available="${available:-0}"
     if [ "$available" -ge "$min_available" ]; then
       echo "  ${deployment} availableReplicas=${available}"
@@ -137,8 +186,8 @@ wait_for_deployment_available() {
     sleep 5
   done
 
-  kubectl get deployment "$deployment" -n "$NAMESPACE" -o wide || true
-  kubectl describe deployment "$deployment" -n "$NAMESPACE" || true
+  kctl get deployment "$deployment" -n "$NAMESPACE" -o wide || true
+  kctl describe deployment "$deployment" -n "$NAMESPACE" || true
   return 1
 }
 
@@ -150,7 +199,7 @@ wait_for_deployment_replicas() {
 
   echo "Waiting for ${deployment} spec.replicas == ${expected}..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    replicas="$(kubectl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+    replicas="$(kctl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
     replicas="${replicas:-0}"
     if [ "$replicas" = "$expected" ]; then
       echo "  ${deployment} spec.replicas=${replicas}"
@@ -159,7 +208,7 @@ wait_for_deployment_replicas() {
     sleep 5
   done
 
-  kubectl get deployment "$deployment" -n "$NAMESPACE" -o wide || true
+  kctl get deployment "$deployment" -n "$NAMESPACE" -o wide || true
   return 1
 }
 
@@ -170,7 +219,7 @@ wait_for_service_endpoints_empty() {
 
   echo "Waiting for ${service} endpoints to drain..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    endpoints="$(kubectl get endpoints "$service" -n "$NAMESPACE" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)"
+    endpoints="$(kctl get endpoints "$service" -n "$NAMESPACE" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)"
     if [ -z "$endpoints" ]; then
       echo "  ${service} endpoints drained"
       return 0
@@ -178,7 +227,7 @@ wait_for_service_endpoints_empty() {
     sleep 2
   done
 
-  kubectl get endpoints "$service" -n "$NAMESPACE" -o yaml || true
+  kctl get endpoints "$service" -n "$NAMESPACE" -o yaml || true
   return 1
 }
 
@@ -189,7 +238,7 @@ wait_for_scaledobject_max_replicas() {
 
   echo "Waiting for ScaledObject maxReplicaCount == ${expected}..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    replicas="$(kubectl get scaledobject "trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" -o jsonpath='{.spec.maxReplicaCount}' 2>/dev/null || true)"
+    replicas="$(kctl get scaledobject "trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" -o jsonpath='{.spec.maxReplicaCount}' 2>/dev/null || true)"
     if [ "$replicas" = "$expected" ]; then
       echo "  ScaledObject maxReplicaCount=${replicas}"
       return 0
@@ -197,7 +246,7 @@ wait_for_scaledobject_max_replicas() {
     sleep 5
   done
 
-  kubectl get scaledobject "trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" -o yaml || true
+  kctl get scaledobject "trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" -o yaml || true
   return 1
 }
 
@@ -210,7 +259,7 @@ wait_for_deployment_replicas_with_timeout() {
 
   echo "Waiting for ${deployment} spec.replicas == ${expected} within ${timeout}s..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    replicas="$(kubectl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+    replicas="$(kctl get deployment "$deployment" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
     replicas="${replicas:-0}"
     if [ "$replicas" = "$expected" ]; then
       echo "  ${deployment} spec.replicas=${replicas}"
@@ -219,14 +268,14 @@ wait_for_deployment_replicas_with_timeout() {
     sleep 5
   done
 
-  kubectl get scaledobject "trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" -o yaml || true
-  kubectl get deployment "$deployment" -n "$NAMESPACE" -o wide || true
+  kctl get scaledobject "trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" -o yaml || true
+  kctl get deployment "$deployment" -n "$NAMESPACE" -o wide || true
   return 1
 }
 
 xtrinode_suspended_state() {
   local value
-  value="$(kubectl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.suspended}' 2>/dev/null || true)"
+  value="$(kctl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.suspended}' 2>/dev/null || true)"
   if [ -z "$value" ]; then
     echo "false"
     return 0
@@ -237,7 +286,7 @@ xtrinode_suspended_state() {
 xtrinode_annotation_state() {
   local annotation="$1"
   local value
-  value="$(kubectl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o json | jq -r --arg key "$annotation" '.metadata.annotations[$key] // ""' 2>/dev/null || true)"
+  value="$(kctl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o json | jq -r --arg key "$annotation" '.metadata.annotations[$key] // ""' 2>/dev/null || true)"
   if [ -z "$value" ]; then
     echo "absent"
     return 0
@@ -252,7 +301,7 @@ start_port_forward() {
   local remote_port="$4"
   local log_file="$5"
 
-  kubectl port-forward -n "$namespace" "svc/${service}" "${local_port}:${remote_port}" >"$log_file" 2>&1 &
+  kctl port-forward -n "$namespace" "svc/${service}" "${local_port}:${remote_port}" >"$log_file" 2>&1 &
   echo "$!"
 }
 
@@ -487,19 +536,19 @@ cancel_query() {
 }
 
 delete_lease_state() {
-  kubectl delete lease -n "$OPERATOR_NAMESPACE" \
+  kctl delete lease -n "$OPERATOR_NAMESPACE" \
     -l 'app.kubernetes.io/name=xtrinode-operator,app.kubernetes.io/component=api-server' \
     --ignore-not-found=true >/dev/null 2>&1 || true
 }
 
 cleanup_generated_resources() {
-  kubectl delete \
+  kctl delete \
     deployment,service,configmap,poddisruptionbudget,serviceaccount,role,rolebinding,horizontalpodautoscaler,scaledobject,triggerauthentication \
     -n "$NAMESPACE" \
     -l "app.kubernetes.io/instance=${XTRINODE_NAME}" \
     --ignore-not-found=true \
     --wait=false >/dev/null 2>&1 || true
-  kubectl delete pod -n "$NAMESPACE" \
+  kctl delete pod -n "$NAMESPACE" \
     -l "app.kubernetes.io/instance=${XTRINODE_NAME}" \
     --ignore-not-found=true \
     --force \
@@ -512,7 +561,7 @@ wait_for_no_smoke_pods() {
 
   echo "Waiting for previous ${XTRINODE_NAME} pods to disappear..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    pods="$(kubectl get pods -n "$NAMESPACE" \
+    pods="$(kctl get pods -n "$NAMESPACE" \
       -l "app.kubernetes.io/instance=${XTRINODE_NAME}" \
       -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
     if [ -z "$pods" ]; then
@@ -523,14 +572,14 @@ wait_for_no_smoke_pods() {
   done
 
   echo "Timed out waiting for old pods to disappear after force cleanup: ${pods}" >&2
-  kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=${XTRINODE_NAME}" -o wide || true
+  kctl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=${XTRINODE_NAME}" -o wide || true
   return 1
 }
 
 render_manifest() {
   local output="$1"
 
-  kubectl apply --dry-run=client -f "$MANIFEST" -o json | jq \
+  kctl apply --dry-run=client -f "$MANIFEST" -o json | jq \
     --arg repository "$TRINO_IMAGE_REPOSITORY" \
     --arg tag "$TRINO_IMAGE_TAG" \
     --arg scaleoutEnabled "$SCALEOUT_ENABLED" \
@@ -566,39 +615,39 @@ render_manifest() {
 
 dump_debug() {
   echo "=== Debug: XTrinode ==="
-  kubectl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o yaml || true
+  kctl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o yaml || true
   echo "=== Debug: Pods ==="
-  kubectl get pods -n "$NAMESPACE" -o wide || true
+  kctl get pods -n "$NAMESPACE" -o wide || true
   echo "=== Debug: KEDA ==="
-  kubectl get scaledobject,horizontalpodautoscaler -n "$NAMESPACE" -o wide || true
+  kctl get scaledobject,horizontalpodautoscaler -n "$NAMESPACE" -o wide || true
   echo "=== Debug: Endpoints ==="
-  kubectl get endpoints -n "$NAMESPACE" -o wide || true
+  kctl get endpoints -n "$NAMESPACE" -o wide || true
   echo "=== Debug: Operator logs ==="
-  kubectl logs -n "$OPERATOR_NAMESPACE" deployment/xtrinode-operator --tail=120 || true
+  kctl logs -n "$OPERATOR_NAMESPACE" deployment/xtrinode-operator --tail=120 || true
   echo "=== Debug: Gateway logs ==="
-  kubectl logs -n "$GATEWAY_NAMESPACE" deployment/xtrinode-gateway --tail=120 || true
+  kctl logs -n "$GATEWAY_NAMESPACE" deployment/xtrinode-gateway --tail=120 || true
 }
 
 trap on_exit EXIT
 
-kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+kctl create namespace "$NAMESPACE" --dry-run=client -o yaml | kctl apply -f -
 
 echo "Applying ${POSTGRES_MANIFEST}"
-kubectl apply -f "$POSTGRES_MANIFEST"
+kctl apply -f "$POSTGRES_MANIFEST"
 wait_for_deployment_available "postgres" 1
 
 if [ "$RESET_SMOKE" = "true" ]; then
   echo "Resetting previous local smoke resources..."
-  kubectl delete "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
-  if ! kubectl wait "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --for=delete --timeout=120s >/dev/null 2>&1; then
-    kubectl patch "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-    kubectl delete "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
-    kubectl wait "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --for=delete --timeout=60s >/dev/null 2>&1 || true
+  kctl delete "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
+  if ! kctl wait "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --for=delete --timeout=120s >/dev/null 2>&1; then
+    kctl patch "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+    kctl delete "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
+    kctl wait "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --for=delete --timeout=60s >/dev/null 2>&1 || true
   fi
   cleanup_generated_resources
   wait_for_no_smoke_pods
-  kubectl delete "xtrinodecatalog/local-tpch" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete "xtrinodecatalog/postgres" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1 || true
+  kctl delete "xtrinodecatalog/local-tpch" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1 || true
+  kctl delete "xtrinodecatalog/postgres" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1 || true
   delete_lease_state
 fi
 
@@ -608,17 +657,17 @@ if [ "$SCALEOUT_ENABLED" = "true" ]; then
 fi
 RENDERED_MANIFEST="$(mktemp)"
 render_manifest "$RENDERED_MANIFEST"
-kubectl apply -f "$RENDERED_MANIFEST"
+kctl apply -f "$RENDERED_MANIFEST"
 
-kubectl wait "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --for=condition=Ready=True --timeout="${WAIT_TIMEOUT_SECONDS}s"
-kubectl wait "scaledobject/trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" --for=condition=Ready=True --timeout="${WAIT_TIMEOUT_SECONDS}s"
+kctl wait "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --for=condition=Ready=True --timeout="${WAIT_TIMEOUT_SECONDS}s"
+kctl wait "scaledobject/trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" --for=condition=Ready=True --timeout="${WAIT_TIMEOUT_SECONDS}s"
 if [ "$SCALEOUT_ENABLED" = "true" ]; then
   wait_for_scaledobject_max_replicas "$SCALEOUT_MAX_WORKERS"
 fi
 wait_for_deployment_available "trino-${XTRINODE_NAME}-coordinator" 1
 wait_for_deployment_available "trino-${XTRINODE_NAME}-worker" 1
 wait_for_jsonpath "gateway route registered" \
-  "kubectl get configmap trino-gateway-routes -n ${GATEWAY_NAMESPACE} -o jsonpath='{.data.routes\\.yaml}' | grep -q 'name: ${XTRINODE_NAME}' && echo ${XTRINODE_NAME}" \
+  "kctl get configmap trino-gateway-routes -n ${GATEWAY_NAMESPACE} -o jsonpath='{.data.routes\\.yaml}' | grep -q 'name: ${XTRINODE_NAME}' && echo ${XTRINODE_NAME}" \
   "$XTRINODE_NAME"
 
 start_gateway_port_forward
@@ -674,6 +723,7 @@ if [ "$suspend_code" != "202" ]; then
 fi
 
 wait_for_jsonpath "spec.suspended=true" "xtrinode_suspended_state" "true"
+wait_for_gateway_route_state "PAUSED"
 wait_for_jsonpath "suspend command annotation cleared" "xtrinode_annotation_state '$SUSPEND_REQUESTED_ANNOTATION'" "absent"
 wait_for_jsonpath "suspend timestamp annotation cleared" "xtrinode_annotation_state '$SUSPEND_REQUESTED_AT_ANNOTATION'" "absent"
 wait_for_deployment_replicas "trino-${XTRINODE_NAME}-coordinator" 0
@@ -701,7 +751,7 @@ wait_for_jsonpath "resume command annotation cleared" "xtrinode_annotation_state
 wait_for_jsonpath "resume timestamp annotation cleared" "xtrinode_annotation_state '$RESUME_REQUESTED_AT_ANNOTATION'" "absent"
 wait_for_jsonpath "wake min workers annotation cleared" "xtrinode_annotation_state '$WAKE_MIN_WORKERS_ANNOTATION'" "absent"
 wait_for_jsonpath "wake ttl annotation cleared" "xtrinode_annotation_state '$WAKE_TTL_ANNOTATION'" "absent"
-kubectl wait "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --for=condition=Ready=True --timeout="${WAIT_TIMEOUT_SECONDS}s"
+kctl wait "xtrinode/${XTRINODE_NAME}" -n "$NAMESPACE" --for=condition=Ready=True --timeout="${WAIT_TIMEOUT_SECONDS}s"
 wait_for_deployment_available "trino-${XTRINODE_NAME}-coordinator" 1
 wait_for_deployment_available "trino-${XTRINODE_NAME}-worker" 1
 wait_for_gateway_backend
@@ -715,7 +765,7 @@ if [ "$retry_code" != "200" ]; then
 fi
 drain_query "$retry_body"
 
-kubectl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o wide
-kubectl get scaledobject "trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" -o wide
-kubectl get deployment "trino-${XTRINODE_NAME}-coordinator" "trino-${XTRINODE_NAME}-worker" -n "$NAMESPACE" -o wide
+kctl get xtrinode "$XTRINODE_NAME" -n "$NAMESPACE" -o wide
+kctl get scaledobject "trino-${XTRINODE_NAME}-workers" -n "$NAMESPACE" -o wide
+kctl get deployment "trino-${XTRINODE_NAME}-coordinator" "trino-${XTRINODE_NAME}-worker" -n "$NAMESPACE" -o wide
 echo "Local real-Trino KEDA e2e smoke passed"

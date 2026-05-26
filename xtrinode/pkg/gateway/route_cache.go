@@ -109,7 +109,8 @@ func (gs *GatewayService) loadRoutes(ctx context.Context) error {
 
 	loadedRunningBackends := make([]string, 0)
 	for i := range validRoutes {
-		for _, backend := range validRoutes[i].Backends {
+		for j := range validRoutes[i].Backends {
+			backend := &validRoutes[i].Backends[j]
 			if backend.Active && (backend.State == "" || backend.State == StateRunning) {
 				loadedRunningBackends = append(loadedRunningBackends, backend.CoordinatorURL)
 			}
@@ -172,7 +173,8 @@ func isLoadableRoute(route *RouteEntry) bool {
 	if route.RoutingGroup == "" && route.Hostname == "" && route.Header == "" && !route.Default {
 		return false
 	}
-	for _, backend := range route.Backends {
+	for i := range route.Backends {
+		backend := &route.Backends[i]
 		if backend.Name == "" || backend.Namespace == "" || backend.CoordinatorURL == "" {
 			return false
 		}

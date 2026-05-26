@@ -3,7 +3,6 @@ package resources
 import (
 	"fmt"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 )
@@ -20,10 +19,9 @@ func decodeValuesOverlayMap[T any](value map[string]interface{}, name string) (T
 	return out, nil
 }
 
-// buildContainerFromMap converts a Helm values container map to corev1.Container
-// Uses YAML marshaling/unmarshaling for full passthrough support
-func buildContainerFromMap(containerMap map[string]interface{}) (corev1.Container, error) {
-	return decodeValuesOverlayMap[corev1.Container](containerMap, "container")
+func boolValue(value interface{}) bool {
+	typed, ok := value.(bool)
+	return ok && typed
 }
 
 func buildEnvVarFromMap(envMap map[string]interface{}) (corev1.EnvVar, error) {
@@ -94,15 +92,21 @@ func buildContainerPortFromMap(portMap map[string]interface{}) (corev1.Container
 	return port, nil
 }
 
-// buildEnvFromSourceFromMap converts a Helm values envFrom map to corev1.EnvFromSource
-func buildEnvFromSourceFromMap(envFromMap map[string]interface{}) (corev1.EnvFromSource, error) {
-	return decodeValuesOverlayMap[corev1.EnvFromSource](envFromMap, "envFrom")
-}
-
 // buildSecurityContextFromMap converts a Helm values security context map to *corev1.SecurityContext
 func buildSecurityContextFromMap(securityContextMap map[string]interface{}) (*corev1.SecurityContext, error) {
 	if len(securityContextMap) == 0 {
 		return nil, nil
+	}
+	if boolValue(securityContextMap["privileged"]) {
+		return nil, fmt.Errorf("privileged containers are not allowed through valuesOverlay")
+	}
+	if boolValue(securityContextMap["allowPrivilegeEscalation"]) {
+		return nil, fmt.Errorf("privilege escalation is not allowed through valuesOverlay")
+	}
+	if capabilities, ok := securityContextMap["capabilities"].(map[string]interface{}); ok {
+		if adds, ok := capabilities["add"].([]interface{}); ok && len(adds) > 0 {
+			return nil, fmt.Errorf("added Linux capabilities are not allowed through valuesOverlay")
+		}
 	}
 
 	securityContext, err := decodeValuesOverlayMap[corev1.SecurityContext](securityContextMap, "security context")
@@ -110,17 +114,4 @@ func buildSecurityContextFromMap(securityContextMap map[string]interface{}) (*co
 		return nil, err
 	}
 	return &securityContext, nil
-}
-
-// buildDeploymentStrategyFromMap converts a Helm values deployment strategy map to appsv1.DeploymentStrategy
-func buildDeploymentStrategyFromMap(strategyMap map[string]interface{}) (*appsv1.DeploymentStrategy, error) {
-	if len(strategyMap) == 0 {
-		return nil, nil
-	}
-
-	strategy, err := decodeValuesOverlayMap[appsv1.DeploymentStrategy](strategyMap, "deployment strategy")
-	if err != nil {
-		return nil, err
-	}
-	return &strategy, nil
 }

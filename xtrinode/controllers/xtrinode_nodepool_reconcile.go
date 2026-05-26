@@ -61,6 +61,7 @@ func (r *XTrinodeReconciler) reconcileNodePoolBlocking(ctx context.Context, xtri
 		return ctrl.Result{RequeueAfter: requeueAfter}, err
 	}
 	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionTrue, "NodePoolProvisioned", nodePoolProvisionedMessage(xtrinode))
+	setNodePoolFitCondition(xtrinode)
 	if isFirstProvision {
 		metrics.NodePoolProvisioned.WithLabelValues(xtrinode.Namespace, xtrinode.Name, nodePool.Provider).Inc()
 	}

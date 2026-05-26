@@ -293,6 +293,9 @@ func buildVolumes(
 				if additionalVolumes, ok := coordinator["additionalVolumes"].([]interface{}); ok {
 					for _, vol := range additionalVolumes {
 						if volMap, ok := vol.(map[string]interface{}); ok {
+							if _, hasHostPath := volMap["hostPath"]; hasHostPath {
+								return nil, fmt.Errorf("hostPath volumes are not allowed through valuesOverlay")
+							}
 							volume, err := buildVolumeFromMap(volMap)
 							if err != nil {
 								return nil, fmt.Errorf("failed to build volume: %w", err)
@@ -307,6 +310,9 @@ func buildVolumes(
 				if additionalVolumes, ok := worker["additionalVolumes"].([]interface{}); ok {
 					for _, vol := range additionalVolumes {
 						if volMap, ok := vol.(map[string]interface{}); ok {
+							if _, hasHostPath := volMap["hostPath"]; hasHostPath {
+								return nil, fmt.Errorf("hostPath volumes are not allowed through valuesOverlay")
+							}
 							volume, err := buildVolumeFromMap(volMap)
 							if err != nil {
 								return nil, fmt.Errorf("failed to build volume: %w", err)

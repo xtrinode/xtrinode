@@ -58,6 +58,17 @@ service:
   type: ClusterIP
   port: 8080
 
+# Namespace guardrails ownership mode.
+# managed: create and update XTrinode-owned ResourceQuota/LimitRange objects.
+# createOnly: create missing objects but do not force ownership of existing objects.
+# observe: calculate recommendations in status without applying objects.
+# disabled: skip namespace guardrail management.
+namespaceGuardrails:
+  mode: managed
+  # Object names owned by XTrinode when namespace guardrails are applied.
+  resourceQuotaName: xtrinode-namespace-quota
+  limitRangeName: xtrinode-namespace-limits
+
 # Admission webhooks for XTrinode defaulting and validation.
 webhook:
   enabled: true
@@ -101,8 +112,11 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 0  # 0 for testing - allows drain/eviction
 
-# KEDA subchart - installs KEDA for XTrinode worker autoscaling (ScaledObjects)
-# Set to false if KEDA is already installed in the cluster
+# KEDA subchart - installs the KEDA CRDs/controller used by the operator's
+# ScaledObject watches and by runtime worker autoscaling.
+# Keep enabled unless KEDA is already installed in the cluster. Disabling this
+# subchart without preinstalled KEDA CRDs is unsupported for the operator
+# install, even if individual XTrinodes use fixed workers.
 # Use these placement knobs to keep KEDA control components on the same
 # always-on system node pool as the XTrinode control plane.
 keda:

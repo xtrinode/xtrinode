@@ -73,18 +73,21 @@ type GatewayRouteStatus struct {
 }
 
 type GatewayBackendStatus struct {
-	Name           string                     `json:"name"`
-	Namespace      string                     `json:"namespace"`
-	CoordinatorURL string                     `json:"coordinatorUrl"`
-	State          BackendState               `json:"state"`
-	Active         bool                       `json:"active"`
-	Tier           string                     `json:"tier,omitempty"`
-	CapacityUnits  int                        `json:"capacityUnits,omitempty"`
-	DrainUntil     string                     `json:"drainUntil,omitempty"`
-	TrinoUIPath    string                     `json:"trinoUiPath,omitempty"`
-	Health         GatewayBackendHealthStatus `json:"health"`
-	CircuitBreaker CircuitBreakerStatus       `json:"circuitBreaker"`
-	Lifecycle      *GatewayBackendLifecycle   `json:"lifecycle,omitempty"`
+	Name                string                     `json:"name"`
+	Namespace           string                     `json:"namespace"`
+	CoordinatorURL      string                     `json:"coordinatorUrl"`
+	State               BackendState               `json:"state"`
+	Active              bool                       `json:"active"`
+	Tier                string                     `json:"tier,omitempty"`
+	CapacityUnits       int                        `json:"capacityUnits,omitempty"`
+	RuntimeShapeVersion string                     `json:"runtimeShapeVersion,omitempty"`
+	RuntimeShapeHash    string                     `json:"runtimeShapeHash,omitempty"`
+	ObservedGeneration  int64                      `json:"observedGeneration,omitempty"`
+	DrainUntil          string                     `json:"drainUntil,omitempty"`
+	TrinoUIPath         string                     `json:"trinoUiPath,omitempty"`
+	Health              GatewayBackendHealthStatus `json:"health"`
+	CircuitBreaker      CircuitBreakerStatus       `json:"circuitBreaker"`
+	Lifecycle           *GatewayBackendLifecycle   `json:"lifecycle,omitempty"`
 }
 
 type GatewayBackendLifecycle struct {
@@ -156,8 +159,8 @@ func (gs *GatewayService) gatewayStatusSnapshot(ctx context.Context) GatewayStat
 			Backends:     make([]GatewayBackendStatus, 0, len(route.Backends)),
 		}
 
-		for _, backend := range route.Backends {
-			backendStatus := gs.gatewayBackendStatus(ctx, &backend, now)
+		for i := range route.Backends {
+			backendStatus := gs.gatewayBackendStatus(ctx, &route.Backends[i], now)
 			routeStatus.Backends = append(routeStatus.Backends, backendStatus)
 			accumulateGatewaySummary(&response.Summary, &backendStatus)
 		}
@@ -209,17 +212,20 @@ func (gs *GatewayService) uniqueRouteSnapshot() []RouteEntry {
 func (gs *GatewayService) gatewayBackendStatus(ctx context.Context, backend *Backend, now time.Time) GatewayBackendStatus {
 	coordinatorURL := redactURLUserInfo(backend.CoordinatorURL)
 	status := GatewayBackendStatus{
-		Name:           backend.Name,
-		Namespace:      backend.Namespace,
-		CoordinatorURL: coordinatorURL,
-		State:          backend.State,
-		Active:         backend.Active,
-		Tier:           backend.Tier,
-		CapacityUnits:  backend.CapacityUnits,
-		DrainUntil:     backend.DrainUntil,
-		TrinoUIPath:    gatewayBackendTrinoUIPath(backend),
-		CircuitBreaker: gs.circuitBreakerStatus(backend.CoordinatorURL),
-		Lifecycle:      gs.gatewayBackendLifecycle(ctx, backend, now),
+		Name:                backend.Name,
+		Namespace:           backend.Namespace,
+		CoordinatorURL:      coordinatorURL,
+		State:               backend.State,
+		Active:              backend.Active,
+		Tier:                backend.Tier,
+		CapacityUnits:       backend.CapacityUnits,
+		RuntimeShapeVersion: backend.RuntimeShapeVersion,
+		RuntimeShapeHash:    backend.RuntimeShapeHash,
+		ObservedGeneration:  backend.ObservedGeneration,
+		DrainUntil:          backend.DrainUntil,
+		TrinoUIPath:         gatewayBackendTrinoUIPath(backend),
+		CircuitBreaker:      gs.circuitBreakerStatus(backend.CoordinatorURL),
+		Lifecycle:           gs.gatewayBackendLifecycle(ctx, backend, now),
 	}
 	if status.State == "" {
 		status.State = StateRunning

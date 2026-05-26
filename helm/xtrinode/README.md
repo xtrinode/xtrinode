@@ -139,8 +139,8 @@ supported.
 
 `XTrinode.spec.valuesOverlay` is privileged input. The operator webhook rejects creates or updates
 that add/change it, or that add/change `helmChartConfig`, unless the admission user can `update`
-`analytics.xtrinode.io/xtrinodes/status` in the target namespace. Tenant roles should not have that
-permission.
+`analytics.xtrinode.io/xtrinodes/valuesoverlay` in the target namespace. Tenant roles should not
+have that permission.
 
 If you enable Trino HTTP authentication through overlay or chart-aligned config, also configure a
 first-class internal lifecycle credential on each `XTrinode`:
@@ -253,8 +253,9 @@ For dev and small clusters, a system pool with `min=1` is usually enough. For pr
 `min=2` or `min=3` across zones, run multiple operator/API/gateway replicas, and avoid spot or
 preemptible capacity for the operator unless downtime is acceptable. If gateway traffic is large,
 move only `xtrinode-gateway` to a dedicated always-on gateway pool. Trino runtime placement remains
-runtime-specific through `XTrinode.spec.nodePool` and, when needed, coordinator/worker
-`spec.valuesOverlay` scheduling values.
+runtime-specific through `XTrinode.spec.placement`; when XTrinode provisions the pool,
+`XTrinode.spec.nodePool.schedulePods=true` binds coordinator and worker pods to the managed
+node-pool label.
 
 ## Ingress Configuration
 

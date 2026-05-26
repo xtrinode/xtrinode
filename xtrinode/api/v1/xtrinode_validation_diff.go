@@ -221,6 +221,20 @@ func nodePoolSchedulingChanged(old, newVal *XTrinode) bool {
 		!reflect.DeepEqual(oldNP.NodeTaints, newNP.NodeTaints)
 }
 
+func nodePoolDeletionPolicyChanged(old, newVal *XTrinode) bool {
+	if old.Spec.NodePool == nil || newVal.Spec.NodePool == nil {
+		return false
+	}
+	return normalizeNodePoolDeletionPolicy(old.Spec.NodePool) != normalizeNodePoolDeletionPolicy(newVal.Spec.NodePool)
+}
+
+func normalizeNodePoolDeletionPolicy(nodePool *NodePoolSpec) string {
+	if nodePool == nil || nodePool.DeletionPolicy == "" {
+		return NodePoolDeletionPolicyDelete
+	}
+	return nodePool.DeletionPolicy
+}
+
 // workerScalingChanged checks if worker scaling knobs changed significantly
 // Returns true if change is >2x (triggers warning)
 func workerScalingChanged(old, newXTrinode *XTrinode) bool {

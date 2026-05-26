@@ -53,6 +53,9 @@ type operatorOptions struct {
 	webhookEnabled                 bool
 	webhookPort                    int
 	webhookCertDir                 string
+	namespaceGuardrailMode         string
+	namespaceResourceQuotaName     string
+	namespaceLimitRangeName        string
 }
 
 func defaultOperatorOptions() operatorOptions {
@@ -64,6 +67,9 @@ func defaultOperatorOptions() operatorOptions {
 		gatewayDrainRequeueInterval:    config.GatewayDrainRequeueInterval,
 		webhookEnabled:                 true,
 		webhookPort:                    webhook.DefaultPort,
+		namespaceGuardrailMode:         controllers.NamespaceGuardrailModeManaged,
+		namespaceResourceQuotaName:     controllers.DefaultNamespaceResourceQuotaName,
+		namespaceLimitRangeName:        controllers.DefaultNamespaceLimitRangeName,
 	}
 }
 
@@ -91,6 +97,12 @@ func parseOperatorOptions(args []string, output io.Writer) (operatorOptions, zap
 		"Port for the admission webhook HTTPS server.")
 	fs.StringVar(&options.webhookCertDir, "webhook-cert-dir", "",
 		"Directory containing admission webhook TLS certificate and key.")
+	fs.StringVar(&options.namespaceGuardrailMode, "namespace-guardrail-mode", options.namespaceGuardrailMode,
+		"Namespace guardrail ownership mode: managed, createOnly, observe, or disabled.")
+	fs.StringVar(&options.namespaceResourceQuotaName, "namespace-guardrail-resource-quota-name", options.namespaceResourceQuotaName,
+		"ResourceQuota name used for XTrinode namespace guardrails.")
+	fs.StringVar(&options.namespaceLimitRangeName, "namespace-guardrail-limit-range-name", options.namespaceLimitRangeName,
+		"LimitRange name used for XTrinode namespace guardrails.")
 	fs.BoolVar(&options.showVersion, "version", false, "Show version information and exit.")
 
 	zapOptions.BindFlags(fs)
@@ -108,7 +120,7 @@ func operatorNamespaceFromEnv() string {
 	return operatorNamespace
 }
 
-func buildManagerOptions(options operatorOptions, operatorNamespace string) ctrl.Options {
+func buildManagerOptions(options *operatorOptions, operatorNamespace string) ctrl.Options {
 	managerOptions := ctrl.Options{
 		Scheme:                        scheme,
 		LeaderElection:                options.enableLeaderElection,
@@ -151,7 +163,7 @@ func run() int {
 	// Get operator namespace from environment or use default
 	operatorNamespace := operatorNamespaceFromEnv()
 
-	managerOptions := buildManagerOptions(options, operatorNamespace)
+	managerOptions := buildManagerOptions(&options, operatorNamespace)
 	mgr, err := ctrl.NewManager(cfg, managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -173,19 +185,22 @@ func run() int {
 
 	// Create reconciler with all injected dependencies
 	reconciler := &controllers.XTrinodeReconciler{
-		Client:                  mgr.GetClient(),
-		Scheme:                  mgr.GetScheme(),
-		EventRecorder:           eventRecorder,
-		NodePoolAdapter:         nodePoolAdapter,
-		GatewayService:          gatewayService,
-		KEDAService:             kedaService,
-		CatalogService:          catalogService,
-		TrinoResourcesService:   trinoResourcesService,
-		AutosuspendService:      autosuspendService,
-		GracefulShutdownService: gracefulShutdownService,
-		OperatorVersion:         version,
-		DrainDuration:           options.gatewayDrainDuration,
-		DrainRequeueInterval:    options.gatewayDrainRequeueInterval,
+		Client:                     mgr.GetClient(),
+		Scheme:                     mgr.GetScheme(),
+		EventRecorder:              eventRecorder,
+		NodePoolAdapter:            nodePoolAdapter,
+		GatewayService:             gatewayService,
+		KEDAService:                kedaService,
+		CatalogService:             catalogService,
+		TrinoResourcesService:      trinoResourcesService,
+		AutosuspendService:         autosuspendService,
+		GracefulShutdownService:    gracefulShutdownService,
+		OperatorVersion:            version,
+		DrainDuration:              options.gatewayDrainDuration,
+		DrainRequeueInterval:       options.gatewayDrainRequeueInterval,
+		NamespaceGuardrailMode:     options.namespaceGuardrailMode,
+		NamespaceResourceQuotaName: options.namespaceResourceQuotaName,
+		NamespaceLimitRangeName:    options.namespaceLimitRangeName,
 	}
 
 	setupLog.Info("Controller initialized",
@@ -198,6 +213,9 @@ func run() int {
 		"webhookEnabled", options.webhookEnabled,
 		"webhookPort", options.webhookPort,
 		"webhookCertDir", options.webhookCertDir,
+		"namespaceGuardrailMode", options.namespaceGuardrailMode,
+		"namespaceResourceQuotaName", options.namespaceResourceQuotaName,
+		"namespaceLimitRangeName", options.namespaceLimitRangeName,
 		"qps", cfg.QPS,
 		"burst", cfg.Burst)
 

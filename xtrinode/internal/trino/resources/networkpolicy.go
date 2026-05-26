@@ -20,21 +20,6 @@ func BuildNetworkPolicy(xtrinode *analyticsv1.XTrinode) *networkingv1.NetworkPol
 		return nil
 	}
 
-	// Check if service type is NodePort (not supported)
-	serviceType := config.DefaultServiceType
-	if xtrinode.Spec.GetValuesOverlayMap() != nil {
-		if service, ok := xtrinode.Spec.GetValuesOverlayMap()["service"].(map[string]interface{}); ok {
-			if svcType, ok := service["type"].(string); ok {
-				serviceType = svcType
-			}
-		}
-	}
-	if serviceType == "NodePort" {
-		// NetworkPolicy is not supported with NodePort services
-		// Return nil instead of failing (let user handle this)
-		return nil
-	}
-
 	// Build pod selector - matches all Trino pods (coordinator + workers)
 	// Use matchExpressions to match both coordinator and worker pods.
 	podSelector := metav1.LabelSelector{

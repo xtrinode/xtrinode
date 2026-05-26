@@ -179,11 +179,11 @@ func namespaceGuardrailToXTrinodes(cli client.Client, ctx context.Context, obj c
 }
 
 func isNamespaceResourceQuota(obj client.Object) bool {
-	return obj.GetName() == namespaceResourceQuotaName
+	return obj.GetName() == DefaultNamespaceResourceQuotaName || isXTrinodeNamespaceGuardrail(obj)
 }
 
 func isNamespaceLimitRange(obj client.Object) bool {
-	return obj.GetName() == namespaceLimitRangeName
+	return obj.GetName() == DefaultNamespaceLimitRangeName || isXTrinodeNamespaceGuardrail(obj)
 }
 
 func serviceMonitorToXTrinodes(cli client.Client, ctx context.Context, obj client.Object, log logr.Logger) []reconcile.Request {
@@ -237,7 +237,6 @@ func xtrinodeReferencesConfigMap(xtrinode *analyticsv1.XTrinode, configMapName s
 	return overlayMountsReferenceName(valuesMap, "configMounts", "configMap", configMapName) ||
 		overlayRoleMountsReferenceName(valuesMap, "configMounts", "configMap", configMapName) ||
 		overlayEnvValueFromReferencesName(valuesMap, "configMapKeyRef", configMapName) ||
-		overlayEnvFromReferencesName(valuesMap, "configMapRef", configMapName) ||
 		overlayAdditionalVolumesReferenceName(valuesMap, "configMap", "name", configMapName)
 }
 
@@ -321,7 +320,6 @@ func secretMountsReferenceSecret(xtrinode *analyticsv1.XTrinode, secretName stri
 	}
 	return overlayMountsReferenceName(valuesMap, "secretMounts", "secretName", secretName) ||
 		overlayRoleMountsReferenceName(valuesMap, "secretMounts", "secretName", secretName) ||
-		overlayEnvFromReferencesName(valuesMap, "secretRef", secretName) ||
 		overlayAdditionalVolumesReferenceName(valuesMap, "secret", "secretName", secretName) ||
 		overlayAdditionalVolumesReferenceName(valuesMap, "secret", "name", secretName)
 }
@@ -423,23 +421,6 @@ func overlayMountListReferencesName(raw interface{}, refKey, targetName string) 
 			continue
 		}
 		if ref, ok := itemMap[refKey].(string); ok && ref == targetName {
-			return true
-		}
-	}
-	return false
-}
-
-func overlayEnvFromReferencesName(valuesMap map[string]interface{}, refKey, targetName string) bool {
-	envFromList, ok := valuesMap["envFrom"].([]interface{})
-	if !ok {
-		return false
-	}
-	for _, item := range envFromList {
-		itemMap, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if nestedMapReferencesName(itemMap, refKey, "name", targetName) {
 			return true
 		}
 	}

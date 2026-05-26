@@ -1428,7 +1428,7 @@ gcp-gateway-redis-up: ## Redeploy gateway with in-chart Redis enabled
 
 .PHONY: gcp-keda-resume-smoke
 gcp-keda-resume-smoke: gcp-configure-kubectl ## Test gateway Prometheus KEDA scale-up/down, auto-suspend, and auto-resume
-	NAMESPACE=team-test GATEWAY_NAMESPACE=$(GATEWAY_NAMESPACE) bash scripts/smoke/gcp-keda-resume-smoke.sh
+	NAMESPACE=team-test GATEWAY_NAMESPACE=$(GATEWAY_NAMESPACE) KUBECTL="$(KUBECTL)" bash scripts/smoke/gcp-keda-resume-smoke.sh
 
 .PHONY: gcp-capg-workload-up
 gcp-capg-workload-up: gcp-configure-kubectl ## Create the CAPG-managed GKE workload cluster

@@ -44,6 +44,9 @@ spec:
         - --max-concurrent-reconciles={{ .Values.operator.workers | default 3 }}
         - --gateway-drain-duration={{ $operatorLifecycle.drainDuration | default "5m" }}
         - --gateway-drain-requeue-interval={{ $operatorLifecycle.drainRequeueInterval | default "30s" }}
+        - --namespace-guardrail-mode={{ .Values.namespaceGuardrails.mode | default "managed" }}
+        - --namespace-guardrail-resource-quota-name={{ .Values.namespaceGuardrails.resourceQuotaName | default "xtrinode-namespace-quota" }}
+        - --namespace-guardrail-limit-range-name={{ .Values.namespaceGuardrails.limitRangeName | default "xtrinode-namespace-limits" }}
         - --webhook-enabled={{ .Values.webhook.enabled }}
         {{- if .Values.webhook.enabled }}
         - --webhook-port={{ .Values.webhook.port }}

@@ -29,6 +29,8 @@ var (
 	xtrinodelog = logf.Log.WithName("xtrinode-resource")
 )
 
+const valuesOverlayRBACResource = "xtrinodes/valuesoverlay"
+
 // SetupWebhookWithManager sets up the webhook with the manager
 func (t *XTrinode) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	hook := &XTrinodeWebhook{
@@ -69,10 +71,11 @@ func (a subjectAccessReviewValuesOverlayAuthorizer) Allowed(ctx context.Context,
 			Groups: req.UserInfo.Groups,
 			UID:    req.UserInfo.UID,
 			ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Namespace: namespace,
-				Verb:      "update",
-				Group:     "analytics.xtrinode.io",
-				Resource:  "xtrinodes/status",
+				Namespace:   namespace,
+				Verb:        "update",
+				Group:       "analytics.xtrinode.io",
+				Resource:    "xtrinodes",
+				Subresource: "valuesoverlay",
 			},
 		},
 	}
@@ -95,7 +98,7 @@ func (a subjectAccessReviewValuesOverlayAuthorizer) Allowed(ctx context.Context,
 	if sar.Status.EvaluationError != "" {
 		return false, sar.Status.EvaluationError, nil
 	}
-	return false, "user lacks update permission on analytics.xtrinode.io/xtrinodes/status", nil
+	return false, fmt.Sprintf("user lacks update permission on analytics.xtrinode.io/%s", valuesOverlayRBACResource), nil
 }
 
 func (w *XTrinodeWebhook) Default(_ context.Context, obj runtime.Object) error {
@@ -190,7 +193,7 @@ func (w *XTrinodeWebhook) validatePrivilegedSpecAdmission(ctx context.Context, o
 		return nil
 	}
 
-	message := fmt.Sprintf("privileged fields (%s) require update permission on analytics.xtrinode.io/xtrinodes/status", strings.Join(reasons, ", "))
+	message := fmt.Sprintf("privileged fields (%s) require update permission on analytics.xtrinode.io/%s", strings.Join(reasons, ", "), valuesOverlayRBACResource)
 	if strings.TrimSpace(reason) != "" {
 		message = fmt.Sprintf("%s: %s", message, reason)
 	}
@@ -282,6 +285,11 @@ func (t *XTrinode) Default() {
 		t.Spec.NodePool.OSDiskGB = &defaultOSDisk
 	}
 
+	// Keep deletion semantics explicit after defaulting.
+	if t.Spec.NodePool != nil && t.Spec.NodePool.DeletionPolicy == "" {
+		t.Spec.NodePool.DeletionPolicy = NodePoolDeletionPolicyDelete
+	}
+
 	// Auto-populate machine type from size preset if not specified
 	if t.Spec.NodePool != nil && t.Spec.Size != "" {
 		provider := strings.ToLower(t.Spec.NodePool.Provider)
@@ -353,6 +361,7 @@ func (t *XTrinode) validateCreateWarnings() admission.Warnings {
 		warnings = append(warnings, buildValuesOverlayChangeWarning())
 	}
 	warnings = append(warnings, nodePoolPlacementWarnings(t)...)
+	warnings = append(warnings, nodePoolFitWarnings(t)...)
 	return warnings
 }
 
@@ -518,9 +527,11 @@ func (t *XTrinode) validateXTrinode() error {
 	if t.Spec.TrinoControlAuth != nil {
 		allErrs = append(allErrs, t.validateTrinoControlAuth(field.NewPath("spec.trinoControlAuth"))...)
 	}
+	allErrs = append(allErrs, t.validateValuesOverlayPolicy(field.NewPath("spec", "valuesOverlay"))...)
 	allErrs = append(allErrs, t.validateAutoscalerOwnership(field.NewPath("spec"))...)
 	allErrs = append(allErrs, t.validateTrinoLifecycleAuthCompatibility(field.NewPath("spec"))...)
 	allErrs = append(allErrs, t.validateTrinoLifecycleHTTPCompatibility(field.NewPath("spec"))...)
+	allErrs = append(allErrs, t.validateTrinoMemoryAgainstRuntimeShape(field.NewPath("spec"))...)
 
 	if len(allErrs) == 0 {
 		return nil
@@ -622,8 +633,79 @@ func (t *XTrinode) validateXTrinodeUpdate(old *XTrinode) (admission.Warnings, er
 	for _, warning := range nodePoolPlacementWarnings(t) {
 		c.warn(warning)
 	}
+	for _, warning := range nodePoolFitWarnings(t) {
+		c.warn(warning)
+	}
 
 	return c.warnings, nil
+}
+
+func nodePoolFitWarnings(t *XTrinode) admission.Warnings {
+	if t == nil || t.Spec.NodePool == nil {
+		return nil
+	}
+	provider := normalizeString(t.Spec.NodePool.Provider)
+	configured := configuredNodePoolMachineType(t.Spec.NodePool)
+	if provider == "" || configured == "" {
+		return nil
+	}
+	recommended, source := t.recommendedNodePoolMachineType(provider)
+	if recommended == "" {
+		return nil
+	}
+	configuredRank, configuredKnown := nodePoolMachineRank(provider, configured)
+	recommendedRank, recommendedKnown := nodePoolMachineRank(provider, recommended)
+	if !configuredKnown || !recommendedKnown || configuredRank >= recommendedRank {
+		return nil
+	}
+	return admission.Warnings{
+		fmt.Sprintf("node pool machine type %q may not fit resolved worker resources; recommended for %s is %q", configured, source, recommended),
+	}
+}
+
+func configuredNodePoolMachineType(np *NodePoolSpec) string {
+	if np == nil {
+		return ""
+	}
+	switch normalizeString(np.Provider) {
+	case "azure":
+		if np.Azure != nil {
+			return np.Azure.VMSize
+		}
+	case "aws":
+		if np.AWS != nil {
+			return np.AWS.InstanceType
+		}
+	case "gcp":
+		if np.GCP != nil {
+			return np.GCP.MachineType
+		}
+	}
+	return ""
+}
+
+func nodePoolMachineRank(provider, machineType string) (int, bool) {
+	provider = normalizeString(provider)
+	machineType = normalizeString(machineType)
+	ranks := map[string]int{
+		"azure/standard_d2as_v5":  1,
+		"azure/standard_d8as_v5":  2,
+		"azure/standard_d16as_v5": 3,
+		"azure/standard_d32as_v5": 4,
+		"azure/standard_d64as_v5": 5,
+		"aws/m5.large":            1,
+		"aws/m5.2xlarge":          2,
+		"aws/m5.4xlarge":          3,
+		"aws/m5.8xlarge":          4,
+		"aws/m5.16xlarge":         5,
+		"gcp/n1-standard-2":       1,
+		"gcp/n1-standard-8":       2,
+		"gcp/n1-standard-16":      3,
+		"gcp/n1-standard-32":      4,
+		"gcp/n1-standard-64":      5,
+	}
+	rank, ok := ranks[provider+"/"+machineType]
+	return rank, ok
 }
 
 // validateNodePool validates node pool configuration
@@ -651,6 +733,16 @@ func (t *XTrinode) validateNodePool(fldPath *field.Path) field.ErrorList {
 		allErrs = append(allErrs, field.Forbidden(
 			fldPath.Child("nodeTaints"),
 			"self-managed node taints must be configured in the referenced bootstrap template's nodeRegistration.taints; managed node pools may use spec.nodePool.nodeTaints"))
+	}
+	if np.DeletionPolicy != "" {
+		switch np.DeletionPolicy {
+		case NodePoolDeletionPolicyDelete, NodePoolDeletionPolicyRetain, NodePoolDeletionPolicyScaleToZero:
+		default:
+			allErrs = append(allErrs, field.NotSupported(
+				fldPath.Child("deletionPolicy"),
+				np.DeletionPolicy,
+				[]string{NodePoolDeletionPolicyDelete, NodePoolDeletionPolicyRetain, NodePoolDeletionPolicyScaleToZero}))
+		}
 	}
 
 	// Validate minNodes
@@ -953,6 +1045,29 @@ func validateResourceRequirements(requirements *corev1.ResourceRequirements, fld
 func (t *XTrinode) validatePlacement(fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	placement := t.Spec.Placement
+	if placement.ExistingNodePool != nil {
+		np := placement.ExistingNodePool
+		if strings.TrimSpace(np.Provider) == "" {
+			allErrs = append(allErrs, field.Required(fldPath.Child("existingNodePool", "provider"), "provider is required"))
+		} else if _, _, ok := config.ExistingNodePoolSelector(np.Provider, "placeholder"); !ok {
+			allErrs = append(allErrs, field.NotSupported(
+				fldPath.Child("existingNodePool", "provider"),
+				np.Provider,
+				[]string{"azure", "aws", "gcp"}))
+		}
+		if strings.TrimSpace(np.Name) == "" {
+			allErrs = append(allErrs, field.Required(fldPath.Child("existingNodePool", "name"), "name is required"))
+		}
+		if key, value, ok := config.ExistingNodePoolSelector(np.Provider, np.Name); ok {
+			allErrs = append(allErrs, validateExistingNodePoolSelectorConflict(placement.NodeSelector, key, value, fldPath.Child("nodeSelector"))...)
+			if placement.Coordinator != nil {
+				allErrs = append(allErrs, validateExistingNodePoolSelectorConflict(placement.Coordinator.NodeSelector, key, value, fldPath.Child("coordinator", "nodeSelector"))...)
+			}
+			if placement.Worker != nil {
+				allErrs = append(allErrs, validateExistingNodePoolSelectorConflict(placement.Worker.NodeSelector, key, value, fldPath.Child("worker", "nodeSelector"))...)
+			}
+		}
+	}
 	if placement.Coordinator != nil {
 		allErrs = append(allErrs, validateRolePlacement(placement.Coordinator, fldPath.Child("coordinator"))...)
 	}
@@ -966,6 +1081,11 @@ func (t *XTrinode) validateNodePoolSchedulePlacement(fldPath *field.Path) field.
 	var allErrs field.ErrorList
 	if t == nil || t.Spec.NodePool == nil || !t.Spec.NodePool.SchedulePods {
 		return allErrs
+	}
+	if t.Spec.Placement != nil && t.Spec.Placement.ExistingNodePool != nil {
+		allErrs = append(allErrs, field.Forbidden(
+			fldPath.Child("placement", "existingNodePool"),
+			"cannot combine spec.nodePool.schedulePods with spec.placement.existingNodePool; use the managed node-pool binding or an existing pool selector, not both"))
 	}
 
 	poolName := t.Spec.NodePool.Name
@@ -1003,6 +1123,22 @@ func (t *XTrinode) validateNodePoolSchedulePlacement(fldPath *field.Path) field.
 	}
 
 	return allErrs
+}
+
+func validateExistingNodePoolSelectorConflict(selector map[string]string, key, value string, fldPath *field.Path) field.ErrorList {
+	if selector == nil {
+		return nil
+	}
+	existing, ok := selector[key]
+	if !ok || existing == value {
+		return nil
+	}
+	return field.ErrorList{
+		field.Invalid(
+			fldPath.Key(key),
+			existing,
+			fmt.Sprintf("must match existingNodePool selector value %q", value)),
+	}
 }
 
 func validateNodePoolSelectorConflict(selector map[string]string, poolName string, fldPath *field.Path) field.ErrorList {
@@ -1080,6 +1216,107 @@ func (t *XTrinode) validateKEDA(fldPath *field.Path) field.ErrorList {
 	}
 
 	return allErrs
+}
+
+func (t *XTrinode) validateValuesOverlayPolicy(fldPath *field.Path) field.ErrorList {
+	values := t.Spec.GetValuesOverlayMap()
+	if len(values) == 0 {
+		return nil
+	}
+
+	var allErrs field.ErrorList
+	allErrs = append(allErrs, forbidValuesOverlayKey(values, fldPath, "resources", "use spec.resources.coordinator or spec.resources.worker for pod resources")...)
+	for _, key := range []string{"nodeSelector", "tolerations", "affinity", "topologySpreadConstraints"} {
+		allErrs = append(allErrs, forbidValuesOverlayKey(values, fldPath, key, "use spec.placement for scheduler constraints")...)
+	}
+	for _, key := range []string{"hostNetwork", "hostPID", "hostIPC"} {
+		allErrs = append(allErrs, forbidValuesOverlayKey(values, fldPath, key, "host namespace settings are not allowed through valuesOverlay")...)
+	}
+	allErrs = append(allErrs, forbidValuesOverlayKey(values, fldPath, "sidecarContainers", "sidecar containers are not allowed through valuesOverlay by default")...)
+	allErrs = append(allErrs, forbidValuesOverlayKey(values, fldPath, "envFrom", "use spec.helmChartConfig.envFrom with privileged admission instead of valuesOverlay.envFrom")...)
+
+	if service, ok := values["service"].(map[string]interface{}); ok {
+		if serviceType, ok := service["type"].(string); ok {
+			switch strings.ToLower(strings.TrimSpace(serviceType)) {
+			case "loadbalancer", "nodeport":
+				allErrs = append(allErrs, field.Forbidden(
+					fldPath.Child("service", "type"),
+					"externally exposed service types are not allowed through valuesOverlay",
+				))
+			}
+		}
+	}
+
+	if containerSecurityContext, ok := values["containerSecurityContext"].(map[string]interface{}); ok {
+		allErrs = append(allErrs, validateValuesOverlayContainerSecurityContext(containerSecurityContext, fldPath.Child("containerSecurityContext"))...)
+	}
+
+	for _, role := range []string{"coordinator", "worker"} {
+		roleMap, ok := values[role].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		allErrs = append(allErrs, forbidValuesOverlayKey(roleMap, fldPath.Child(role), "resources", fmt.Sprintf("use spec.resources.%s for pod resources", role))...)
+		for _, key := range []string{"nodeSelector", "tolerations", "affinity", "topologySpreadConstraints"} {
+			allErrs = append(allErrs, forbidValuesOverlayKey(roleMap, fldPath.Child(role), key, "use spec.placement for scheduler constraints")...)
+		}
+		if deployment, ok := roleMap["deployment"].(map[string]interface{}); ok {
+			allErrs = append(allErrs, forbidValuesOverlayKey(deployment, fldPath.Child(role, "deployment"), "strategy", "use spec.rolloutPolicy.rollingUpdateStrategy for rollout strategy")...)
+			allErrs = append(allErrs, forbidValuesOverlayKey(deployment, fldPath.Child(role, "deployment"), "revisionHistoryLimit", "use spec.rolloutPolicy.revisionHistoryLimit")...)
+		}
+		allErrs = append(allErrs, validateValuesOverlayAdditionalVolumes(roleMap, fldPath.Child(role))...)
+	}
+
+	return allErrs
+}
+
+func forbidValuesOverlayKey(values map[string]interface{}, fldPath *field.Path, key, message string) field.ErrorList {
+	if _, ok := values[key]; !ok {
+		return nil
+	}
+	return field.ErrorList{field.Forbidden(fldPath.Child(key), message)}
+}
+
+func validateValuesOverlayContainerSecurityContext(securityContext map[string]interface{}, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if boolValue(securityContext["privileged"]) {
+		allErrs = append(allErrs, field.Forbidden(fldPath.Child("privileged"), "privileged containers are not allowed through valuesOverlay"))
+	}
+	if boolValue(securityContext["allowPrivilegeEscalation"]) {
+		allErrs = append(allErrs, field.Forbidden(fldPath.Child("allowPrivilegeEscalation"), "privilege escalation is not allowed through valuesOverlay"))
+	}
+	if capabilities, ok := securityContext["capabilities"].(map[string]interface{}); ok {
+		if adds, ok := capabilities["add"].([]interface{}); ok && len(adds) > 0 {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("capabilities", "add"), "added Linux capabilities are not allowed through valuesOverlay"))
+		}
+	}
+	return allErrs
+}
+
+func validateValuesOverlayAdditionalVolumes(roleMap map[string]interface{}, fldPath *field.Path) field.ErrorList {
+	volumes, ok := roleMap["additionalVolumes"].([]interface{})
+	if !ok {
+		return nil
+	}
+	var allErrs field.ErrorList
+	for i, volume := range volumes {
+		volumeMap, ok := volume.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, ok := volumeMap["hostPath"]; ok {
+			allErrs = append(allErrs, field.Forbidden(
+				fldPath.Child("additionalVolumes").Index(i).Child("hostPath"),
+				"hostPath volumes are not allowed through valuesOverlay",
+			))
+		}
+	}
+	return allErrs
+}
+
+func boolValue(value interface{}) bool {
+	typed, ok := value.(bool)
+	return ok && typed
 }
 
 func (t *XTrinode) validateAutoscalerOwnership(fldPath *field.Path) field.ErrorList {
@@ -1171,13 +1408,16 @@ func (t *XTrinode) validateLimits(fldPath *field.Path) field.ErrorList {
 	// as they use Trino's memory format (e.g., "10GB", "512MB")
 	if l.Session != nil {
 		if l.Session.MaxQueryMemory != "" {
-			// Could add regex validation for Trino memory format here if needed
-			// For now, just ensure it's not whitespace-only
 			if strings.TrimSpace(l.Session.MaxQueryMemory) == "" {
 				allErrs = append(allErrs, field.Invalid(
 					fldPath.Child("session", "maxQueryMemory"),
 					l.Session.MaxQueryMemory,
 					"maxQueryMemory must not be empty or whitespace-only"))
+			} else if _, ok := parseTrinoDataSizeBytes(l.Session.MaxQueryMemory); !ok {
+				allErrs = append(allErrs, field.Invalid(
+					fldPath.Child("session", "maxQueryMemory"),
+					l.Session.MaxQueryMemory,
+					"maxQueryMemory must be a valid Trino data size such as 4GB or 512MB"))
 			}
 		}
 		if l.Session.MaxTotalMemoryPerNode != "" {
@@ -1186,6 +1426,11 @@ func (t *XTrinode) validateLimits(fldPath *field.Path) field.ErrorList {
 					fldPath.Child("session", "maxTotalMemoryPerNode"),
 					l.Session.MaxTotalMemoryPerNode,
 					"maxTotalMemoryPerNode must not be empty or whitespace-only"))
+			} else if _, ok := parseTrinoDataSizeBytes(l.Session.MaxTotalMemoryPerNode); !ok {
+				allErrs = append(allErrs, field.Invalid(
+					fldPath.Child("session", "maxTotalMemoryPerNode"),
+					l.Session.MaxTotalMemoryPerNode,
+					"maxTotalMemoryPerNode must be a valid Trino data size such as 4GB or 512MB"))
 			}
 		}
 	}
@@ -1531,6 +1776,107 @@ func (t *XTrinode) validateTrinoLifecycleHTTPCompatibility(fldPath *field.Path) 
 		))
 	}
 	return allErrs
+}
+
+func (t *XTrinode) validateTrinoMemoryAgainstRuntimeShape(fldPath *field.Path) field.ErrorList {
+	workerLimit, ok := t.workerMemoryLimitBytes()
+	if !ok || workerLimit <= 0 {
+		return nil
+	}
+
+	var allErrs field.ErrorList
+	if t.Spec.Limits != nil && t.Spec.Limits.Session != nil && t.Spec.Limits.Session.MaxTotalMemoryPerNode != "" {
+		allErrs = append(allErrs, validateTrinoDataSizeAtMost(
+			fldPath.Child("limits", "session", "maxTotalMemoryPerNode"),
+			t.Spec.Limits.Session.MaxTotalMemoryPerNode,
+			workerLimit,
+			"maxTotalMemoryPerNode must not exceed resolved worker memory limit",
+		)...)
+	}
+
+	for _, key := range []string{"query.max-memory-per-node", "query.max-total-memory-per-node"} {
+		for _, setting := range valuesOverlayConfigPropertySettings(t.Spec.GetValuesOverlayMap(), key, fldPath) {
+			allErrs = append(allErrs, validateTrinoDataSizeAtMost(
+				setting.path,
+				setting.value,
+				workerLimit,
+				fmt.Sprintf("%s must not exceed resolved worker memory limit", key),
+			)...)
+		}
+	}
+
+	return allErrs
+}
+
+func (t *XTrinode) workerMemoryLimitBytes() (int64, bool) {
+	resources, _, ok := t.resolvedWorkerResourcesForMachineRecommendation()
+	if !ok {
+		return 0, false
+	}
+	if limit, ok := resources.Limits[corev1.ResourceMemory]; ok && limit.Sign() > 0 {
+		return limit.Value(), true
+	}
+	if request, ok := resources.Requests[corev1.ResourceMemory]; ok && request.Sign() > 0 {
+		return request.Value(), true
+	}
+	return 0, false
+}
+
+func validateTrinoDataSizeAtMost(fldPath *field.Path, value string, maxBytes int64, message string) field.ErrorList {
+	parsed, ok := parseTrinoDataSizeBytes(value)
+	if !ok {
+		return field.ErrorList{
+			field.Invalid(fldPath, value, "must be a valid Trino data size such as 4GB or 512MB"),
+		}
+	}
+	if parsed > maxBytes {
+		return field.ErrorList{
+			field.Invalid(fldPath, value, message),
+		}
+	}
+	return nil
+}
+
+func parseTrinoDataSizeBytes(value string) (int64, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, false
+	}
+	upper := strings.ToUpper(trimmed)
+	units := []struct {
+		suffix     string
+		multiplier float64
+	}{
+		{suffix: "TIB", multiplier: 1024 * 1024 * 1024 * 1024},
+		{suffix: "TB", multiplier: 1000 * 1000 * 1000 * 1000},
+		{suffix: "GIB", multiplier: 1024 * 1024 * 1024},
+		{suffix: "GB", multiplier: 1000 * 1000 * 1000},
+		{suffix: "MIB", multiplier: 1024 * 1024},
+		{suffix: "MB", multiplier: 1000 * 1000},
+		{suffix: "KIB", multiplier: 1024},
+		{suffix: "KB", multiplier: 1000},
+		{suffix: "B", multiplier: 1},
+	}
+	for _, unit := range units {
+		if !strings.HasSuffix(upper, unit.suffix) {
+			continue
+		}
+		number := strings.TrimSpace(trimmed[:len(trimmed)-len(unit.suffix)])
+		if number == "" {
+			return 0, false
+		}
+		parsed, err := strconv.ParseFloat(number, 64)
+		if err != nil || parsed < 0 {
+			return 0, false
+		}
+		return int64(parsed * unit.multiplier), true
+	}
+
+	quantity, err := resource.ParseQuantity(trimmed)
+	if err != nil || quantity.Sign() < 0 {
+		return 0, false
+	}
+	return quantity.Value(), true
 }
 
 func valuesOverlayHasConfigProperty(values map[string]interface{}, key string) bool {

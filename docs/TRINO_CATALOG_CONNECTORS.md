@@ -248,8 +248,8 @@ spec:
   `hive.metastore.uri`; `glue` renders `hive.metastore=glue`.
 - `warehouseURI`: Required by the current typed API. For `hive` and
   `hive_metastore`, it renders `hive.metastore.uri`; for `glue`, it is
-  currently required by validation but not rendered. The field name is kept for
-  API compatibility.
+  currently required by validation but not rendered. That `glue` behavior is an
+  API cleanup candidate rather than a rendered runtime setting.
 
 ### Optional Fields
 

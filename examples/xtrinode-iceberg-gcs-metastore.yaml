@@ -250,7 +250,6 @@ spec:
     iceberg:
       catalogType: hive_metastore
       # For HMS-backed Iceberg, the actual schema/table location is supplied in SQL.
-      # The operator keeps this field for API compatibility.
       warehouseURI: gs://<GCS_BUCKET_NAME>/warehouse/iceberg
       properties:
         hive.metastore.uri: thrift://hive-metastore.team-iceberg.svc.cluster.local:9083
@@ -318,6 +317,22 @@ spec:
       annotations:
         iam.gke.io/gcp-service-account: trino-iceberg-gcs@<GCP_PROJECT_ID>.iam.gserviceaccount.com
 
+  resources:
+    coordinator:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+    worker:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+
   valuesOverlay:
     additionalConfigProperties:
       - query.max-memory=1GB
@@ -334,20 +349,6 @@ spec:
     coordinator:
       additionalJVMConfig:
         - -Xmx768M
-      resources:
-        requests:
-          cpu: 250m
-          memory: 1Gi
-        limits:
-          cpu: "1"
-          memory: 1536Mi
     worker:
       additionalJVMConfig:
         - -Xmx768M
-      resources:
-        requests:
-          cpu: 250m
-          memory: 1Gi
-        limits:
-          cpu: "1"
-          memory: 1536Mi
