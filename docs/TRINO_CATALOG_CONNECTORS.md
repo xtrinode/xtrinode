@@ -244,12 +244,13 @@ spec:
 
 ### Required Fields
 
-- `catalogType`: Metastore type. `hive` and `hive_metastore` render
-  `hive.metastore.uri`; `glue` renders `hive.metastore=glue`.
-- `warehouseURI`: Required by the current typed API. For `hive` and
-  `hive_metastore`, it renders `hive.metastore.uri`; for `glue`, it is
-  currently required by validation but not rendered. That `glue` behavior is an
-  API cleanup candidate rather than a rendered runtime setting.
+- `catalogType`: Metastore type. `hive` and `hive_metastore` require
+  `warehouseURI` and render it as `hive.metastore.uri`; `glue` renders
+  `hive.metastore=glue`.
+- `warehouseURI`: Hive Metastore URI for `hive` and `hive_metastore`. For
+  `glue`, current admission still requires the field, but the renderer ignores
+  it because Glue does not use `hive.metastore.uri`; use a non-secret placeholder
+  value for that catalog type.
 
 ### Optional Fields
 

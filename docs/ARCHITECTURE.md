@@ -565,8 +565,10 @@ owners still have controlled escape hatches:
    type, node count range, disk size, zones, spot settings, labels, taints, and
    prewarm behavior. It does not move pods onto that pool unless
    `spec.nodePool.schedulePods=true` or placement explicitly targets the pool.
-4. `spec.valuesOverlay` is a privileged, chart-shaped override surface read by
-   native resource builders. It is not a raw Helm pass-through.
+4. `spec.valuesOverlay` is a privileged override surface read by native
+   resource builders. The operator only consumes supported keys after admission
+   policy has rejected typed-field conflicts and high-risk pod/security/service
+   settings.
 
 Use presets as the default. Use typed fields when changing resources,
 placement, or route capacity. Override the node-pool machine type when pod
