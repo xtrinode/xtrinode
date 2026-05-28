@@ -169,27 +169,29 @@ spec:
     scalingMetric: memory
     threshold: "10"
 
+  resources:
+    coordinator:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+    worker:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+
   valuesOverlay:
     coordinator:
       additionalJVMConfig:
         - -Xmx768M
-      resources:
-        requests:
-          cpu: 250m
-          memory: 1Gi
-        limits:
-          cpu: "1"
-          memory: 1536Mi
     worker:
       additionalJVMConfig:
         - -Xmx768M
-      resources:
-        requests:
-          cpu: 250m
-          memory: 1Gi
-        limits:
-          cpu: "1"
-          memory: 1536Mi
     additionalConfigProperties:
       - http-server.process-forwarded=true
       - query.max-memory=1GB

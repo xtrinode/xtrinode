@@ -231,8 +231,9 @@ Before opening or marking a PR ready:
 
 ## Release-Sensitive Changes
 
-Changes to CRDs, Helm chart defaults, Terraform modules, image tags, admission behavior, or gateway/API compatibility can
-affect running clusters. For these changes, include:
+Changes to CRDs, Helm chart defaults, Terraform modules, image tags, admission
+behavior, gateway routing contracts, or API-server request/response contracts
+can affect running clusters. For these changes, include:
 
 - What changes for existing installations.
 - Whether `make manifests`, Helm dependency updates, or chart lock updates are required.

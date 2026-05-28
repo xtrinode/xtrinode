@@ -9,6 +9,7 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/status"
+	trinoresources "github.com/xtrinode/xtrinode/internal/trino/resources"
 	"github.com/xtrinode/xtrinode/pkg/gateway"
 	"gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
@@ -44,6 +45,112 @@ func TestCheckTrinoRuntimeReadyRequiresCoordinatorEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, readiness.Ready)
 	require.Equal(t, "CoordinatorEndpointsNotReady", readiness.Reason)
+}
+
+func TestSyncSchedulingConditionReportsUnschedulablePod(t *testing.T) {
+	xtrinode := testRuntimeReadinessXTrinode(nil)
+	labels := trinoresources.TrinoSelectorLabels(xtrinode, trinoresources.ComponentWorker)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-worker-0",
+			Namespace: xtrinode.Namespace,
+			Labels:    labels,
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{
+					Type:    corev1.PodScheduled,
+					Status:  corev1.ConditionFalse,
+					Reason:  "Unschedulable",
+					Message: "0/1 nodes are available: insufficient memory.",
+				},
+			},
+		},
+	}
+	reconciler := newRuntimeReadinessReconciler(t, xtrinode, pod)
+
+	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
+
+	condition := status.GetCondition(xtrinode, status.ConditionTypeSchedulingReady)
+	require.NotNil(t, condition)
+	require.Equal(t, metav1.ConditionFalse, condition.Status)
+	require.Equal(t, status.ConditionReasonSchedulingBlocked, condition.Reason)
+	require.Contains(t, condition.Message, "worker pod runtime-worker-0")
+	require.Contains(t, condition.Message, "insufficient memory")
+
+	capacityCondition := status.GetCondition(xtrinode, status.ConditionTypeCapacityReady)
+	require.NotNil(t, capacityCondition)
+	require.Equal(t, metav1.ConditionFalse, capacityCondition.Status)
+	require.Equal(t, status.ConditionReasonCapacityBlocked, capacityCondition.Reason)
+
+	placementCondition := status.GetCondition(xtrinode, status.ConditionTypePlacementReady)
+	require.NotNil(t, placementCondition)
+	require.Equal(t, metav1.ConditionTrue, placementCondition.Status)
+}
+
+func TestSyncSchedulingConditionClassifiesPlacementAndTaintBlockers(t *testing.T) {
+	xtrinode := testRuntimeReadinessXTrinode(nil)
+	labels := trinoresources.TrinoSelectorLabels(xtrinode, trinoresources.ComponentCoordinator)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-coordinator-0",
+			Namespace: xtrinode.Namespace,
+			Labels:    labels,
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{
+					Type:    corev1.PodScheduled,
+					Status:  corev1.ConditionFalse,
+					Reason:  "Unschedulable",
+					Message: "0/2 nodes are available: 1 node(s) didn't match Pod's node affinity/selector, 1 node(s) had untolerated taint {dedicated: analytics}.",
+				},
+			},
+		},
+	}
+	reconciler := newRuntimeReadinessReconciler(t, xtrinode, pod)
+
+	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
+
+	placementCondition := status.GetCondition(xtrinode, status.ConditionTypePlacementReady)
+	require.NotNil(t, placementCondition)
+	require.Equal(t, metav1.ConditionFalse, placementCondition.Status)
+	require.Equal(t, status.ConditionReasonPlacementBlocked, placementCondition.Reason)
+	require.Contains(t, placementCondition.Message, "runtime-coordinator-0")
+
+	taintsCondition := status.GetCondition(xtrinode, status.ConditionTypeTaintsReady)
+	require.NotNil(t, taintsCondition)
+	require.Equal(t, metav1.ConditionFalse, taintsCondition.Status)
+	require.Equal(t, status.ConditionReasonTaintsBlocked, taintsCondition.Reason)
+	require.Contains(t, taintsCondition.Message, "untolerated taint")
+
+	capacityCondition := status.GetCondition(xtrinode, status.ConditionTypeCapacityReady)
+	require.NotNil(t, capacityCondition)
+	require.Equal(t, metav1.ConditionTrue, capacityCondition.Status)
+}
+
+func TestSyncSchedulingConditionReportsQuotaReplicaFailures(t *testing.T) {
+	xtrinode := testRuntimeReadinessXTrinode(nil)
+	labels := trinoresources.TrinoSelectorLabels(xtrinode, trinoresources.ComponentWorker)
+	deployment := testRuntimeReadinessDeployment(config.BuildWorkerDeploymentName(xtrinode.Name), xtrinode.Namespace, 1, 0, 0, int32Ptr(1))
+	deployment.Labels = labels
+	deployment.Status.Conditions = []appsv1.DeploymentCondition{
+		{
+			Type:    appsv1.DeploymentReplicaFailure,
+			Status:  corev1.ConditionTrue,
+			Reason:  "FailedCreate",
+			Message: "pods \"runtime-worker\" is forbidden: exceeded quota: xtrinode-namespace-quota",
+		},
+	}
+	reconciler := newRuntimeReadinessReconciler(t, xtrinode, deployment)
+
+	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
+
+	quotaCondition := status.GetCondition(xtrinode, status.ConditionTypeQuotaReady)
+	require.NotNil(t, quotaCondition)
+	require.Equal(t, metav1.ConditionFalse, quotaCondition.Status)
+	require.Equal(t, status.ConditionReasonQuotaBlocked, quotaCondition.Reason)
+	require.Contains(t, quotaCondition.Message, "exceeded quota")
 }
 
 func TestCheckTrinoRuntimeReadyRequiresWorkerFloor(t *testing.T) {

@@ -97,6 +97,14 @@ func checkNodePoolChanges(c *updateCtx, oldObj, newObj *XTrinode) {
 		if !reflect.DeepEqual(oldObj.Spec.NodePool.Prewarm, newObj.Spec.NodePool.Prewarm) {
 			c.warn(buildNodePoolPrewarmChangeWarning())
 		}
+		if nodePoolDeletionPolicyChanged(oldObj, newObj) {
+			oldPolicy := normalizeNodePoolDeletionPolicy(oldObj.Spec.NodePool)
+			newPolicy := normalizeNodePoolDeletionPolicy(newObj.Spec.NodePool)
+			if oldPolicy != NodePoolDeletionPolicyDelete && newPolicy == NodePoolDeletionPolicyDelete {
+				c.requireBreakGlass("spec.nodePool.deletionPolicy")
+			}
+			c.warn(buildNodePoolDeletionPolicyChangeWarning())
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -94,6 +95,24 @@ func DefaultDedicatedRoutingGroup(namespace, name string) string {
 		return name
 	}
 	return fmt.Sprintf("%s%s%s", namespace, GatewayDefaultRoutingGroupSeparator, name)
+}
+
+// ExistingNodePoolSelector returns the provider node label used by managed Kubernetes services.
+func ExistingNodePoolSelector(provider, name string) (key, value string, ok bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", "", false
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "azure":
+		return "kubernetes.azure.com/agentpool", name, true
+	case "aws":
+		return "eks.amazonaws.com/nodegroup", name, true
+	case "gcp":
+		return "cloud.google.com/gke-nodepool", name, true
+	default:
+		return "", "", false
+	}
 }
 
 // OperatorConfig defines operator-related configuration

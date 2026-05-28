@@ -12,6 +12,7 @@ OPERATOR_STRESS_WAIT_TIMEOUT_SECONDS="${OPERATOR_STRESS_WAIT_TIMEOUT_SECONDS:-24
 OPERATOR_STRESS_MAX_RECONCILE_ERROR_DELTA="${OPERATOR_STRESS_MAX_RECONCILE_ERROR_DELTA:-0}"
 OPERATOR_STRESS_METRICS_PORT="${OPERATOR_STRESS_METRICS_PORT:-18082}"
 OPERATOR_STRESS_CLEANUP_ON_SUCCESS="${OPERATOR_STRESS_CLEANUP_ON_SUCCESS:-true}"
+KUBECTL="${KUBECTL:-kubectl}"
 
 LABEL_KEY="stress.xtrinode.io/run"
 LABEL_VALUE="local-operator"
@@ -27,6 +28,10 @@ require_cmd() {
     echo "ERROR: required command not found: $1" >&2
     exit 1
   fi
+}
+
+kctl() {
+  "$KUBECTL" "$@"
 }
 
 require_int() {
@@ -57,12 +62,12 @@ on_exit() {
 }
 
 namespace_exists() {
-  kubectl get namespace "$NAMESPACE" >/dev/null 2>&1
+  kctl get namespace "$NAMESPACE" >/dev/null 2>&1
 }
 
 ensure_namespace() {
   if ! namespace_exists; then
-    kubectl create namespace "$NAMESPACE"
+    kctl create namespace "$NAMESPACE"
   fi
 }
 
@@ -74,7 +79,7 @@ wait_for_resource_count() {
   local count=""
 
   while [ "$SECONDS" -lt "$deadline" ]; do
-    count="$(kubectl get "$kind" -n "$NAMESPACE" -l "$LABEL_SELECTOR" --ignore-not-found -o json \
+    count="$(kctl get "$kind" -n "$NAMESPACE" -l "$LABEL_SELECTOR" --ignore-not-found -o json \
       | jq 'if type == "array" then length else (.items // []) | length end')"
     count="${count:-0}"
     if [ "$count" -eq "$expected" ]; then
@@ -89,10 +94,10 @@ wait_for_resource_count() {
 
 force_remove_xtrinode_finalizers() {
   local resource=""
-  kubectl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" --ignore-not-found -o name \
+  kctl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" --ignore-not-found -o name \
     | while read -r resource; do
         [ -z "$resource" ] && continue
-        kubectl patch "$resource" -n "$NAMESPACE" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null || true
+        kctl patch "$resource" -n "$NAMESPACE" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null || true
       done
 }
 
@@ -102,14 +107,14 @@ cleanup_labeled_resources() {
   fi
 
   echo "Cleaning operator stress resources in namespace ${NAMESPACE}..."
-  kubectl delete xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" --wait=false --ignore-not-found=true >/dev/null || true
-  kubectl delete xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" --wait=false --ignore-not-found=true >/dev/null || true
-  kubectl delete configmap -n "$NAMESPACE" -l "$LABEL_SELECTOR" --ignore-not-found=true >/dev/null || true
+  kctl delete xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" --wait=false --ignore-not-found=true >/dev/null || true
+  kctl delete xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" --wait=false --ignore-not-found=true >/dev/null || true
+  kctl delete configmap -n "$NAMESPACE" -l "$LABEL_SELECTOR" --ignore-not-found=true >/dev/null || true
 
   if ! wait_for_resource_count xtrinode 0 90; then
     echo "Forcing finalizer removal for labeled stress XTrinode resources..." >&2
     force_remove_xtrinode_finalizers
-    kubectl delete xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" --wait=false --ignore-not-found=true >/dev/null || true
+    kctl delete xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" --wait=false --ignore-not-found=true >/dev/null || true
     wait_for_resource_count xtrinode 0 60
   fi
   wait_for_resource_count xtrinodecatalog 0 60
@@ -127,7 +132,7 @@ create_catalog() {
   local index="$1"
   local name
   name="$(catalog_name "$index")"
-  kubectl apply -f - <<EOF
+  kctl apply -f - <<EOF
 apiVersion: analytics.xtrinode.io/v1
 kind: XTrinodeCatalog
 metadata:
@@ -149,7 +154,7 @@ create_xtrinode() {
   local index="$1"
   local name
   name="$(idx_name "$index")"
-  kubectl apply -f - <<EOF
+  kctl apply -f - <<EOF
 apiVersion: analytics.xtrinode.io/v1
 kind: XTrinode
 metadata:
@@ -193,9 +198,9 @@ patch_resources() {
     local cat_name
     runtime_name="$(idx_name "$i")"
     cat_name="$(catalog_name "$i")"
-    kubectl patch xtrinode "$runtime_name" -n "$NAMESPACE" --type=merge \
+    kctl patch xtrinode "$runtime_name" -n "$NAMESPACE" --type=merge \
       -p "{\"metadata\":{\"annotations\":{\"stress.xtrinode.io/round\":\"${round}\"}},\"spec\":{\"wakeTTL\":\"${ttl_minutes}m\",\"autoSuspendAfter\":\"${auto_suspend_minutes}m\",\"wakeMinWorkers\":0}}" >/dev/null
-    kubectl patch xtrinodecatalog "$cat_name" -n "$NAMESPACE" --type=merge \
+    kctl patch xtrinodecatalog "$cat_name" -n "$NAMESPACE" --type=merge \
       -p "{\"metadata\":{\"annotations\":{\"stress.xtrinode.io/round\":\"${round}\"}},\"spec\":{\"connector\":{\"tpch\":{\"properties\":{\"tpch.splits-per-node\":\"${splits_per_node}\"}}}}}" >/dev/null
   done
 }
@@ -209,7 +214,7 @@ wait_for_xtrinodes_suspended() {
   echo "Waiting for all stress XTrinode resources to reach Suspended..."
   while [ "$SECONDS" -lt "$deadline" ]; do
     read -r total suspended error_count < <(
-      kubectl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o json \
+      kctl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o json \
         | jq -r '(if type == "array" then . else (.items // []) end) as $items | [$items | length, ([$items[] | select(.status.phase == "Suspended")] | length), ([$items[] | select(.status.phase == "Error")] | length)] | @tsv'
     )
     if [ "$total" -eq "$OPERATOR_STRESS_COUNT" ] && [ "$suspended" -eq "$OPERATOR_STRESS_COUNT" ]; then
@@ -217,14 +222,14 @@ wait_for_xtrinodes_suspended() {
     fi
     if [ "$error_count" -gt 0 ]; then
       echo "ERROR: ${error_count} stress XTrinode resources reached Error phase" >&2
-      kubectl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o wide
+      kctl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o wide
       return 1
     fi
     sleep 3
   done
 
   echo "Timed out waiting for Suspended resources; total=${total}, suspended=${suspended}, errors=${error_count}" >&2
-  kubectl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o yaml
+  kctl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o yaml
   return 1
 }
 
@@ -237,7 +242,7 @@ wait_for_catalogs_ready() {
   echo "Waiting for all stress catalogs to reach Ready..."
   while [ "$SECONDS" -lt "$deadline" ]; do
     read -r total ready error_count < <(
-      kubectl get xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o json \
+      kctl get xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o json \
         | jq -r '(if type == "array" then . else (.items // []) end) as $items | [$items | length, ([$items[] | select(.status.phase == "Ready")] | length), ([$items[] | select(.status.phase == "Error")] | length)] | @tsv'
     )
     if [ "$total" -eq "$OPERATOR_STRESS_COUNT" ] && [ "$ready" -eq "$OPERATOR_STRESS_COUNT" ]; then
@@ -245,21 +250,21 @@ wait_for_catalogs_ready() {
     fi
     if [ "$error_count" -gt 0 ]; then
       echo "ERROR: ${error_count} stress catalogs reached Error phase" >&2
-      kubectl get xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o wide
+      kctl get xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o wide
       return 1
     fi
     sleep 3
   done
 
   echo "Timed out waiting for Ready catalogs; total=${total}, ready=${ready}, errors=${error_count}" >&2
-  kubectl get xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o yaml
+  kctl get xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o yaml
   return 1
 }
 
 start_metrics_port_forward() {
   local log_file="/tmp/xtrinode-operator-stress-metrics-port-forward.log"
   rm -f "$log_file"
-  kubectl port-forward -n "$OPERATOR_NAMESPACE" "svc/${OPERATOR_SERVICE}" "${OPERATOR_STRESS_METRICS_PORT}:8080" \
+  kctl port-forward -n "$OPERATOR_NAMESPACE" "svc/${OPERATOR_SERVICE}" "${OPERATOR_STRESS_METRICS_PORT}:8080" \
     >"$log_file" 2>&1 &
   METRICS_PF_PID=$!
 
@@ -302,12 +307,12 @@ metric_sum() {
 }
 
 operator_restart_sum() {
-  kubectl get pods -n "$OPERATOR_NAMESPACE" -l app.kubernetes.io/name=xtrinode-operator -o json \
+  kctl get pods -n "$OPERATOR_NAMESPACE" -l app.kubernetes.io/name=xtrinode-operator -o json \
     | jq '[.items[].status.containerStatuses[]?.restartCount] | add // 0'
 }
 
 assert_operator_available() {
-  kubectl wait deployment/xtrinode-operator -n "$OPERATOR_NAMESPACE" --for=condition=Available \
+  kctl wait deployment/xtrinode-operator -n "$OPERATOR_NAMESPACE" --for=condition=Available \
     --timeout="${OPERATOR_STRESS_WAIT_TIMEOUT_SECONDS}s"
 }
 
@@ -334,18 +339,18 @@ assert_metrics() {
 
 dump_debug() {
   echo "=== Operator stress debug ===" >&2
-  kubectl get pods -n "$OPERATOR_NAMESPACE" -o wide >&2 || true
-  kubectl get pods -n "$GATEWAY_NAMESPACE" -o wide >&2 || true
+  kctl get pods -n "$OPERATOR_NAMESPACE" -o wide >&2 || true
+  kctl get pods -n "$GATEWAY_NAMESPACE" -o wide >&2 || true
   if namespace_exists; then
-    kubectl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o wide >&2 || true
-    kubectl get xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o wide >&2 || true
-    kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp >&2 || true
+    kctl get xtrinode -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o wide >&2 || true
+    kctl get xtrinodecatalog -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o wide >&2 || true
+    kctl get events -n "$NAMESPACE" --sort-by=.lastTimestamp >&2 || true
   fi
-  kubectl logs -n "$OPERATOR_NAMESPACE" deployment/xtrinode-operator --tail=160 >&2 || true
+  kctl logs -n "$OPERATOR_NAMESPACE" deployment/xtrinode-operator --tail=160 >&2 || true
 }
 
 run_stress() {
-  require_cmd kubectl
+  require_cmd "$KUBECTL"
   require_cmd jq
   require_cmd curl
   require_int OPERATOR_STRESS_COUNT "$OPERATOR_STRESS_COUNT"
@@ -412,12 +417,12 @@ main() {
       run_stress
       ;;
     cleanup)
-      require_cmd kubectl
+      require_cmd "$KUBECTL"
       require_cmd jq
       cleanup_labeled_resources
       ;;
     debug)
-      require_cmd kubectl
+      require_cmd "$KUBECTL"
       dump_debug
       ;;
     *)

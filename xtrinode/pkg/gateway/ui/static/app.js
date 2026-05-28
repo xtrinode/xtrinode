@@ -198,6 +198,9 @@ function renderDrawer(row) {
     ["Selectable for new queries", selectabilityLabel(backend)],
     ["Tier", backend.tier || "not set"],
     ["Capacity units", backend.capacityUnits || "not set"],
+    ["Shape version", backend.runtimeShapeVersion || "not set"],
+    ["Shape hash", backend.runtimeShapeHash || "not set"],
+    ["Observed generation", backend.observedGeneration || "not set"],
     ["Drain until", formatOptionalDrainUntil(backend.drainUntil)],
     ["Drain ETA", formatDrainEta(backend.drainUntil)]
   ]);

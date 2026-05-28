@@ -28,6 +28,10 @@ import (
 
 type recordingNodePoolAdapter struct {
 	ensurePhases []string
+	deleteCalls  int
+	retainCalls  int
+	scaleCalls   int
+	scaleValues  []int32
 }
 
 func (r *recordingNodePoolAdapter) EnsureNodePool(_ context.Context, xtrinode *analyticsv1.XTrinode) error {
@@ -36,10 +40,18 @@ func (r *recordingNodePoolAdapter) EnsureNodePool(_ context.Context, xtrinode *a
 }
 
 func (r *recordingNodePoolAdapter) DeleteNodePool(_ context.Context, _ *analyticsv1.XTrinode) error {
+	r.deleteCalls++
 	return nil
 }
 
-func (r *recordingNodePoolAdapter) ScaleNodePoolMinNodes(_ context.Context, _ *analyticsv1.XTrinode, _ int32) error {
+func (r *recordingNodePoolAdapter) RetainNodePool(_ context.Context, _ *analyticsv1.XTrinode) error {
+	r.retainCalls++
+	return nil
+}
+
+func (r *recordingNodePoolAdapter) ScaleNodePoolMinNodes(_ context.Context, _ *analyticsv1.XTrinode, minNodes int32) error {
+	r.scaleCalls++
+	r.scaleValues = append(r.scaleValues, minNodes)
 	return nil
 }
 
@@ -1074,6 +1086,59 @@ func TestXTrinodeReconciler_reconcileSuspend_UpdatesGatewayRoutePaused(t *testin
 	}, &routeConfig)
 	assert.NoError(t, err)
 	assert.Contains(t, routeConfig.Data[config.GatewayConfigMapKey], "state: PAUSED")
+}
+
+func TestXTrinodeReconciler_reconcileSuspend_PausesGatewayBeforeWaitingForQueries(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = analyticsv1.AddToScheme(scheme)
+	_ = kedav1alpha1.AddToScheme(scheme)
+
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size:      "s",
+			Suspended: true,
+			Routing: &analyticsv1.RoutingSpec{
+				Header: "X-Trino-XTrinode=test",
+			},
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			Phase:   string(status.PhaseReady),
+			Workers: 2,
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(xtrinode).
+		WithObjects(xtrinode).
+		Build()
+
+	reconciler := newTestReconciler(client, scheme)
+	graceful := &gracefulShutdownServiceTestDouble{safeToScaleDown: false}
+	reconciler.GracefulShutdownService = graceful
+
+	result, err := reconciler.reconcileSuspend(context.Background(), xtrinode)
+	assert.NoError(t, err)
+	assert.Equal(t, 30*time.Second, result.RequeueAfter)
+	assert.Equal(t, string(status.PhaseSuspending), xtrinode.Status.Phase)
+	assert.Equal(t, 1, graceful.checkCalls)
+	assert.Equal(t, 0, graceful.waitCalls)
+
+	var routeConfig corev1.ConfigMap
+	err = client.Get(context.Background(), types.NamespacedName{
+		Name:      config.GatewayConfigMapName,
+		Namespace: config.GatewayConfigMapNamespace,
+	}, &routeConfig)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.Contains(t, routeConfig.Data[config.GatewayConfigMapKey], "state: PAUSED")
+	assert.Equal(t, int32(2), xtrinode.Status.Workers)
 }
 
 func TestXTrinodeReconciler_deleteNativeHPAForSuspend(t *testing.T) {

@@ -60,6 +60,10 @@ type Backend struct {
 	Tier          string `yaml:"tier,omitempty"`          // Size tier: xs, s, m, l, xl, xxl
 	CapacityUnits int    `yaml:"capacityUnits,omitempty"` // Normalized capacity for load balancing
 
+	RuntimeShapeVersion string `yaml:"runtimeShapeVersion,omitempty"` // Observed runtime shape schema version
+	RuntimeShapeHash    string `yaml:"runtimeShapeHash,omitempty"`    // Resolved runtime shape hash used for this route
+	ObservedGeneration  int64  `yaml:"observedGeneration,omitempty"`  // XTrinode generation used for this route
+
 	// DrainUntil is optional RFC3339 timestamp for drain completion (operational clarity)
 	DrainUntil string `yaml:"drainUntil,omitempty"`
 }
@@ -139,13 +143,16 @@ func RegisterRoute(ctx context.Context, cli client.Client, xtrinode *analyticsv1
 	backendState := computeBackendState(xtrinode)
 
 	backend := Backend{
-		Name:           xtrinode.Name,
-		Namespace:      xtrinode.Namespace,
-		CoordinatorURL: coordinatorURL,
-		State:          backendState,
-		Active:         true,
-		Tier:           tier,
-		CapacityUnits:  capacityUnits,
+		Name:                xtrinode.Name,
+		Namespace:           xtrinode.Namespace,
+		CoordinatorURL:      coordinatorURL,
+		State:               backendState,
+		Active:              true,
+		Tier:                tier,
+		CapacityUnits:       capacityUnits,
+		RuntimeShapeVersion: analyticsv1.ObservedRuntimeShapeStatusVersion,
+		RuntimeShapeHash:    shape.Hash,
+		ObservedGeneration:  xtrinode.Generation,
 	}
 
 	// Update ConfigMap with retry logic for conflict handling
@@ -398,12 +405,13 @@ func filterBackendFromRoutes(routes []RouteEntry, backendName, backendNamespace 
 		}
 
 		backends := make([]Backend, 0, len(route.Backends))
-		for _, backend := range route.Backends {
+		for i := range route.Backends {
+			backend := &route.Backends[i]
 			if backend.Name == backendName && backend.Namespace == backendNamespace {
 				changed = true
 				continue
 			}
-			backends = append(backends, backend)
+			backends = append(backends, *backend)
 		}
 		if len(backends) == 0 {
 			continue

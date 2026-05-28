@@ -75,6 +75,7 @@ type NodePoolShape struct {
 	MaxNodes              int32
 	MachineType           string
 	SchedulePods          bool
+	DeletionPolicy        string
 }
 
 type RuntimeShapeSource struct {
@@ -124,7 +125,10 @@ func Resolve(xtrinode *analyticsv1.XTrinode) (*ResolvedRuntimeShape, error) {
 	}
 
 	applyTypedResources(shape, xtrinode)
-	applyTypedPlacement(shape, xtrinode)
+	err = applyTypedPlacement(shape, xtrinode)
+	if err != nil {
+		return nil, err
+	}
 	applyNodePoolShape(shape, xtrinode)
 
 	valuesOverlay := xtrinode.Spec.GetValuesOverlayMap()
@@ -212,9 +216,9 @@ func applyTypedResources(shape *ResolvedRuntimeShape, xtrinode *analyticsv1.XTri
 	}
 }
 
-func applyTypedPlacement(shape *ResolvedRuntimeShape, xtrinode *analyticsv1.XTrinode) {
+func applyTypedPlacement(shape *ResolvedRuntimeShape, xtrinode *analyticsv1.XTrinode) error {
 	if xtrinode.Spec.Placement == nil {
-		return
+		return nil
 	}
 	placement := xtrinode.Spec.Placement
 	common := SchedulingShape{
@@ -226,7 +230,20 @@ func applyTypedPlacement(shape *ResolvedRuntimeShape, xtrinode *analyticsv1.XTri
 	shape.Placement.Worker = copySchedulingShape(common)
 	applyRolePlacementSpec(&shape.Placement.Coordinator, placement.Coordinator)
 	applyRolePlacementSpec(&shape.Placement.Worker, placement.Worker)
+	if placement.ExistingNodePool != nil {
+		key, value, ok := config.ExistingNodePoolSelector(placement.ExistingNodePool.Provider, placement.ExistingNodePool.Name)
+		if !ok {
+			return fmt.Errorf("unsupported existingNodePool provider %q", placement.ExistingNodePool.Provider)
+		}
+		if err := addSelectorWithConflict(&shape.Placement.Coordinator, key, value); err != nil {
+			return fmt.Errorf("coordinator placement conflicts with existingNodePool: %w", err)
+		}
+		if err := addSelectorWithConflict(&shape.Placement.Worker, key, value); err != nil {
+			return fmt.Errorf("worker placement conflicts with existingNodePool: %w", err)
+		}
+	}
 	shape.Source.Placement = SourceTyped
+	return nil
 }
 
 func applyRolePlacementSpec(shape *SchedulingShape, spec *analyticsv1.RolePlacementSpec) {
@@ -263,6 +280,7 @@ func applyNodePoolShape(shape *ResolvedRuntimeShape, xtrinode *analyticsv1.XTrin
 		Name:                  poolName,
 		MachineType:           nodePoolMachineType(nodePool),
 		SchedulePods:          nodePool.SchedulePods,
+		DeletionPolicy:        resolvedNodePoolDeletionPolicy(nodePool),
 	}
 	if nodePool.MinNodes != nil {
 		shape.NodePool.MinNodes = *nodePool.MinNodes
@@ -271,6 +289,13 @@ func applyNodePoolShape(shape *ResolvedRuntimeShape, xtrinode *analyticsv1.XTrin
 		shape.NodePool.MaxNodes = *nodePool.MaxNodes
 	}
 	shape.Source.NodePool = SourceTyped
+}
+
+func resolvedNodePoolDeletionPolicy(nodePool *analyticsv1.NodePoolSpec) string {
+	if nodePool == nil || nodePool.DeletionPolicy == "" {
+		return analyticsv1.NodePoolDeletionPolicyDelete
+	}
+	return nodePool.DeletionPolicy
 }
 
 func nodePoolMachineType(nodePool *analyticsv1.NodePoolSpec) string {
@@ -461,13 +486,17 @@ func applyNodePoolSchedulingBinding(shape *ResolvedRuntimeShape) error {
 }
 
 func addNodePoolSelector(shape *SchedulingShape, poolName string) error {
+	return addSelectorWithConflict(shape, config.NodePoolSchedulingLabel, poolName)
+}
+
+func addSelectorWithConflict(shape *SchedulingShape, key, value string) error {
 	if shape.NodeSelector == nil {
 		shape.NodeSelector = map[string]string{}
 	}
-	if existing, ok := shape.NodeSelector[config.NodePoolSchedulingLabel]; ok && existing != poolName {
-		return fmt.Errorf("%s=%q does not match %q", config.NodePoolSchedulingLabel, existing, poolName)
+	if existing, ok := shape.NodeSelector[key]; ok && existing != value {
+		return fmt.Errorf("%s=%q does not match %q", key, existing, value)
 	}
-	shape.NodeSelector[config.NodePoolSchedulingLabel] = poolName
+	shape.NodeSelector[key] = value
 	return nil
 }
 
@@ -664,6 +693,7 @@ func (shape *ResolvedRuntimeShape) ObservedStatus() *analyticsv1.ObservedRuntime
 		return nil
 	}
 	return &analyticsv1.ObservedRuntimeShapeStatus{
+		Version:         analyticsv1.ObservedRuntimeShapeStatusVersion,
 		Hash:            shape.Hash,
 		Preset:          shape.PresetName,
 		AutoscalingMode: shape.AutoscalingMode,
@@ -689,6 +719,7 @@ func (shape *ResolvedRuntimeShape) ObservedStatus() *analyticsv1.ObservedRuntime
 			ProviderMode:          shape.NodePool.ProviderMode,
 			Name:                  shape.NodePool.Name,
 			SchedulePods:          shape.NodePool.SchedulePods,
+			DeletionPolicy:        shape.NodePool.DeletionPolicy,
 		},
 	}
 }

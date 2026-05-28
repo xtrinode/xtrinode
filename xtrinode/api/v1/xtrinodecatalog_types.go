@@ -213,7 +213,6 @@ type DeltaLakeCatalogSpec struct {
 	CatalogType string `json:"catalogType"`
 
 	// WarehouseURI is the Hive Metastore URI when catalogType is hive/hive_metastore.
-	// This field name is kept for API compatibility.
 	WarehouseURI string `json:"warehouseURI"`
 
 	// Additional properties as key-value pairs

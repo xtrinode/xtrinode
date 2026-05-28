@@ -2,6 +2,7 @@ package resources
 
 import (
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -362,7 +363,12 @@ func getServiceConfig(xtrinode *analyticsv1.XTrinode) (serviceType corev1.Servic
 	}
 
 	if svcType, ok := service["type"].(string); ok {
-		serviceType = corev1.ServiceType(svcType)
+		switch strings.ToLower(strings.TrimSpace(svcType)) {
+		case "loadbalancer", "nodeport":
+			serviceType = corev1.ServiceTypeClusterIP
+		default:
+			serviceType = corev1.ServiceType(svcType)
+		}
 	}
 
 	if svcAnnotations, ok := service["annotations"].(map[string]interface{}); ok {
@@ -422,10 +428,6 @@ func addAdditionalExposedPorts(ports *[]corev1.ServicePort, xtrinode *analyticsv
 			port.Name = portName
 		}
 
-		if nodePortVal, ok := ParseInt32(portMap["nodePort"]); ok {
-			port.NodePort = nodePortVal
-		}
-
 		*ports = append(*ports, port)
 	}
 }
@@ -460,11 +462,6 @@ func buildServicePortFromMap(portMap map[string]interface{}) (port corev1.Servic
 	// Parse protocol
 	if protocol, ok := portMap["protocol"].(string); ok {
 		port.Protocol = corev1.Protocol(protocol)
-	}
-
-	// Parse nodePort (optional, only for NodePort/LoadBalancer services)
-	if nodePort, ok := ParseInt32(portMap["nodePort"]); ok {
-		port.NodePort = nodePort
 	}
 
 	return port, nil

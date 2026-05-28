@@ -16,6 +16,10 @@ type NodePoolAdapterInterface interface {
 	// DeleteNodePool deletes the node pool for the XTrinode
 	DeleteNodePool(ctx context.Context, xtrinode *analyticsv1.XTrinode) error
 
+	// RetainNodePool removes XTrinode owner references so retained node pools
+	// survive XTrinode garbage collection.
+	RetainNodePool(ctx context.Context, xtrinode *analyticsv1.XTrinode) error
+
 	// ScaleNodePoolMinNodes scales the node pool minNodes to the specified value
 	// This updates the MachinePool/MachineDeployment replicas and Cluster Autoscaler annotations
 	ScaleNodePoolMinNodes(ctx context.Context, xtrinode *analyticsv1.XTrinode, minNodes int32) error

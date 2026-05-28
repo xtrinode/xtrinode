@@ -258,6 +258,98 @@ func TestDeleteNodePoolRemovesPrimaryAndInfrastructureResources(t *testing.T) {
 	}
 }
 
+func TestRetainNodePoolRemovesXTrinodeOwnerReferences(t *testing.T) {
+	tests := []struct {
+		name       string
+		provider   string
+		mode       string
+		primaryGVK schema.GroupVersionKind
+		infraGVK   schema.GroupVersionKind
+		infraName  func(string) string
+	}{
+		{
+			name:       "azure self-managed",
+			provider:   "azure",
+			mode:       "self-managed",
+			primaryGVK: getMachineResourceGVK(true),
+			infraGVK:   getInfrastructureTemplateGVK("azure", true),
+			infraName:  func(poolName string) string { return poolName + config.NodePoolTemplateSuffix },
+		},
+		{
+			name:       "aws self-managed",
+			provider:   "aws",
+			mode:       "self-managed",
+			primaryGVK: getMachineResourceGVK(false),
+			infraGVK:   getInfrastructureTemplateGVK("aws", false),
+			infraName:  func(poolName string) string { return poolName + config.NodePoolTemplateSuffix },
+		},
+		{
+			name:       "gcp self-managed",
+			provider:   "gcp",
+			mode:       "self-managed",
+			primaryGVK: getMachineResourceGVK(false),
+			infraGVK:   getInfrastructureTemplateGVK("gcp", false),
+			infraName:  func(poolName string) string { return poolName + config.NodePoolTemplateSuffix },
+		},
+		{
+			name:       "azure managed",
+			provider:   "azure",
+			mode:       "managed",
+			primaryGVK: getMachineResourceGVK(true),
+			infraGVK:   getManagedInfrastructureGVK("azure"),
+			infraName:  func(poolName string) string { return poolName },
+		},
+		{
+			name:       "aws managed",
+			provider:   "aws",
+			mode:       "managed",
+			primaryGVK: getMachineResourceGVK(true),
+			infraGVK:   getManagedInfrastructureGVK("aws"),
+			infraName:  func(poolName string) string { return poolName },
+		},
+		{
+			name:       "gcp managed",
+			provider:   "gcp",
+			mode:       "managed",
+			primaryGVK: getMachineResourceGVK(true),
+			infraGVK:   getManagedInfrastructureGVK("gcp"),
+			infraName:  func(poolName string) string { return poolName },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			xtrinode := testNodePoolXTrinode(tt.provider, tt.mode)
+			cli := newTestClient(newTestSchemeAnalyticsOnly())
+			adapter := NewNodePoolAdapter(cli, newTestLogger())
+			poolName := getNodePoolName(xtrinode.Spec.NodePool, xtrinode.Name)
+			otherOwner := metav1.OwnerReference{
+				APIVersion: "example.test/v1",
+				Kind:       "ExternalOwner",
+				Name:       "keep-me",
+				UID:        types.UID("other-uid"),
+			}
+
+			primary := testUnstructured(tt.primaryGVK, poolName, xtrinode.Namespace)
+			primary.SetOwnerReferences(append(buildOwnerReference(xtrinode), otherOwner))
+			infra := testUnstructured(tt.infraGVK, tt.infraName(poolName), xtrinode.Namespace)
+			infra.SetOwnerReferences(buildOwnerReference(xtrinode))
+			require.NoError(t, cli.Create(ctx, primary))
+			require.NoError(t, cli.Create(ctx, infra))
+
+			err := adapter.RetainNodePool(ctx, xtrinode)
+			require.NoError(t, err)
+
+			retainedPrimary := testFetchUnstructured(t, cli, tt.primaryGVK, poolName, xtrinode.Namespace)
+			assert.Equal(t, []metav1.OwnerReference{otherOwner}, retainedPrimary.GetOwnerReferences())
+
+			retainedInfra := testFetchUnstructured(t, cli, tt.infraGVK, tt.infraName(poolName), xtrinode.Namespace)
+			assert.Empty(t, retainedInfra.GetOwnerReferences())
+		})
+	}
+}
+
 func TestGetManagedInfrastructureGVK(t *testing.T) {
 	tests := []struct {
 		provider string

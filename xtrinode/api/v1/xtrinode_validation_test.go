@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -411,6 +413,79 @@ func TestValidateLimits(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateLimitsRejectsInvalidTrinoDataSize(t *testing.T) {
+	xtrinode := &XTrinode{
+		Spec: XTrinodeSpec{
+			Size: "s",
+			Limits: &LimitsSpec{
+				Session: &SessionLimits{
+					MaxQueryMemory: "four-gigabytes",
+				},
+			},
+		},
+	}
+
+	_, err := xtrinode.ValidateCreate()
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.limits.session.maxQueryMemory")
+}
+
+func TestValidateTrinoMemoryAgainstRuntimeShapeRejectsOversizedPerNodeMemory(t *testing.T) {
+	xtrinode := &XTrinode{
+		Spec: XTrinodeSpec{
+			Size: "s",
+			Resources: &RuntimeResourcesSpec{
+				Worker: &corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse("4Gi"),
+					},
+				},
+			},
+			Limits: &LimitsSpec{
+				Session: &SessionLimits{
+					MaxTotalMemoryPerNode: "8GiB",
+				},
+			},
+		},
+	}
+
+	_, err := xtrinode.ValidateCreate()
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.limits.session.maxTotalMemoryPerNode")
+	assert.Contains(t, err.Error(), "must not exceed resolved worker memory limit")
+}
+
+func TestValidateCreateWarnsWhenNodePoolMachineTypeIsTooSmallForTypedResources(t *testing.T) {
+	xtrinode := &XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+		Spec: XTrinodeSpec{
+			Size: "s",
+			Resources: &RuntimeResourcesSpec{
+				Worker: &corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("16"),
+						corev1.ResourceMemory: resource.MustParse("64Gi"),
+					},
+				},
+			},
+			NodePool: &NodePoolSpec{
+				Name:     "runtime-pool",
+				Provider: "aws",
+				AWS: &AWSNodePoolSpec{
+					InstanceType: "m5.large",
+				},
+			},
+		},
+	}
+
+	warnings, err := xtrinode.ValidateCreate()
+
+	assert.NoError(t, err)
+	assert.Contains(t, warnings, `node pool machine type "m5.large" may not fit resolved worker resources; recommended for resolved worker resources is "m5.4xlarge"`)
 }
 
 // TestValidateHelmChartConfig tests HelmChartConfig validation
@@ -844,6 +919,58 @@ func TestValidateUpdate_NodePoolShapeChanges(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateUpdate_NodePoolDeletionPolicyRetainToDeleteRequiresBreakGlass(t *testing.T) {
+	old := &XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: XTrinodeSpec{
+			Size: "s",
+			NodePool: &NodePoolSpec{
+				Provider:       "gcp",
+				DeletionPolicy: NodePoolDeletionPolicyRetain,
+				GCP:            &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+			},
+		},
+	}
+	updated := old.DeepCopy()
+	updated.Spec.NodePool.DeletionPolicy = NodePoolDeletionPolicyDelete
+
+	warnings, err := updated.ValidateUpdate(old)
+
+	assert.Error(t, err)
+	assert.Contains(t, warnings, buildNodePoolDeletionPolicyChangeWarning())
+	assert.Contains(t, err.Error(), "spec.nodePool.deletionPolicy")
+
+	updated.Annotations = map[string]string{AnnotationAllowBreakingUpdate: "true"}
+	_, err = updated.ValidateUpdate(old)
+	assert.NoError(t, err)
+}
+
+func TestValidateUpdate_NodePoolDeletionPolicyScaleToZeroToDeleteRequiresBreakGlass(t *testing.T) {
+	old := &XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: XTrinodeSpec{
+			Size: "s",
+			NodePool: &NodePoolSpec{
+				Provider:       "gcp",
+				DeletionPolicy: NodePoolDeletionPolicyScaleToZero,
+				GCP:            &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+			},
+		},
+	}
+	updated := old.DeepCopy()
+	updated.Spec.NodePool.DeletionPolicy = NodePoolDeletionPolicyDelete
+
+	warnings, err := updated.ValidateUpdate(old)
+
+	assert.Error(t, err)
+	assert.Contains(t, warnings, buildNodePoolDeletionPolicyChangeWarning())
+	assert.Contains(t, err.Error(), "spec.nodePool.deletionPolicy")
+
+	updated.Annotations = map[string]string{AnnotationAllowBreakingUpdate: "true"}
+	_, err = updated.ValidateUpdate(old)
+	assert.NoError(t, err)
 }
 
 // TestValidateUpdate_BreakGlassNotNeeded tests warning when break-glass is present but not needed

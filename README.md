@@ -124,6 +124,11 @@ XTrinode separates Trino worker scaling from infrastructure capacity:
 
 - **Worker scaling**: fixed worker counts by default, or KEDA-managed worker
   replicas when `spec.keda.enabled=true` and a scaler is configured.
+  The operator platform expects KEDA CRDs to be installed; the Helm install
+  provides KEDA by default unless you point it at an existing KEDA installation.
+- **Pod placement**: `spec.placement` schedules runtime pods onto existing
+  nodes or pools. `spec.nodePool.schedulePods=true` binds pods to an
+  XTrinode-managed node pool through the stable XTrinode node-pool label.
 - **Horizontal node-pool scaling**: `spec.nodePool.minNodes` and
   `spec.nodePool.maxNodes` set the runtime node-pool bounds. When Cluster
   Autoscaler owns the pool, XTrinode updates autoscaler annotations and leaves

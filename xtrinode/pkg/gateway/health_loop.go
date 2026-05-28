@@ -34,7 +34,8 @@ func (gs *GatewayService) collectHealthCheckBackendURLs() []string {
 		if route == nil {
 			return
 		}
-		for _, backend := range route.Backends {
+		for i := range route.Backends {
+			backend := &route.Backends[i]
 			if backend.State != "" && backend.State != StateRunning {
 				continue
 			}

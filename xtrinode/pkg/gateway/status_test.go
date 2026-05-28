@@ -47,13 +47,16 @@ func TestGatewayStatusSnapshotDeduplicatesRoutesAndRedactsURLUserInfo(t *testing
 			Header:       "runtime-a",
 			Backends: []Backend{
 				{
-					Name:           "runtime-a",
-					Namespace:      "team-a",
-					CoordinatorURL: backendURL,
-					State:          StateRunning,
-					Active:         true,
-					Tier:           "m",
-					CapacityUnits:  4,
+					Name:                "runtime-a",
+					Namespace:           "team-a",
+					CoordinatorURL:      backendURL,
+					State:               StateRunning,
+					Active:              true,
+					Tier:                "m",
+					CapacityUnits:       4,
+					RuntimeShapeVersion: analyticsv1.ObservedRuntimeShapeStatusVersion,
+					RuntimeShapeHash:    "shape-123",
+					ObservedGeneration:  9,
 				},
 			},
 		},
@@ -88,6 +91,9 @@ func TestGatewayStatusSnapshotDeduplicatesRoutesAndRedactsURLUserInfo(t *testing
 	}
 	if backend.TrinoUIPath != "/ui/team-a/runtime-a/" {
 		t.Fatalf("unexpected Trino UI path: %q", backend.TrinoUIPath)
+	}
+	if backend.RuntimeShapeVersion != analyticsv1.ObservedRuntimeShapeStatusVersion || backend.RuntimeShapeHash != "shape-123" || backend.ObservedGeneration != 9 {
+		t.Fatalf("runtime shape diagnostics were not copied: %+v", backend)
 	}
 }
 

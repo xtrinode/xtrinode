@@ -57,27 +57,29 @@ spec:
       enabled: true
       interval: 15s
 
+  resources:
+    coordinator:
+      requests:
+        cpu: 100m
+        memory: 768Mi
+      limits:
+        cpu: 500m
+        memory: 1280Mi
+    worker:
+      requests:
+        cpu: 100m
+        memory: 768Mi
+      limits:
+        cpu: 500m
+        memory: 1280Mi
+
   valuesOverlay:
     coordinator:
       additionalJVMConfig:
         - -Xmx768M
-      resources:
-        requests:
-          cpu: 100m
-          memory: 768Mi
-        limits:
-          cpu: 500m
-          memory: 1280Mi
     worker:
       additionalJVMConfig:
         - -Xmx768M
-      resources:
-        requests:
-          cpu: 100m
-          memory: 768Mi
-        limits:
-          cpu: 500m
-          memory: 1280Mi
     additionalConfigProperties:
       - query.max-memory=512MB
       - query.max-memory-per-node=256MB

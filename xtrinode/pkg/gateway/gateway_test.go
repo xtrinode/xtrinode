@@ -76,8 +76,9 @@ func TestRegisterRoute_UsesResolvedRuntimeShapeCapacity(t *testing.T) {
 
 	xtrinode := &analyticsv1.XTrinode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "runtime",
-			Namespace: "team-a",
+			Name:       "runtime",
+			Namespace:  "team-a",
+			Generation: 7,
 		},
 		Spec: analyticsv1.XTrinodeSpec{
 			Size:       "s",
@@ -107,6 +108,9 @@ func TestRegisterRoute_UsesResolvedRuntimeShapeCapacity(t *testing.T) {
 	require.Len(t, routes[0].Backends, 1)
 	require.Equal(t, "s", routes[0].Backends[0].Tier)
 	require.Equal(t, 6, routes[0].Backends[0].CapacityUnits)
+	require.Equal(t, analyticsv1.ObservedRuntimeShapeStatusVersion, routes[0].Backends[0].RuntimeShapeVersion)
+	require.NotEmpty(t, routes[0].Backends[0].RuntimeShapeHash)
+	require.Equal(t, int64(7), routes[0].Backends[0].ObservedGeneration)
 }
 
 func TestRegisterRoute_UsesExplicitRoutingCapacityOverride(t *testing.T) {

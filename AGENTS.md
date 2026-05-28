@@ -14,6 +14,9 @@ skill directories with a `SKILL.md`; the project itself should not keep root `SK
 - Keep generated, local, and machine-specific files out of git.
 - Prefer project conventions over new abstractions. Make focused changes and avoid unrelated
   cleanup in the same patch.
+- Do not alter documented or implemented design, API, architecture, policy, or operational
+  contracts without explicit user approval. During audits, report design drift before editing the
+  design itself.
 
 ## System Agents
 

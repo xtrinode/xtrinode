@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/go-logr/logr"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -27,19 +25,25 @@ import (
 )
 
 func (r *XTrinodeReconciler) reconcileNamespaceGuardrailsAfterDelete(ctx context.Context, xtrinode *analyticsv1.XTrinode, log logr.Logger) error {
+	mode := r.namespaceGuardrailMode()
+	if mode == NamespaceGuardrailModeDisabled || mode == NamespaceGuardrailModeObserve {
+		log.Info("Skipping namespace guardrail cleanup due to operator mode", "namespace", xtrinode.Namespace, "mode", mode)
+		return nil
+	}
+
 	limits, err := r.calculateNamespaceGuardrailLimits(ctx, xtrinode)
 	if err != nil {
 		return fmt.Errorf("failed to calculate namespace guardrails after delete: %w", err)
 	}
 
 	if limits.RuntimeCount == 0 {
-		return r.deleteNamespaceGuardrailResources(ctx, xtrinode.Namespace, log)
+		return r.deleteNamespaceGuardrailResources(ctx, xtrinode.Namespace, mode, log)
 	}
 
-	if err := r.ensureResourceQuota(ctx, xtrinode, limits.MaxCPU, limits.MaxMemory, log); err != nil {
+	if err := r.ensureResourceQuota(ctx, xtrinode, limits.MaxCPU, limits.MaxMemory, mode, log); err != nil {
 		return err
 	}
-	if err := r.ensureLimitRange(ctx, xtrinode, limits.WorkerCPURequest, limits.WorkerMemoryRequest, limits.WorkerCPULimit, limits.WorkerMemoryLimit, log); err != nil {
+	if err := r.ensureLimitRange(ctx, xtrinode, limits.WorkerCPURequest, limits.WorkerMemoryRequest, limits.WorkerCPULimit, limits.WorkerMemoryLimit, mode, log); err != nil {
 		return err
 	}
 
@@ -53,25 +57,39 @@ func (r *XTrinodeReconciler) reconcileNamespaceGuardrailsAfterDelete(ctx context
 	return nil
 }
 
-func (r *XTrinodeReconciler) deleteNamespaceGuardrailResources(ctx context.Context, namespace string, log logr.Logger) error {
+func (r *XTrinodeReconciler) deleteNamespaceGuardrailResources(ctx context.Context, namespace, mode string, log logr.Logger) error {
+	resourceQuotaName := r.namespaceResourceQuotaName()
 	resourceQuota := &corev1.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespaceResourceQuotaName,
+			Name:      resourceQuotaName,
 			Namespace: namespace,
 		},
 	}
-	if err := r.Delete(ctx, resourceQuota); err != nil && !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete namespace ResourceQuota %s/%s: %w", namespace, namespaceResourceQuotaName, err)
+	if shouldDelete, err := r.shouldDeleteGuardrailObject(ctx, resourceQuota, mode); err != nil {
+		return err
+	} else if shouldDelete {
+		if err := r.Delete(ctx, resourceQuota); err != nil && !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete namespace ResourceQuota %s/%s: %w", namespace, resourceQuotaName, err)
+		}
+	} else {
+		log.Info("Retaining namespace ResourceQuota because it is not XTrinode-owned", "namespace", namespace, "name", resourceQuotaName)
 	}
 
+	limitRangeName := r.namespaceLimitRangeName()
 	limitRange := &corev1.LimitRange{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespaceLimitRangeName,
+			Name:      limitRangeName,
 			Namespace: namespace,
 		},
 	}
-	if err := r.Delete(ctx, limitRange); err != nil && !k8serrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete namespace LimitRange %s/%s: %w", namespace, namespaceLimitRangeName, err)
+	if shouldDelete, err := r.shouldDeleteGuardrailObject(ctx, limitRange, mode); err != nil {
+		return err
+	} else if shouldDelete {
+		if err := r.Delete(ctx, limitRange); err != nil && !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete namespace LimitRange %s/%s: %w", namespace, limitRangeName, err)
+		}
+	} else {
+		log.Info("Retaining namespace LimitRange because it is not XTrinode-owned", "namespace", namespace, "name", limitRangeName)
 	}
 
 	log.Info("Deleted namespace guardrails after final XTrinode deletion", "namespace", namespace)
@@ -81,18 +99,47 @@ func (r *XTrinodeReconciler) deleteNamespaceGuardrailResources(ctx context.Conte
 // ensureNamespaceGuardrails ensures namespace guardrails (namespace, ResourceQuota, LimitRange)
 func (r *XTrinodeReconciler) ensureNamespaceGuardrails(ctx context.Context, xtrinode *analyticsv1.XTrinode) error {
 	log := ctrl.LoggerFrom(ctx)
-	log.Info("Ensuring namespace guardrails", "namespace", xtrinode.Namespace)
+	mode := r.namespaceGuardrailMode()
+	log.Info("Ensuring namespace guardrails", "namespace", xtrinode.Namespace, "mode", mode)
 
 	limits, err := r.calculateNamespaceGuardrailLimits(ctx, xtrinode)
 	if err != nil {
 		return err
 	}
 
-	if err := r.ensureNamespaceWithLabels(ctx, xtrinode, log); err != nil {
+	if mode == NamespaceGuardrailModeDisabled {
+		status.SetCondition(
+			xtrinode,
+			status.ConditionTypeGuardrailsReady,
+			metav1.ConditionTrue,
+			"GuardrailsDisabled",
+			fmt.Sprintf("Namespace guardrail management disabled by operator policy; recommendation observed only (runtimes: %d, CPU: %s, Memory: %s)",
+				limits.RuntimeCount,
+				limits.MaxCPU.String(),
+				limits.MaxMemory.String()),
+		)
+		return nil
+	}
+	if mode == NamespaceGuardrailModeObserve {
+		status.SetCondition(
+			xtrinode,
+			status.ConditionTypeGuardrailsReady,
+			metav1.ConditionTrue,
+			"GuardrailsObserved",
+			fmt.Sprintf("Namespace guardrail recommendation observed only (runtimes: %d, CPU: %s, Memory: %s)", limits.RuntimeCount, limits.MaxCPU.String(), limits.MaxMemory.String()),
+		)
+		return nil
+	}
+
+	if mode == NamespaceGuardrailModeManaged {
+		if err := r.ensureNamespaceWithLabels(ctx, xtrinode, log); err != nil {
+			return err
+		}
+	} else if err := r.ensureNamespace(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: xtrinode.Namespace}}, log); err != nil {
 		return err
 	}
 
-	if err := r.ensureResourceQuota(ctx, xtrinode, limits.MaxCPU, limits.MaxMemory, log); err != nil {
+	if err := r.ensureResourceQuota(ctx, xtrinode, limits.MaxCPU, limits.MaxMemory, mode, log); err != nil {
 		return err
 	}
 	r.EventRecorder.Normalf(
@@ -104,13 +151,19 @@ func (r *XTrinodeReconciler) ensureNamespaceGuardrails(ctx context.Context, xtri
 		limits.MaxMemory.String(),
 	)
 
-	if err := r.ensureLimitRange(ctx, xtrinode, limits.WorkerCPURequest, limits.WorkerMemoryRequest, limits.WorkerCPULimit, limits.WorkerMemoryLimit, log); err != nil {
+	if err := r.ensureLimitRange(ctx, xtrinode, limits.WorkerCPURequest, limits.WorkerMemoryRequest, limits.WorkerCPULimit, limits.WorkerMemoryLimit, mode, log); err != nil {
 		return err
 	}
 	r.EventRecorder.Normal(xtrinode, events.ReasonLimitRangeApplied, "Namespace LimitRange applied for container resource defaults")
 	r.EventRecorder.Normal(xtrinode, events.ReasonNamespaceGuardrailsApplied, "Namespace guardrails applied successfully")
 
-	status.SetCondition(xtrinode, status.ConditionTypeGuardrailsReady, metav1.ConditionTrue, "GuardrailsApplied", "Namespace guardrails applied successfully")
+	reason := "GuardrailsApplied"
+	message := fmt.Sprintf("Namespace guardrails applied successfully (ResourceQuota: %s, LimitRange: %s)", r.namespaceResourceQuotaName(), r.namespaceLimitRangeName())
+	if mode == NamespaceGuardrailModeCreateOnly {
+		reason = "GuardrailsCreateOnly"
+		message = fmt.Sprintf("Namespace guardrails created when missing; existing objects were not force-owned (ResourceQuota: %s, LimitRange: %s)", r.namespaceResourceQuotaName(), r.namespaceLimitRangeName())
+	}
+	status.SetCondition(xtrinode, status.ConditionTypeGuardrailsReady, metav1.ConditionTrue, reason, message)
 	return nil
 }
 
@@ -159,8 +212,8 @@ func (r *XTrinodeReconciler) calculateNamespaceGuardrailLimits(ctx context.Conte
 }
 
 func shapeQuotaLimits(xtrinode *analyticsv1.XTrinode, shape *runtimeshape.ResolvedRuntimeShape) (maxCPU, maxMemory resource.Quantity) {
-	coordinatorQuotaPods := int32(1) + rolloutSurgeReplicas(xtrinode, "coordinator", 1)
-	workerQuotaPods := shape.QuotaWorkers + rolloutSurgeReplicas(xtrinode, "worker", shape.QuotaWorkers)
+	coordinatorQuotaPods := int32(1) + rolloutSurgeReplicas(xtrinode, 1)
+	workerQuotaPods := shape.QuotaWorkers + rolloutSurgeReplicas(xtrinode, shape.QuotaWorkers)
 
 	maxCPU = resourceFromList(shape.Coordinator.Limits, corev1.ResourceCPU)
 	maxCPU.SetMilli(int64(coordinatorQuotaPods) * maxCPU.MilliValue())
@@ -178,11 +231,11 @@ func shapeQuotaLimits(xtrinode *analyticsv1.XTrinode, shape *runtimeshape.Resolv
 	return maxCPU, maxMemory
 }
 
-func rolloutSurgeReplicas(xtrinode *analyticsv1.XTrinode, role string, replicas int32) int32 {
+func rolloutSurgeReplicas(xtrinode *analyticsv1.XTrinode, replicas int32) int32 {
 	if replicas <= 0 {
 		return 0
 	}
-	maxSurge, hasSurge := rolloutMaxSurge(xtrinode, role)
+	maxSurge, hasSurge := rolloutMaxSurge(xtrinode)
 	if !hasSurge {
 		return 0
 	}
@@ -196,7 +249,7 @@ func rolloutSurgeReplicas(xtrinode *analyticsv1.XTrinode, role string, replicas 
 	return int32(value)
 }
 
-func rolloutMaxSurge(xtrinode *analyticsv1.XTrinode, role string) (*intstr.IntOrString, bool) {
+func rolloutMaxSurge(xtrinode *analyticsv1.XTrinode) (*intstr.IntOrString, bool) {
 	maxSurge := intstr.FromString("25%")
 	hasSurge := true
 
@@ -205,63 +258,7 @@ func rolloutMaxSurge(xtrinode *analyticsv1.XTrinode, role string) (*intstr.IntOr
 			maxSurge = *configured
 		}
 	}
-
-	valuesOverlay := xtrinode.Spec.GetValuesOverlayMap()
-	roleConfig, ok := valuesOverlay[role].(map[string]interface{})
-	if !ok {
-		return &maxSurge, hasSurge
-	}
-	deploymentConfig, ok := roleConfig["deployment"].(map[string]interface{})
-	if !ok {
-		return &maxSurge, hasSurge
-	}
-	strategyConfig, ok := deploymentConfig["strategy"].(map[string]interface{})
-	if !ok {
-		return &maxSurge, hasSurge
-	}
-	if strategyType, hasType := strategyConfig["type"].(string); hasType && strings.EqualFold(strategyType, string(appsv1.RecreateDeploymentStrategyType)) {
-		return nil, false
-	}
-	rollingUpdate, ok := strategyConfig["rollingUpdate"].(map[string]interface{})
-	if !ok {
-		return &maxSurge, hasSurge
-	}
-	if configured, ok := intOrStringFromOverlay(rollingUpdate["maxSurge"]); ok {
-		maxSurge = configured
-	}
 	return &maxSurge, hasSurge
-}
-
-func intOrStringFromOverlay(value interface{}) (intstr.IntOrString, bool) {
-	switch typed := value.(type) {
-	case nil:
-		return intstr.IntOrString{}, false
-	case int:
-		return intstr.FromInt(typed), true
-	case int32:
-		return intstr.FromInt32(typed), true
-	case int64:
-		if typed < 0 || typed > math.MaxInt32 {
-			return intstr.IntOrString{}, false
-		}
-		return intstr.FromInt32(int32(typed)), true
-	case float64:
-		if typed < 0 || typed > math.MaxInt32 || typed != math.Trunc(typed) {
-			return intstr.IntOrString{}, false
-		}
-		return intstr.FromInt32(int32(typed)), true
-	case string:
-		trimmed := strings.TrimSpace(typed)
-		if trimmed == "" {
-			return intstr.IntOrString{}, false
-		}
-		if parsed, err := strconv.ParseInt(trimmed, 10, 32); err == nil {
-			return intstr.FromInt32(int32(parsed)), true
-		}
-		return intstr.Parse(trimmed), true
-	default:
-		return intstr.IntOrString{}, false
-	}
 }
 
 func resourceFromList(list corev1.ResourceList, name corev1.ResourceName) resource.Quantity {
@@ -332,9 +329,48 @@ func (r *XTrinodeReconciler) ensureNamespaceWithLabels(ctx context.Context, xtri
 	return nil
 }
 
+func (r *XTrinodeReconciler) namespaceGuardrailMode() string {
+	switch strings.ToLower(strings.TrimSpace(r.NamespaceGuardrailMode)) {
+	case "", NamespaceGuardrailModeManaged:
+		return NamespaceGuardrailModeManaged
+	case "createonly", "create-only":
+		return NamespaceGuardrailModeCreateOnly
+	case NamespaceGuardrailModeObserve:
+		return NamespaceGuardrailModeObserve
+	case NamespaceGuardrailModeDisabled:
+		return NamespaceGuardrailModeDisabled
+	default:
+		return NamespaceGuardrailModeManaged
+	}
+}
+
+func (r *XTrinodeReconciler) namespaceResourceQuotaName() string {
+	name := strings.TrimSpace(r.NamespaceResourceQuotaName)
+	if name == "" {
+		return DefaultNamespaceResourceQuotaName
+	}
+	return name
+}
+
+func (r *XTrinodeReconciler) namespaceLimitRangeName() string {
+	name := strings.TrimSpace(r.NamespaceLimitRangeName)
+	if name == "" {
+		return DefaultNamespaceLimitRangeName
+	}
+	return name
+}
+
 // ensureResourceQuota creates or updates ResourceQuota for the namespace
-func (r *XTrinodeReconciler) ensureResourceQuota(ctx context.Context, xtrinode *analyticsv1.XTrinode, maxCPU, maxMemory resource.Quantity, log logr.Logger) error {
-	resourceQuota := buildNamespaceResourceQuota(xtrinode.Namespace, maxCPU, maxMemory)
+func (r *XTrinodeReconciler) ensureResourceQuota(ctx context.Context, xtrinode *analyticsv1.XTrinode, maxCPU, maxMemory resource.Quantity, mode string, log logr.Logger) error {
+	resourceQuota := r.buildNamespaceResourceQuota(xtrinode.Namespace, maxCPU, maxMemory)
+	if mode == NamespaceGuardrailModeCreateOnly {
+		if created, err := r.createGuardrailObjectIfMissing(ctx, resourceQuota); err != nil {
+			return fmt.Errorf("failed to create ResourceQuota: %w", err)
+		} else if !created {
+			log.Info("Namespace ResourceQuota already exists; createOnly mode will not force ownership", "namespace", xtrinode.Namespace, "name", resourceQuota.Name)
+		}
+		return nil
+	}
 	if err := serverapply.Object(ctx, r.Client, r.Scheme, resourceQuota, "xtrinode-operator", true); err != nil {
 		return fmt.Errorf("failed to create/update ResourceQuota: %w", err)
 	}
@@ -343,8 +379,16 @@ func (r *XTrinodeReconciler) ensureResourceQuota(ctx context.Context, xtrinode *
 }
 
 // ensureLimitRange creates or updates LimitRange for the namespace
-func (r *XTrinodeReconciler) ensureLimitRange(ctx context.Context, xtrinode *analyticsv1.XTrinode, workerCPUReq, workerMemReq, workerCPULim, workerMemLim resource.Quantity, log logr.Logger) error {
-	limitRange := buildNamespaceLimitRange(xtrinode.Namespace, workerCPUReq, workerMemReq, workerCPULim, workerMemLim)
+func (r *XTrinodeReconciler) ensureLimitRange(ctx context.Context, xtrinode *analyticsv1.XTrinode, workerCPUReq, workerMemReq, workerCPULim, workerMemLim resource.Quantity, mode string, log logr.Logger) error {
+	limitRange := r.buildNamespaceLimitRange(xtrinode.Namespace, workerCPUReq, workerMemReq, workerCPULim, workerMemLim)
+	if mode == NamespaceGuardrailModeCreateOnly {
+		if created, err := r.createGuardrailObjectIfMissing(ctx, limitRange); err != nil {
+			return fmt.Errorf("failed to create LimitRange: %w", err)
+		} else if !created {
+			log.Info("Namespace LimitRange already exists; createOnly mode will not force ownership", "namespace", xtrinode.Namespace, "name", limitRange.Name)
+		}
+		return nil
+	}
 	if err := serverapply.Object(ctx, r.Client, r.Scheme, limitRange, "xtrinode-operator", true); err != nil {
 		return fmt.Errorf("failed to create/update LimitRange: %w", err)
 	}
@@ -352,10 +396,56 @@ func (r *XTrinodeReconciler) ensureLimitRange(ctx context.Context, xtrinode *ana
 	return nil
 }
 
+func (r *XTrinodeReconciler) createGuardrailObjectIfMissing(ctx context.Context, obj client.Object) (bool, error) {
+	existing, ok := obj.DeepCopyObject().(client.Object)
+	if !ok {
+		return false, fmt.Errorf("guardrail object %T does not implement client.Object", obj)
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return false, err
+		}
+		return true, r.Create(ctx, obj)
+	}
+	return false, nil
+}
+
+func (r *XTrinodeReconciler) shouldDeleteGuardrailObject(ctx context.Context, obj client.Object, mode string) (bool, error) {
+	if mode == NamespaceGuardrailModeManaged {
+		return true, nil
+	}
+	existing, ok := obj.DeepCopyObject().(client.Object)
+	if !ok {
+		return false, fmt.Errorf("guardrail object %T does not implement client.Object", obj)
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return isXTrinodeNamespaceGuardrail(existing), nil
+}
+
+func isXTrinodeNamespaceGuardrail(obj client.Object) bool {
+	labels := obj.GetLabels()
+	return labels[managedByLabel] == managedByXTrinodeOperator &&
+		labels[config.ManagedLabel] == "true" &&
+		labels[guardrailScopeLabel] == guardrailScopeNamespace
+}
+
 func buildNamespaceResourceQuota(namespace string, maxCPU, maxMemory resource.Quantity) *corev1.ResourceQuota {
+	return buildNamespaceResourceQuotaWithName(DefaultNamespaceResourceQuotaName, namespace, maxCPU, maxMemory)
+}
+
+func (r *XTrinodeReconciler) buildNamespaceResourceQuota(namespace string, maxCPU, maxMemory resource.Quantity) *corev1.ResourceQuota {
+	return buildNamespaceResourceQuotaWithName(r.namespaceResourceQuotaName(), namespace, maxCPU, maxMemory)
+}
+
+func buildNamespaceResourceQuotaWithName(name, namespace string, maxCPU, maxMemory resource.Quantity) *corev1.ResourceQuota {
 	return &corev1.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespaceResourceQuotaName,
+			Name:      name,
 			Namespace: namespace,
 			Labels:    namespaceGuardrailLabels(),
 		},
@@ -369,9 +459,17 @@ func buildNamespaceResourceQuota(namespace string, maxCPU, maxMemory resource.Qu
 }
 
 func buildNamespaceLimitRange(namespace string, workerCPUReq, workerMemReq, workerCPULim, workerMemLim resource.Quantity) *corev1.LimitRange {
+	return buildNamespaceLimitRangeWithName(DefaultNamespaceLimitRangeName, namespace, workerCPUReq, workerMemReq, workerCPULim, workerMemLim)
+}
+
+func (r *XTrinodeReconciler) buildNamespaceLimitRange(namespace string, workerCPUReq, workerMemReq, workerCPULim, workerMemLim resource.Quantity) *corev1.LimitRange {
+	return buildNamespaceLimitRangeWithName(r.namespaceLimitRangeName(), namespace, workerCPUReq, workerMemReq, workerCPULim, workerMemLim)
+}
+
+func buildNamespaceLimitRangeWithName(name, namespace string, workerCPUReq, workerMemReq, workerCPULim, workerMemLim resource.Quantity) *corev1.LimitRange {
 	return &corev1.LimitRange{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespaceLimitRangeName,
+			Name:      name,
 			Namespace: namespace,
 			Labels:    namespaceGuardrailLabels(),
 		},

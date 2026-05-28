@@ -42,11 +42,18 @@ const (
 	ReasonKEDAScaled  = "KEDAScaled"
 
 	// Node pool events
-	ReasonNodePoolProvisioning    = "NodePoolProvisioning"
-	ReasonNodePoolProvisioned     = "NodePoolProvisioned"
-	ReasonNodePoolProvisionFailed = "NodePoolProvisionFailed"
-	ReasonNodePoolReady           = "NodePoolReady"
-	ReasonNodePoolDeleted         = "NodePoolDeleted"
+	ReasonNodePoolProvisioning       = "NodePoolProvisioning"
+	ReasonNodePoolProvisioned        = "NodePoolProvisioned"
+	ReasonNodePoolProvisionFailed    = "NodePoolProvisionFailed"
+	ReasonNodePoolReady              = "NodePoolReady"
+	ReasonNodePoolDeletionStarted    = "NodePoolDeletionStarted"
+	ReasonNodePoolDeleted            = "NodePoolDeleted"
+	ReasonNodePoolDeleteFailed       = "NodePoolDeleteFailed"
+	ReasonNodePoolRetained           = "NodePoolRetained"
+	ReasonNodePoolRetainFailed       = "NodePoolRetainFailed"
+	ReasonNodePoolScaleToZeroStarted = "NodePoolScaleToZeroStarted"
+	ReasonNodePoolScaledToZero       = "NodePoolScaledToZero"
+	ReasonNodePoolScaleToZeroFailed  = "NodePoolScaleToZeroFailed"
 
 	// Gateway events
 	ReasonGatewayRouteRegistered   = "GatewayRouteRegistered"

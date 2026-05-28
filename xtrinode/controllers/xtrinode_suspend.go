@@ -75,6 +75,13 @@ func (r *XTrinodeReconciler) reconcileSuspend(ctx context.Context, xtrinode *ana
 		}
 	}
 
+	// Publish PAUSED before drain checks so new queries stop selecting this backend
+	// while existing queries are allowed to finish.
+	if err := r.syncSuspendedGatewayRoute(ctx, xtrinode); err != nil {
+		log.Error(err, "failed to sync suspended gateway route")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+	}
+
 	// Check if queries are running before touching deployments.
 	safeToSuspend, err := r.GracefulShutdownService.CheckQueriesBeforeScaleDown(ctx, xtrinode, log)
 	if err != nil {

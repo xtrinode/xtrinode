@@ -86,7 +86,7 @@ func (r *XTrinodeReconciler) SetupWithManager(mgr ctrl.Manager, maxConcurrentRec
 				),
 			),
 		).
-		// Watch external ConfigMaps referenced by runtime mounts or envFrom. These are not
+		// Watch external ConfigMaps referenced by runtime mounts or typed envFrom. These are not
 		// owned by the operator, but their content is part of the effective pod runtime.
 		Watches(
 			&corev1.ConfigMap{},

@@ -44,20 +44,21 @@ func (gs *GatewayService) selectBackend(route *RouteEntry) *Backend {
 		// zero or has no connectable endpoint; routing to it creates slow proxy
 		// timeouts instead of the controlled resume response.
 		gs.log.V(0).Info("No healthy backends found, retrying with non-sleeping health/breaker checks disabled (fail-open)", "route", route.RoutingGroup)
-		for _, b := range route.Backends {
+		for i := range route.Backends {
+			backend := &route.Backends[i]
 			// Still enforce state machine (critical: never route to non-RUNNING backends)
-			if b.State != "" && b.State != StateRunning {
+			if backend.State != "" && backend.State != StateRunning {
 				continue
 			}
 
 			// Still check explicit Active flag
-			if !b.Active {
+			if !backend.Active {
 				continue
 			}
 
-			if gs.healthChecker != nil && gs.healthChecker.IsSleeping(b.CoordinatorURL) {
-				if !gs.healthChecker.probeBackend(context.Background(), b.CoordinatorURL) {
-					gs.log.V(1).Info("Not fail-opening sleeping backend", "backend", b.CoordinatorURL)
+			if gs.healthChecker != nil && gs.healthChecker.IsSleeping(backend.CoordinatorURL) {
+				if !gs.healthChecker.probeBackend(context.Background(), backend.CoordinatorURL) {
+					gs.log.V(1).Info("Not fail-opening sleeping backend", "backend", backend.CoordinatorURL)
 					continue
 				}
 			}
@@ -65,7 +66,7 @@ func (gs *GatewayService) selectBackend(route *RouteEntry) *Backend {
 			// Ignore ordinary unhealthy state and circuit breaker in fail-open mode.
 			// This allows routing to backends that are temporarily marked unavailable,
 			// while preserving sleeping/scale-to-zero as a resume signal.
-			activeBackends = append(activeBackends, b)
+			activeBackends = append(activeBackends, *backend)
 		}
 	}
 
@@ -246,8 +247,8 @@ func (gs *GatewayService) selectSmallestCapacity(backends []Backend) *Backend {
 
 // hasLoadData checks if we have load data for any of the backends.
 func hasLoadData(backends []Backend, loads map[string]BackendLoad) bool {
-	for _, b := range backends {
-		load, ok := loads[b.CoordinatorURL]
+	for i := range backends {
+		load, ok := loads[backends[i].CoordinatorURL]
 		if ok && load.RunningQueries+load.QueuedQueries > 0 {
 			return true
 		}

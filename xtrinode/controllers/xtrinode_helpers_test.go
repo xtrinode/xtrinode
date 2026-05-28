@@ -462,7 +462,7 @@ func TestNamespaceGuardrailToXTrinodes(t *testing.T) {
 
 	quota := &corev1.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespaceResourceQuotaName,
+			Name:      DefaultNamespaceResourceQuotaName,
 			Namespace: "team-a",
 		},
 	}
@@ -485,7 +485,7 @@ func TestNamespaceGuardrailResourcePredicate(t *testing.T) {
 
 	quota := &corev1.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:       namespaceResourceQuotaName,
+			Name:       DefaultNamespaceResourceQuotaName,
 			Namespace:  "team-a",
 			Generation: 1,
 		},
@@ -516,7 +516,13 @@ func TestNamespaceGuardrailResourcePredicate(t *testing.T) {
 	assert.True(t, isNamespaceResourceQuota(quota))
 	assert.False(t, isNamespaceResourceQuota(otherQuota))
 	assert.True(t, isNamespaceLimitRange(&corev1.LimitRange{
-		ObjectMeta: metav1.ObjectMeta{Name: namespaceLimitRangeName},
+		ObjectMeta: metav1.ObjectMeta{Name: DefaultNamespaceLimitRangeName},
+	}))
+	assert.True(t, isNamespaceResourceQuota(&corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "custom-quota",
+			Labels: namespaceGuardrailLabels(),
+		},
 	}))
 }
 
@@ -845,7 +851,7 @@ func TestSecretToXTrinodes(t *testing.T) {
 
 	requests := secretToXTrinodes(cli, context.Background(), secret, ctrl.Log)
 
-	require.Len(t, requests, 11)
+	require.Len(t, requests, 10)
 	names := make(map[string]bool)
 	for _, req := range requests {
 		names[req.Name] = true
@@ -855,7 +861,7 @@ func TestSecretToXTrinodes(t *testing.T) {
 	assert.True(t, names["xtrinode-4"])
 	assert.True(t, names["xtrinode-5"])
 	assert.True(t, names["xtrinode-6"])
-	assert.True(t, names["xtrinode-7"])
+	assert.False(t, names["xtrinode-7"])
 	assert.True(t, names["xtrinode-8"])
 	assert.True(t, names["xtrinode-9"])
 	assert.True(t, names["xtrinode-10"])
@@ -1024,7 +1030,7 @@ func TestExternalConfigMapToXTrinodes(t *testing.T) {
 
 	requests := externalConfigMapToXTrinodes(cli, context.Background(), configMap, ctrl.Log)
 
-	require.Len(t, requests, 10)
+	require.Len(t, requests, 9)
 	names := make(map[string]bool)
 	for _, req := range requests {
 		names[req.Name] = true
@@ -1034,7 +1040,7 @@ func TestExternalConfigMapToXTrinodes(t *testing.T) {
 	assert.True(t, names["custom-config"])
 	assert.True(t, names["global-overlay"])
 	assert.True(t, names["role-overlay"])
-	assert.True(t, names["envfrom-overlay"])
+	assert.False(t, names["envfrom-overlay"])
 	assert.True(t, names["additional-volume"])
 	assert.True(t, names["jmx-external-config"])
 	assert.True(t, names["helm-env-config"])

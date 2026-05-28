@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -258,10 +259,42 @@ func (r *XTrinodeReconciler) cleanupResources(ctx context.Context, xtrinode *ana
 	// Trino resources (Deployments, Services, ConfigMaps, ServiceAccount)
 	r.cleanupTrinoResources(ctx, xtrinode, log)
 
-	// Node pool (has owner reference, but explicit cleanup ensures it's removed)
-	if err := r.NodePoolAdapter.DeleteNodePool(ctx, xtrinode); err != nil {
-		log.Error(err, "failed to delete node pool")
-		// Continue with cleanup even if node pool deletion fails
+	// Node pool (has owner reference, but explicit cleanup ensures it follows the configured policy)
+	if xtrinode.Spec.NodePool != nil {
+		switch nodePoolDeletionPolicy(xtrinode.Spec.NodePool) {
+		case analyticsv1.NodePoolDeletionPolicyRetain:
+			log.Info("Retaining node pool during XTrinode cleanup", "xtrinode", xtrinode.Name, "nodePool", xtrinode.Spec.NodePool.Name)
+			if err := r.NodePoolAdapter.RetainNodePool(ctx, xtrinode); err != nil {
+				log.Error(err, "failed to retain node pool")
+				r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolRetainFailed, "Failed to retain node pool: %v", err)
+				criticalErr = errors.Join(criticalErr, fmt.Errorf("failed to retain node pool: %w", err))
+			} else {
+				r.EventRecorder.Normal(xtrinode, events.ReasonNodePoolRetained, "Node pool retained by spec.nodePool.deletionPolicy=Retain")
+			}
+		case analyticsv1.NodePoolDeletionPolicyScaleToZero:
+			log.Info("Scaling node pool to zero during XTrinode cleanup", "xtrinode", xtrinode.Name, "nodePool", xtrinode.Spec.NodePool.Name)
+			r.EventRecorder.Normal(xtrinode, events.ReasonNodePoolScaleToZeroStarted, "Scaling node pool to zero by spec.nodePool.deletionPolicy=ScaleToZero")
+			if err := r.NodePoolAdapter.ScaleNodePoolMinNodes(ctx, xtrinode, 0); err != nil {
+				log.Error(err, "failed to scale node pool to zero")
+				r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolScaleToZeroFailed, "Failed to scale node pool to zero: %v", err)
+				criticalErr = errors.Join(criticalErr, fmt.Errorf("failed to scale node pool to zero: %w", err))
+			} else if err := r.NodePoolAdapter.RetainNodePool(ctx, xtrinode); err != nil {
+				log.Error(err, "failed to retain scaled-to-zero node pool")
+				r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolRetainFailed, "Failed to retain scaled-to-zero node pool: %v", err)
+				criticalErr = errors.Join(criticalErr, fmt.Errorf("failed to retain scaled-to-zero node pool: %w", err))
+			} else {
+				r.EventRecorder.Normal(xtrinode, events.ReasonNodePoolScaledToZero, "Node pool scaled to zero and retained by spec.nodePool.deletionPolicy=ScaleToZero")
+			}
+		default:
+			r.EventRecorder.Normal(xtrinode, events.ReasonNodePoolDeletionStarted, "Deleting node pool by spec.nodePool.deletionPolicy=Delete")
+			if err := r.NodePoolAdapter.DeleteNodePool(ctx, xtrinode); err != nil {
+				log.Error(err, "failed to delete node pool")
+				r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolDeleteFailed, "Failed to delete node pool: %v", err)
+				// Continue with cleanup even if node pool deletion fails
+			} else {
+				r.EventRecorder.Normal(xtrinode, events.ReasonNodePoolDeleted, "Node pool deletion completed")
+			}
+		}
 	}
 
 	// Note: Catalog ConfigMaps are managed by XTrinodeCatalog controller via owner references

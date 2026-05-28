@@ -199,6 +199,88 @@ func TestFinalize_QueryAwareDrainCompletesBeforeFallbackWindow(t *testing.T) {
 	assert.NotContains(t, updated.Finalizers, FinalizerName)
 }
 
+func TestCleanupResourcesRetainsNodePoolWhenPolicyRetain(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime", Namespace: "team-a"},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			NodePool: &analyticsv1.NodePoolSpec{
+				Name:           "runtime-pool",
+				Provider:       "gcp",
+				DeletionPolicy: analyticsv1.NodePoolDeletionPolicyRetain,
+				GCP:            &analyticsv1.GCPNodePoolSpec{MachineType: "n1-standard-8"},
+			},
+		},
+	}
+	reconciler := newTestReconciler(newTestClient(scheme, xtrinode), scheme)
+	reconciler.GatewayService = &gatewayServiceTestDouble{}
+	nodePoolAdapter := &recordingNodePoolAdapter{}
+	reconciler.NodePoolAdapter = nodePoolAdapter
+
+	err := reconciler.cleanupResources(ctx, xtrinode, newTestLogger())
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, nodePoolAdapter.deleteCalls)
+	assert.Equal(t, 1, nodePoolAdapter.retainCalls)
+}
+
+func TestCleanupResourcesDeletesNodePoolWhenPolicyDelete(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime", Namespace: "team-a"},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			NodePool: &analyticsv1.NodePoolSpec{
+				Name:           "runtime-pool",
+				Provider:       "gcp",
+				DeletionPolicy: analyticsv1.NodePoolDeletionPolicyDelete,
+				GCP:            &analyticsv1.GCPNodePoolSpec{MachineType: "n1-standard-8"},
+			},
+		},
+	}
+	reconciler := newTestReconciler(newTestClient(scheme, xtrinode), scheme)
+	reconciler.GatewayService = &gatewayServiceTestDouble{}
+	nodePoolAdapter := &recordingNodePoolAdapter{}
+	reconciler.NodePoolAdapter = nodePoolAdapter
+
+	err := reconciler.cleanupResources(ctx, xtrinode, newTestLogger())
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, nodePoolAdapter.deleteCalls)
+}
+
+func TestCleanupResourcesScalesNodePoolToZeroWhenPolicyScaleToZero(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime", Namespace: "team-a"},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			NodePool: &analyticsv1.NodePoolSpec{
+				Name:           "runtime-pool",
+				Provider:       "gcp",
+				DeletionPolicy: analyticsv1.NodePoolDeletionPolicyScaleToZero,
+				GCP:            &analyticsv1.GCPNodePoolSpec{MachineType: "n1-standard-8"},
+			},
+		},
+	}
+	reconciler := newTestReconciler(newTestClient(scheme, xtrinode), scheme)
+	reconciler.GatewayService = &gatewayServiceTestDouble{}
+	nodePoolAdapter := &recordingNodePoolAdapter{}
+	reconciler.NodePoolAdapter = nodePoolAdapter
+
+	err := reconciler.cleanupResources(ctx, xtrinode, newTestLogger())
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, nodePoolAdapter.deleteCalls)
+	assert.Equal(t, 1, nodePoolAdapter.scaleCalls)
+	assert.Equal(t, []int32{0}, nodePoolAdapter.scaleValues)
+	assert.Equal(t, 1, nodePoolAdapter.retainCalls)
+}
+
 func TestFinalize_QueryAwareDrainWaitsForActiveQueries(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()

@@ -8,6 +8,7 @@ import (
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/runtimeshape"
+	"github.com/xtrinode/xtrinode/internal/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -90,7 +91,7 @@ func TestCalculateNamespaceGuardrailLimitsUsesTypedResourcesAndFixedWorkers(t *t
 	requireQuantityEqual(t, resource.MustParse("32Gi"), limits.WorkerMemoryLimit)
 }
 
-func TestCalculateNamespaceGuardrailLimitsHonorsRecreateStrategyWithoutSurge(t *testing.T) {
+func TestCalculateNamespaceGuardrailLimitsIgnoresValuesOverlayRecreateStrategy(t *testing.T) {
 	current := testNamespaceGuardrailXTrinode("runtime-a", "team-a", "s", nil)
 	maxWorkers := int32(3)
 	current.Spec.MaxWorkers = &maxWorkers
@@ -137,8 +138,8 @@ func TestCalculateNamespaceGuardrailLimitsHonorsRecreateStrategyWithoutSurge(t *
 	limits, err := reconciler.calculateNamespaceGuardrailLimits(context.Background(), current)
 
 	require.NoError(t, err)
-	requireQuantityEqual(t, resource.MustParse("25"), limits.MaxCPU)
-	requireQuantityEqual(t, resource.MustParse("98Gi"), limits.MaxMemory)
+	requireQuantityEqual(t, resource.MustParse("34"), limits.MaxCPU)
+	requireQuantityEqual(t, resource.MustParse("132Gi"), limits.MaxMemory)
 }
 
 func TestCalculateNamespaceGuardrailLimitsSkipsDeletingXTrinodes(t *testing.T) {
@@ -186,7 +187,7 @@ func TestBuildNamespaceGuardrailObjectsAreNamespaceScoped(t *testing.T) {
 	maxMemory := resource.MustParse("912Gi")
 	quota := buildNamespaceResourceQuota("team-a", maxCPU, maxMemory)
 
-	require.Equal(t, namespaceResourceQuotaName, quota.Name)
+	require.Equal(t, DefaultNamespaceResourceQuotaName, quota.Name)
 	require.Equal(t, "team-a", quota.Namespace)
 	require.Empty(t, quota.OwnerReferences)
 	require.Equal(t, managedByXTrinodeOperator, quota.Labels[managedByLabel])
@@ -204,7 +205,7 @@ func TestBuildNamespaceGuardrailObjectsAreNamespaceScoped(t *testing.T) {
 		resource.MustParse("64Gi"),
 	)
 
-	require.Equal(t, namespaceLimitRangeName, limitRange.Name)
+	require.Equal(t, DefaultNamespaceLimitRangeName, limitRange.Name)
 	require.Equal(t, "team-a", limitRange.Namespace)
 	require.Empty(t, limitRange.OwnerReferences)
 	require.NotContains(t, limitRange.Labels, config.RuntimeLabel)
@@ -217,6 +218,24 @@ func TestBuildNamespaceGuardrailObjectsAreNamespaceScoped(t *testing.T) {
 	requireQuantityEqual(t, resource.MustParse("64Gi"), item.Default[corev1.ResourceMemory])
 	requireQuantityEqual(t, resource.MustParse("16"), item.Max[corev1.ResourceCPU])
 	requireQuantityEqual(t, resource.MustParse("64Gi"), item.Max[corev1.ResourceMemory])
+}
+
+func TestBuildNamespaceGuardrailObjectsUseConfiguredNames(t *testing.T) {
+	reconciler := newNamespaceGuardrailReconciler(t)
+	reconciler.NamespaceResourceQuotaName = "platform-runtime-quota"
+	reconciler.NamespaceLimitRangeName = "platform-runtime-limits"
+
+	quota := reconciler.buildNamespaceResourceQuota("team-a", resource.MustParse("10"), resource.MustParse("40Gi"))
+	limitRange := reconciler.buildNamespaceLimitRange(
+		"team-a",
+		resource.MustParse("1"),
+		resource.MustParse("4Gi"),
+		resource.MustParse("2"),
+		resource.MustParse("8Gi"),
+	)
+
+	require.Equal(t, "platform-runtime-quota", quota.Name)
+	require.Equal(t, "platform-runtime-limits", limitRange.Name)
 }
 
 func TestReconcileNamespaceGuardrailsAfterDeleteRemovesGuardrailsWhenLastRuntime(t *testing.T) {
@@ -241,9 +260,39 @@ func TestReconcileNamespaceGuardrailsAfterDeleteRemovesGuardrailsWhenLastRuntime
 func TestDeleteNamespaceGuardrailResourcesIsIdempotent(t *testing.T) {
 	reconciler := newNamespaceGuardrailReconciler(t)
 
-	err := reconciler.deleteNamespaceGuardrailResources(context.Background(), "team-a", newTestLogger())
+	err := reconciler.deleteNamespaceGuardrailResources(context.Background(), "team-a", NamespaceGuardrailModeManaged, newTestLogger())
 
 	require.NoError(t, err)
+}
+
+func TestEnsureNamespaceGuardrailsObserveModeDoesNotCreateGuardrailObjects(t *testing.T) {
+	xtrinode := testNamespaceGuardrailXTrinode("runtime-a", "team-a", "s", nil)
+	reconciler := newNamespaceGuardrailReconciler(t, xtrinode)
+	reconciler.NamespaceGuardrailMode = NamespaceGuardrailModeObserve
+
+	err := reconciler.ensureNamespaceGuardrails(context.Background(), xtrinode)
+
+	require.NoError(t, err)
+	condition := status.GetCondition(xtrinode, status.ConditionTypeGuardrailsReady)
+	require.NotNil(t, condition)
+	require.Equal(t, metav1.ConditionTrue, condition.Status)
+	require.Equal(t, "GuardrailsObserved", condition.Reason)
+	requireMissing(t, reconciler, &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: DefaultNamespaceResourceQuotaName, Namespace: "team-a"}})
+	requireMissing(t, reconciler, &corev1.LimitRange{ObjectMeta: metav1.ObjectMeta{Name: DefaultNamespaceLimitRangeName, Namespace: "team-a"}})
+}
+
+func TestDeleteNamespaceGuardrailsCreateOnlyRetainsUnownedObjects(t *testing.T) {
+	xtrinode := markNamespaceGuardrailXTrinodeDeleting(testNamespaceGuardrailXTrinode("runtime-a", "team-a", "s", nil))
+	quota := &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: DefaultNamespaceResourceQuotaName, Namespace: "team-a"}}
+	limitRange := &corev1.LimitRange{ObjectMeta: metav1.ObjectMeta{Name: DefaultNamespaceLimitRangeName, Namespace: "team-a"}}
+	reconciler := newNamespaceGuardrailReconciler(t, xtrinode, quota, limitRange)
+	reconciler.NamespaceGuardrailMode = NamespaceGuardrailModeCreateOnly
+
+	err := reconciler.reconcileNamespaceGuardrailsAfterDelete(context.Background(), xtrinode, newTestLogger())
+
+	require.NoError(t, err)
+	requirePresent(t, reconciler, quota)
+	requirePresent(t, reconciler, limitRange)
 }
 
 func newNamespaceGuardrailReconciler(t *testing.T, objects ...client.Object) *XTrinodeReconciler {
@@ -295,4 +344,16 @@ func requireDeleted(t *testing.T, reconciler *XTrinodeReconciler, object client.
 	t.Helper()
 	err := reconciler.Get(context.Background(), client.ObjectKeyFromObject(object), object)
 	require.Error(t, err)
+}
+
+func requireMissing(t *testing.T, reconciler *XTrinodeReconciler, object client.Object) {
+	t.Helper()
+	err := reconciler.Get(context.Background(), client.ObjectKeyFromObject(object), object)
+	require.Error(t, err)
+}
+
+func requirePresent(t *testing.T, reconciler *XTrinodeReconciler, object client.Object) {
+	t.Helper()
+	err := reconciler.Get(context.Background(), client.ObjectKeyFromObject(object), object)
+	require.NoError(t, err)
 }

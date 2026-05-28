@@ -160,13 +160,3 @@ func catalogSelectionLabels(catalog *analyticsv1.XTrinodeCatalog) labels.Set {
 	}
 	return labels.Set(catalog.Spec.Labels)
 }
-
-// DeleteCatalogConfigMaps is a no-op since XTrinodeCatalog controller manages ConfigMaps
-// XTrinodeCatalog CRDs own their ConfigMaps via owner references
-// This function is kept for API compatibility but does nothing
-func DeleteCatalogConfigMaps(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XTrinode, log logr.Logger) error {
-	// XTrinodeCatalog controller manages ConfigMaps via owner references
-	// When XTrinodeCatalog is deleted, ConfigMap is automatically deleted
-	log.V(1).Info("Catalog ConfigMaps are managed by XTrinodeCatalog controller - skipping deletion")
-	return nil
-}

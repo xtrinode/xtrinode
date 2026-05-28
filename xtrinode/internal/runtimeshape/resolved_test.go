@@ -1,6 +1,7 @@
 package runtimeshape
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -128,9 +129,72 @@ func TestResolveNodePoolSchedulePodsAddsPlacementSelectorAndStatus(t *testing.T)
 	require.Equal(t, "runtime-pool", shape.Placement.Coordinator.NodeSelector[config.NodePoolSchedulingLabel])
 	require.Equal(t, "runtime-pool", shape.Placement.Worker.NodeSelector[config.NodePoolSchedulingLabel])
 	status := shape.ObservedStatus()
+	require.Equal(t, analyticsv1.ObservedRuntimeShapeStatusVersion, status.Version)
 	require.Equal(t, shape.Hash, status.Hash)
 	require.True(t, status.NodePool.ProvisioningRequested)
 	require.True(t, status.NodePool.SchedulePods)
+	require.Equal(t, analyticsv1.NodePoolDeletionPolicyDelete, status.NodePool.DeletionPolicy)
+}
+
+func TestResolveExistingNodePoolPlacementExpandsProviderSelector(t *testing.T) {
+	xtrinode := runtimeShapeXTrinode("runtime", "s")
+	xtrinode.Spec.Placement = &analyticsv1.PlacementSpec{
+		ExistingNodePool: &analyticsv1.ExistingNodePoolPlacementSpec{
+			Provider: "gcp",
+			Name:     "analytics-pool",
+		},
+	}
+
+	shape, err := Resolve(xtrinode)
+
+	require.NoError(t, err)
+	require.Equal(t, "analytics-pool", shape.Placement.Coordinator.NodeSelector["cloud.google.com/gke-nodepool"])
+	require.Equal(t, "analytics-pool", shape.Placement.Worker.NodeSelector["cloud.google.com/gke-nodepool"])
+}
+
+func TestResolveExistingNodePoolPlacementRejectsSelectorConflict(t *testing.T) {
+	xtrinode := runtimeShapeXTrinode("runtime", "s")
+	xtrinode.Spec.Placement = &analyticsv1.PlacementSpec{
+		NodeSelector: map[string]string{
+			"cloud.google.com/gke-nodepool": "other-pool",
+		},
+		ExistingNodePool: &analyticsv1.ExistingNodePoolPlacementSpec{
+			Provider: "gcp",
+			Name:     "analytics-pool",
+		},
+	}
+
+	_, err := Resolve(xtrinode)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "existingNodePool")
+}
+
+func TestObservedStatusStaysCompactWithLargePlacementInput(t *testing.T) {
+	xtrinode := runtimeShapeXTrinode("runtime", "s")
+	terms := make([]corev1.NodeSelectorTerm, 0, 50)
+	for i := 0; i < 50; i++ {
+		terms = append(terms, corev1.NodeSelectorTerm{
+			MatchExpressions: []corev1.NodeSelectorRequirement{
+				{Key: "topology.example.com/zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"a", "b", "c"}},
+			},
+		})
+	}
+	xtrinode.Spec.Placement = &analyticsv1.PlacementSpec{
+		Affinity: &corev1.Affinity{
+			NodeAffinity: &corev1.NodeAffinity{
+				RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: terms},
+			},
+		},
+	}
+
+	shape, err := Resolve(xtrinode)
+	require.NoError(t, err)
+	payload, err := json.Marshal(shape.ObservedStatus())
+	require.NoError(t, err)
+
+	require.Less(t, len(payload), 2048)
+	require.NotContains(t, string(payload), "topology.example.com/zone")
 }
 
 func TestResolveNodePoolSchedulePodsRejectsConflictingSelector(t *testing.T) {

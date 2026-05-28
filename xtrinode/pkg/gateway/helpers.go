@@ -133,8 +133,9 @@ func findRouteByRoutingGroup(routes []RouteEntry, routingGroup string) (route *R
 func updateBackendInRouteWithMode(route *RouteEntry, backend *Backend, header, hostname string, defaultRoute, dedicatedRoute bool) error {
 	// Check if we're updating an existing backend
 	found := false
-	for i, b := range route.Backends {
-		if b.Name == backend.Name && b.Namespace == backend.Namespace {
+	for i := range route.Backends {
+		existing := &route.Backends[i]
+		if existing.Name == backend.Name && existing.Namespace == backend.Namespace {
 			// Updating existing backend - always allowed
 			route.Backends[i] = *backend
 			found = true

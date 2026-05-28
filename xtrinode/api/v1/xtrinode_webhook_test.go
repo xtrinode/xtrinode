@@ -474,6 +474,49 @@ func TestXTrinode_ValidateCreate_NodePoolSchedulePodsPlacement(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "rejects schedulePods with existingNodePool shortcut",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					NodePool: &NodePoolSpec{
+						Name:         "runtime-pool",
+						Provider:     "gcp",
+						SchedulePods: true,
+						GCP:          &GCPNodePoolSpec{MachineType: "n1-standard-8"},
+					},
+					Placement: &PlacementSpec{
+						ExistingNodePool: &ExistingNodePoolPlacementSpec{
+							Provider: "gcp",
+							Name:     "analytics-pool",
+						},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: "cannot combine spec.nodePool.schedulePods",
+		},
+		{
+			name: "rejects existingNodePool selector conflict",
+			xtrinode: &XTrinode{
+				ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+				Spec: XTrinodeSpec{
+					Size: "s",
+					Placement: &PlacementSpec{
+						ExistingNodePool: &ExistingNodePoolPlacementSpec{
+							Provider: "gcp",
+							Name:     "analytics-pool",
+						},
+						NodeSelector: map[string]string{
+							"cloud.google.com/gke-nodepool": "other-pool",
+						},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: "must match existingNodePool selector value",
+		},
 	}
 
 	for _, tt := range tests {
@@ -784,6 +827,28 @@ func TestValidateNodePool(t *testing.T) {
 					VMSize: "Standard_D8as_v5",
 				},
 				MaxNodes: int32Ptr(1001),
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid ScaleToZero deletionPolicy",
+			nodePool: &NodePoolSpec{
+				Provider:       "gcp",
+				DeletionPolicy: NodePoolDeletionPolicyScaleToZero,
+				GCP: &GCPNodePoolSpec{
+					MachineType: "n1-standard-8",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid deletionPolicy",
+			nodePool: &NodePoolSpec{
+				Provider:       "gcp",
+				DeletionPolicy: "DeleteOnSpecRemoval",
+				GCP: &GCPNodePoolSpec{
+					MachineType: "n1-standard-8",
+				},
 			},
 			wantErr: true,
 		},

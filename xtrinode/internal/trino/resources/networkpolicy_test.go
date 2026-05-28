@@ -51,7 +51,7 @@ func TestBuildNetworkPolicy(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			name: "network policy with NodePort service returns nil",
+			name: "network policy ignores denied NodePort overlay service type",
 			xtrinode: &analyticsv1.XTrinode{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-trino",
@@ -71,7 +71,23 @@ func TestBuildNetworkPolicy(t *testing.T) {
 					},
 				},
 			},
-			wantNil: true,
+			wantNil: false,
+			want: &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "trino-test-trino",
+					Namespace: "default",
+				},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"trino.io/network-policy-protection": "enabled",
+						},
+					},
+					PolicyTypes: []networkingv1.PolicyType{
+						networkingv1.PolicyTypeIngress,
+					},
+				},
+			},
 		},
 		{
 			name: "network policy enabled",

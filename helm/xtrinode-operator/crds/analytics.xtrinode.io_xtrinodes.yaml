@@ -2875,6 +2875,16 @@ spec:
                       REQUIRED in production - operator will error if not set and discovery fails
                       If not specified, operator will attempt discovery from ConfigMap, environment variable, or default
                     type: string
+                  deletionPolicy:
+                    description: |-
+                      DeletionPolicy controls what happens to managed provider node-pool resources
+                      when this XTrinode is deleted.
+                      Defaults to Delete when omitted.
+                    enum:
+                    - Delete
+                    - Retain
+                    - ScaleToZero
+                    type: string
                   errorRequeueInterval:
                     description: |-
                       ErrorRequeueInterval is the requeue interval when node pool provisioning fails
@@ -5153,6 +5163,27 @@ spec:
                           type: object
                         type: array
                     type: object
+                  existingNodePool:
+                    description: |-
+                      ExistingNodePool is a provider-specific convenience that expands to the
+                      provider's standard node-pool label. Raw Kubernetes placement remains the
+                      canonical low-level API.
+                    properties:
+                      name:
+                        description: Name is the provider node-pool name.
+                        type: string
+                      provider:
+                        description: Provider is the cluster provider whose node-pool
+                          label should be used.
+                        enum:
+                        - azure
+                        - aws
+                        - gcp
+                        type: string
+                    required:
+                    - name
+                    - provider
+                    type: object
                   nodeSelector:
                     additionalProperties:
                       type: string
@@ -6791,6 +6822,10 @@ spec:
                     description: NodePool summarizes node-pool provisioning and scheduling
                       binding intent.
                     properties:
+                      deletionPolicy:
+                        description: DeletionPolicy is the resolved managed node-pool
+                          deletion policy.
+                        type: string
                       name:
                         description: Name is the resolved node-pool name.
                         type: string
@@ -6812,6 +6847,10 @@ spec:
                     type: object
                   preset:
                     description: Preset is the size preset used as the base shape.
+                    type: string
+                  version:
+                    description: Version is the schema version for this compact observed
+                      shape.
                     type: string
                   worker:
                     description: Worker contains resolved worker resources.

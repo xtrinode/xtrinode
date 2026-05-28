@@ -92,6 +92,40 @@ Suspend Resume Retry Cleans Lifecycle State After Operator Interruption
     Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Be Registered
     Wait For Gateway Backend Ready
 
+Gateway Rejects New Queries During Suspend And Resume Transitions
+    TRY
+        Ensure Local Runtime Resumed
+        Clear API Server Leases
+        Wait For Gateway Backend Ready
+
+        Suspend Local Runtime Through API
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Contain Runtime With State    ${XTRINODE_NAME}    PAUSED
+        Gateway Statement Should Return Status    /tmp/xtrinode-lifecycle-suspend-transition-query.json    SELECT 1    503
+        JQ Should Match    /tmp/xtrinode-lifecycle-suspend-transition-query.json    (.error // "") | test("resum|retry|suspend|unavailable")
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    XTrinode Suspended State Should Be    false
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Be Registered
+        Wait For Gateway Backend Ready
+
+        Clear API Server Leases
+        Suspend Local Runtime Through API
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    XTrinode Suspended State Should Be    true
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Deployment Spec Replicas Should Equal    ${NAMESPACE}    ${COORDINATOR_DEPLOYMENT}    0
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Deployment Spec Replicas Should Equal    ${NAMESPACE}    ${WORKER_DEPLOYMENT}    0
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Contain Runtime With State    ${XTRINODE_NAME}    PAUSED
+
+        Gateway Statement Should Return Status    /tmp/xtrinode-lifecycle-resume-trigger-query.json    SELECT 1    503
+        JQ Should Match    /tmp/xtrinode-lifecycle-resume-trigger-query.json    .triggered == true
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Contain Runtime With State    ${XTRINODE_NAME}    RESUMING
+        Gateway Statement Should Return Status    /tmp/xtrinode-lifecycle-resuming-transition-query.json    SELECT 1    503
+        JQ Should Match    /tmp/xtrinode-lifecycle-resuming-transition-query.json    (.error // "") | test("resum|retry|unavailable")
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Be Registered
+        Wait For Gateway Backend Ready
+        Gateway Statement Should Return Status    /tmp/xtrinode-lifecycle-after-resume-query.json    SELECT 1    200
+    FINALLY
+        Ensure Local Runtime Resumed
+        Clear API Server Leases
+    END
+
 *** Keywords ***
 Setup Lifecycle Cleanup Interruption Suite
     Ensure Local XTrinode Ready

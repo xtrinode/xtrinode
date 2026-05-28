@@ -10,10 +10,14 @@ Test Teardown       Run Keyword If Test Failed    Dump Privileged Admission Debu
 ${PRIVILEGED_NAMESPACE}       team-privileged-admission
 ${TENANT_SA}                  xtrinode-e2e-tenant
 ${PLATFORM_SA}                xtrinode-e2e-platform
+${STATUS_ONLY_SA}             xtrinode-e2e-status-only
 ${TENANT_USER}                system:serviceaccount:${PRIVILEGED_NAMESPACE}:${TENANT_SA}
 ${PLATFORM_USER}              system:serviceaccount:${PRIVILEGED_NAMESPACE}:${PLATFORM_SA}
+${STATUS_ONLY_USER}           system:serviceaccount:${PRIVILEGED_NAMESPACE}:${STATUS_ONLY_SA}
 ${PLATFORM_BASE_XTRINODE}     platform-base
 ${PLATFORM_OVERLAY_XTRINODE}  platform-overlay
+${STATUS_ONLY_OVERLAY_XTRINODE}    status-only-overlay
+${VALUES_OVERLAY_POLICY_XTRINODE}  values-overlay-policy
 ${TENANT_OVERLAY_XTRINODE}    tenant-overlay
 ${TENANT_HELM_XTRINODE}       tenant-helm
 ${TENANT_HELM_POLICY_XTRINODE}    tenant-helm-policy
@@ -30,6 +34,7 @@ ${CATALOG_PLAINTEXT_PASSWORD}     plaintext-password-catalog
 ${CUSTOM_PLAINTEXT_SECRET}        plaintext-secret-catalog
 ${CATALOG_GENERATED_PROPERTY_COLLISION}    generated-property-collision
 ${CATALOG_GENERATED_SECRET_COLLISION}      generated-secret-collision
+${WEBHOOK_OUTAGE_XTRINODE}        webhook-outage-fail-closed
 
 *** Test Cases ***
 Tenant Cannot Create Privileged Overlay Fields
@@ -56,6 +61,25 @@ Platform User Can Create Privileged Overlay Fields
     Command Should Succeed    kubectl    --as=${PLATFORM_USER}    apply    -f    ${overlay_manifest}
     ${overlay}=    Kubectl Output    get    xtrinode/${PLATFORM_OVERLAY_XTRINODE}    -n    ${PRIVILEGED_NAMESPACE}    -o    jsonpath={.spec.valuesOverlay.image.tag}
     Should Be Equal    ${overlay}    ${TRINO_IMAGE_TAG}
+
+Status Permission Does Not Grant ValuesOverlay Privilege
+    ${overlay_manifest}=    Create Values Overlay Admission Manifest    ${STATUS_ONLY_OVERLAY_XTRINODE}
+    Admission Apply As User Should Fail With Message    ${STATUS_ONLY_USER}    ${overlay_manifest}    xtrinodes/valuesoverlay
+
+Platform User Cannot Create High Risk ValuesOverlay Content
+    ${policy_manifest}=    Create High Risk Values Overlay Admission Manifest    ${VALUES_OVERLAY_POLICY_XTRINODE}
+    ${result}=    Run Command Allow Failure    kubectl    --as=${PLATFORM_USER}    apply    --validate=false    -f    ${policy_manifest}
+    Should Not Be Equal As Integers    ${result.rc}    0
+    Should Contain    ${result.stdout}    spec.valuesOverlay.resources
+    Should Contain    ${result.stdout}    use spec.resources.coordinator or spec.resources.worker
+    Should Contain    ${result.stdout}    spec.valuesOverlay.nodeSelector
+    Should Contain    ${result.stdout}    use spec.placement for scheduler constraints
+    Should Contain    ${result.stdout}    sidecar containers are not allowed through valuesOverlay
+    Should Contain    ${result.stdout}    spec.valuesOverlay.envFrom
+    Should Contain    ${result.stdout}    externally exposed service types are not allowed through valuesOverlay
+    Should Contain    ${result.stdout}    privileged containers are not allowed through valuesOverlay
+    Should Contain    ${result.stdout}    added Linux capabilities are not allowed through valuesOverlay
+    Should Contain    ${result.stdout}    hostPath volumes are not allowed through valuesOverlay
 
 Platform User Cannot Create Unsupported Trino Control Modes
     ${tls_manifest}=    Create TLS Server Admission Manifest    ${TLS_UNSUPPORTED_XTRINODE}
@@ -91,6 +115,17 @@ Platform User Cannot Create Catalog Generated Property Collisions
     Admission Apply As User Should Fail With Message    ${PLATFORM_USER}    ${secret_ref_manifest}    connector.name is generated
     Admission Apply As User Should Fail With Message    ${PLATFORM_USER}    ${secret_ref_manifest}    typed connector fields
 
+Admission Webhook Outage Fails Closed For XTrinode Writes
+    ${manifest}=    Create Base Admission Manifest    ${WEBHOOK_OUTAGE_XTRINODE}
+    TRY
+        Scale Admission Webhook Operator To Zero
+        ${result}=    Run Command Allow Failure    kubectl    --as=${PLATFORM_USER}    apply    --validate=false    -f    ${manifest}
+        Should Not Be Equal As Integers    ${result.rc}    0
+        Should Match Regexp    ${result.stdout}    (?is)(failed calling webhook|no endpoints available|service unavailable|context deadline|connection refused)
+    FINALLY
+        Restore Admission Webhook Operator
+    END
+
 *** Keywords ***
 Ensure Privileged Admission Contract Prerequisites
     Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Deployment Should Be Available    ${OPERATOR_NAMESPACE}    xtrinode-operator    1
@@ -109,7 +144,7 @@ Create Privileged Admission Namespace If Missing
 
 Apply Privileged Admission RBAC
     ${manifest}=    Set Variable    /tmp/xtrinode-privileged-admission-rbac.json
-    ${json}=    Set Variable    {"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"${TENANT_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}},{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"${PLATFORM_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"xtrinode-e2e-editor","namespace":"${PRIVILEGED_NAMESPACE}"},"rules":[{"apiGroups":["analytics.xtrinode.io"],"resources":["xtrinodes","xtrinodecatalogs"],"verbs":["get","list","watch","create","update","patch","delete"]}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"xtrinode-e2e-status-updater","namespace":"${PRIVILEGED_NAMESPACE}"},"rules":[{"apiGroups":["analytics.xtrinode.io"],"resources":["xtrinodes/status"],"verbs":["get","update","patch"]}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"xtrinode-e2e-secret-reader","namespace":"${PRIVILEGED_NAMESPACE}"},"rules":[{"apiGroups":[""],"resources":["secrets"],"resourceNames":["${CATALOG_SECRET_NAME}"],"verbs":["get"]}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-tenant-editor","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-editor"},"subjects":[{"kind":"ServiceAccount","name":"${TENANT_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-platform-editor","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-editor"},"subjects":[{"kind":"ServiceAccount","name":"${PLATFORM_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-platform-status","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-status-updater"},"subjects":[{"kind":"ServiceAccount","name":"${PLATFORM_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-platform-secret-reader","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-secret-reader"},"subjects":[{"kind":"ServiceAccount","name":"${PLATFORM_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]}]}
+    ${json}=    Set Variable    {"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"${TENANT_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}},{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"${PLATFORM_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}},{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"${STATUS_ONLY_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"xtrinode-e2e-editor","namespace":"${PRIVILEGED_NAMESPACE}"},"rules":[{"apiGroups":["analytics.xtrinode.io"],"resources":["xtrinodes","xtrinodecatalogs"],"verbs":["get","list","watch","create","update","patch","delete"]}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"xtrinode-e2e-valuesoverlay-editor","namespace":"${PRIVILEGED_NAMESPACE}"},"rules":[{"apiGroups":["analytics.xtrinode.io"],"resources":["xtrinodes/valuesoverlay"],"verbs":["update"]}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"xtrinode-e2e-status-updater","namespace":"${PRIVILEGED_NAMESPACE}"},"rules":[{"apiGroups":["analytics.xtrinode.io"],"resources":["xtrinodes/status"],"verbs":["get","update","patch"]}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"xtrinode-e2e-secret-reader","namespace":"${PRIVILEGED_NAMESPACE}"},"rules":[{"apiGroups":[""],"resources":["secrets"],"resourceNames":["${CATALOG_SECRET_NAME}"],"verbs":["get"]}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-tenant-editor","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-editor"},"subjects":[{"kind":"ServiceAccount","name":"${TENANT_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-platform-editor","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-editor"},"subjects":[{"kind":"ServiceAccount","name":"${PLATFORM_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-status-only-editor","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-editor"},"subjects":[{"kind":"ServiceAccount","name":"${STATUS_ONLY_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-platform-valuesoverlay","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-valuesoverlay-editor"},"subjects":[{"kind":"ServiceAccount","name":"${PLATFORM_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-status-only-status","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-status-updater"},"subjects":[{"kind":"ServiceAccount","name":"${STATUS_ONLY_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]},{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"xtrinode-e2e-platform-secret-reader","namespace":"${PRIVILEGED_NAMESPACE}"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"xtrinode-e2e-secret-reader"},"subjects":[{"kind":"ServiceAccount","name":"${PLATFORM_SA}","namespace":"${PRIVILEGED_NAMESPACE}"}]}]}
     Create File    ${manifest}    ${json}
     Command Should Succeed    kubectl    apply    -f    ${manifest}
 
@@ -130,6 +165,13 @@ Create Values Overlay Admission Manifest
     [Arguments]    ${name}
     ${manifest}=    Set Variable    /tmp/xtrinode-privileged-admission-${name}.json
     ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"${name}","namespace":"${PRIVILEGED_NAMESPACE}","labels":{"test.xtrinode.io/contract":"privileged-admission"}},"spec":{"size":"xs","minWorkers":0,"maxWorkers":1,"suspended":true,"routing":{"header":"X-Trino-XTrinode=${PRIVILEGED_NAMESPACE}/${name}","routingGroup":"${name}"},"valuesOverlay":{"image":{"repository":"${TRINO_IMAGE_REPOSITORY}","tag":"${TRINO_IMAGE_TAG}","pullPolicy":"IfNotPresent"}}}}
+    Create File    ${manifest}    ${json}
+    RETURN    ${manifest}
+
+Create High Risk Values Overlay Admission Manifest
+    [Arguments]    ${name}
+    ${manifest}=    Set Variable    /tmp/xtrinode-privileged-admission-${name}.json
+    ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"${name}","namespace":"${PRIVILEGED_NAMESPACE}","labels":{"test.xtrinode.io/contract":"privileged-admission"}},"spec":{"size":"xs","minWorkers":0,"maxWorkers":1,"suspended":true,"routing":{"header":"X-Trino-XTrinode=${PRIVILEGED_NAMESPACE}/${name}","routingGroup":"${name}"},"valuesOverlay":{"resources":{"requests":{"cpu":"100m"}},"nodeSelector":{"dedicated":"trino"},"sidecarContainers":[{"name":"debug","image":"busybox:1.36"}],"envFrom":[{"secretRef":{"name":"debug-env"}}],"service":{"type":"LoadBalancer"},"containerSecurityContext":{"privileged":true,"allowPrivilegeEscalation":true,"capabilities":{"add":["NET_ADMIN"]}},"coordinator":{"deployment":{"revisionHistoryLimit":3},"additionalVolumes":[{"name":"host","hostPath":{"path":"/var/run"}}]}}}}
     Create File    ${manifest}    ${json}
     RETURN    ${manifest}
 
@@ -230,16 +272,25 @@ Admission Apply As User Should Fail With Message
     Should Not Be Equal As Integers    ${result.rc}    0
     Should Contain    ${result.stdout}    ${message}
 
+Scale Admission Webhook Operator To Zero
+    Command Should Succeed    kubectl    scale    deployment/xtrinode-operator    -n    ${OPERATOR_NAMESPACE}    --replicas=0
+    Wait Until Keyword Succeeds    120s    2s    Deployment Available Replicas Should Equal    ${OPERATOR_NAMESPACE}    xtrinode-operator    0
+
+Restore Admission Webhook Operator
+    Command Should Succeed    kubectl    scale    deployment/xtrinode-operator    -n    ${OPERATOR_NAMESPACE}    --replicas=1
+    Command Should Succeed    kubectl    rollout    status    deployment/xtrinode-operator    -n    ${OPERATOR_NAMESPACE}    --timeout=180s
+    Wait Until Keyword Succeeds    180s    2s    Deployment Should Be Available    ${OPERATOR_NAMESPACE}    xtrinode-operator    1
+
 Cleanup Privileged Admission Contract Objects
     Cleanup Privileged Admission XTrinodes
     Cleanup Privileged Admission Catalogs
-    Run Command Allow Failure    kubectl    delete    rolebinding    xtrinode-e2e-tenant-editor    xtrinode-e2e-platform-editor    xtrinode-e2e-platform-status    xtrinode-e2e-platform-secret-reader    -n    ${PRIVILEGED_NAMESPACE}    --ignore-not-found=true
-    Run Command Allow Failure    kubectl    delete    role    xtrinode-e2e-editor    xtrinode-e2e-status-updater    xtrinode-e2e-secret-reader    -n    ${PRIVILEGED_NAMESPACE}    --ignore-not-found=true
-    Run Command Allow Failure    kubectl    delete    serviceaccount    ${TENANT_SA}    ${PLATFORM_SA}    -n    ${PRIVILEGED_NAMESPACE}    --ignore-not-found=true
+    Run Command Allow Failure    kubectl    delete    rolebinding    xtrinode-e2e-tenant-editor    xtrinode-e2e-platform-editor    xtrinode-e2e-status-only-editor    xtrinode-e2e-platform-valuesoverlay    xtrinode-e2e-platform-status    xtrinode-e2e-status-only-status    xtrinode-e2e-platform-secret-reader    -n    ${PRIVILEGED_NAMESPACE}    --ignore-not-found=true
+    Run Command Allow Failure    kubectl    delete    role    xtrinode-e2e-editor    xtrinode-e2e-valuesoverlay-editor    xtrinode-e2e-status-updater    xtrinode-e2e-secret-reader    -n    ${PRIVILEGED_NAMESPACE}    --ignore-not-found=true
+    Run Command Allow Failure    kubectl    delete    serviceaccount    ${TENANT_SA}    ${PLATFORM_SA}    ${STATUS_ONLY_SA}    -n    ${PRIVILEGED_NAMESPACE}    --ignore-not-found=true
     Run Command Allow Failure    kubectl    delete    secret    ${CATALOG_SECRET_NAME}    -n    ${PRIVILEGED_NAMESPACE}    --ignore-not-found=true
 
 Cleanup Privileged Admission XTrinodes
-    FOR    ${name}    IN    ${PLATFORM_BASE_XTRINODE}    ${PLATFORM_OVERLAY_XTRINODE}    ${TENANT_OVERLAY_XTRINODE}    ${TENANT_HELM_XTRINODE}    ${TENANT_HELM_POLICY_XTRINODE}    ${TLS_UNSUPPORTED_XTRINODE}    ${JWT_UNSUPPORTED_XTRINODE}    ${HTTP_DISABLED_XTRINODE}    ${HTTP_PORT_XTRINODE}
+    FOR    ${name}    IN    ${PLATFORM_BASE_XTRINODE}    ${PLATFORM_OVERLAY_XTRINODE}    ${STATUS_ONLY_OVERLAY_XTRINODE}    ${VALUES_OVERLAY_POLICY_XTRINODE}    ${TENANT_OVERLAY_XTRINODE}    ${TENANT_HELM_XTRINODE}    ${TENANT_HELM_POLICY_XTRINODE}    ${TLS_UNSUPPORTED_XTRINODE}    ${JWT_UNSUPPORTED_XTRINODE}    ${HTTP_DISABLED_XTRINODE}    ${HTTP_PORT_XTRINODE}    ${WEBHOOK_OUTAGE_XTRINODE}
         Run Command Allow Failure    kubectl    patch    xtrinode/${name}    -n    ${PRIVILEGED_NAMESPACE}    --type=merge    -p    {"metadata":{"finalizers":[]}}
         Run Command Allow Failure    kubectl    delete    xtrinode/${name}    -n    ${PRIVILEGED_NAMESPACE}    --wait=false    --ignore-not-found=true
         Run Command Allow Failure    kubectl    wait    xtrinode/${name}    -n    ${PRIVILEGED_NAMESPACE}    --for=delete    --timeout=120s

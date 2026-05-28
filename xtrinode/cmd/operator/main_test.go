@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/xtrinode/xtrinode/controllers"
 	"github.com/xtrinode/xtrinode/internal/config"
 )
 
@@ -20,6 +21,9 @@ func TestParseOperatorOptions_ParsesRuntimeConfig(t *testing.T) {
 		"--webhook-enabled=false",
 		"--webhook-port=9444",
 		"--webhook-cert-dir=/tmp/webhook",
+		"--namespace-guardrail-mode=observe",
+		"--namespace-guardrail-resource-quota-name=platform-quota",
+		"--namespace-guardrail-limit-range-name=platform-limits",
 	}, io.Discard)
 
 	require.NoError(t, err)
@@ -31,6 +35,9 @@ func TestParseOperatorOptions_ParsesRuntimeConfig(t *testing.T) {
 	require.False(t, options.webhookEnabled)
 	require.Equal(t, 9444, options.webhookPort)
 	require.Equal(t, "/tmp/webhook", options.webhookCertDir)
+	require.Equal(t, controllers.NamespaceGuardrailModeObserve, options.namespaceGuardrailMode)
+	require.Equal(t, "platform-quota", options.namespaceResourceQuotaName)
+	require.Equal(t, "platform-limits", options.namespaceLimitRangeName)
 }
 
 func TestParseOperatorOptions_ZapFlags(t *testing.T) {
@@ -56,7 +63,7 @@ func TestBuildManagerOptions_WebhookToggle(t *testing.T) {
 	options := defaultOperatorOptions()
 	options.webhookEnabled = false
 
-	managerOptions := buildManagerOptions(options, "operators")
+	managerOptions := buildManagerOptions(&options, "operators")
 
 	require.Equal(t, scheme, managerOptions.Scheme)
 	require.Equal(t, "operators", managerOptions.LeaderElectionNamespace)
@@ -66,7 +73,7 @@ func TestBuildManagerOptions_WebhookToggle(t *testing.T) {
 	options.webhookPort = 9444
 	options.webhookCertDir = "/tmp/webhook"
 
-	managerOptions = buildManagerOptions(options, "operators")
+	managerOptions = buildManagerOptions(&options, "operators")
 
 	require.NotNil(t, managerOptions.WebhookServer)
 }

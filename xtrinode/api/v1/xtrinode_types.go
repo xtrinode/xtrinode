@@ -228,6 +228,15 @@ type JMXExporterSpec struct {
 }
 
 // NodePoolSpec defines node pool configuration
+const (
+	// NodePoolDeletionPolicyDelete deletes provider node-pool resources with the XTrinode.
+	NodePoolDeletionPolicyDelete = "Delete"
+	// NodePoolDeletionPolicyRetain leaves provider node-pool resources in place during finalizer cleanup.
+	NodePoolDeletionPolicyRetain = "Retain"
+	// NodePoolDeletionPolicyScaleToZero scales provider node-pool resources to zero and then retains them.
+	NodePoolDeletionPolicyScaleToZero = "ScaleToZero"
+)
+
 type NodePoolSpec struct {
 	// Name of the node pool
 	Name string `json:"name"`
@@ -352,6 +361,13 @@ type NodePoolSpec struct {
 	// Default: true (scale down on suspend for cost savings)
 	// +optional
 	ScaleDownOnSuspend *bool `json:"scaleDownOnSuspend,omitempty"`
+
+	// DeletionPolicy controls what happens to managed provider node-pool resources
+	// when this XTrinode is deleted.
+	// Defaults to Delete when omitted.
+	// +kubebuilder:validation:Enum=Delete;Retain;ScaleToZero
+	// +optional
+	DeletionPolicy string `json:"deletionPolicy,omitempty"`
 
 	// Azure-specific configuration
 	// +optional
@@ -521,6 +537,12 @@ type PlacementSpec struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
+	// ExistingNodePool is a provider-specific convenience that expands to the
+	// provider's standard node-pool label. Raw Kubernetes placement remains the
+	// canonical low-level API.
+	// +optional
+	ExistingNodePool *ExistingNodePoolPlacementSpec `json:"existingNodePool,omitempty"`
+
 	// Tolerations apply to both coordinator and worker pods.
 	// +optional
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
@@ -536,6 +558,16 @@ type PlacementSpec struct {
 	// Worker overrides placement for worker pods.
 	// +optional
 	Worker *RolePlacementSpec `json:"worker,omitempty"`
+}
+
+// ExistingNodePoolPlacementSpec targets a pre-existing provider node pool.
+type ExistingNodePoolPlacementSpec struct {
+	// Provider is the cluster provider whose node-pool label should be used.
+	// +kubebuilder:validation:Enum=azure;aws;gcp
+	Provider string `json:"provider"`
+
+	// Name is the provider node-pool name.
+	Name string `json:"name"`
 }
 
 // RolePlacementSpec configures scheduler constraints for one Trino role.
@@ -886,7 +918,12 @@ type XTrinodeStatus struct {
 
 // ObservedRuntimeShapeStatus exposes the resolved runtime shape used by
 // guardrails, route capacity, pod rendering, and resume ranking.
+const ObservedRuntimeShapeStatusVersion = "v1"
+
 type ObservedRuntimeShapeStatus struct {
+	// Version is the schema version for this compact observed shape.
+	Version string `json:"version,omitempty"`
+
 	// Hash is a stable hash of the resolved runtime shape.
 	Hash string `json:"hash,omitempty"`
 
@@ -958,6 +995,9 @@ type ObservedRuntimeNodePoolStatus struct {
 
 	// SchedulePods is true when runtime pods are bound to the managed pool.
 	SchedulePods bool `json:"schedulePods,omitempty"`
+
+	// DeletionPolicy is the resolved managed node-pool deletion policy.
+	DeletionPolicy string `json:"deletionPolicy,omitempty"`
 }
 
 // WakeState tracks ephemeral wake window after resume
