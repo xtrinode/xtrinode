@@ -226,6 +226,43 @@ func TestCleanupResourcesRetainsNodePoolWhenPolicyRetain(t *testing.T) {
 	assert.Equal(t, 1, nodePoolAdapter.retainCalls)
 }
 
+func TestCleanupResourcesRetainsObservedNodePoolWhenSpecRemoved(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime", Namespace: "team-a"},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			ObservedRuntimeShape: &analyticsv1.ObservedRuntimeShapeStatus{
+				Version: analyticsv1.ObservedRuntimeShapeStatusVersion,
+				NodePool: analyticsv1.ObservedRuntimeNodePoolStatus{
+					ProvisioningRequested: true,
+					Provider:              "gcp",
+					ProviderMode:          "managed",
+					Name:                  "runtime-pool",
+					SchedulePods:          true,
+					DeletionPolicy:        analyticsv1.NodePoolDeletionPolicyDelete,
+				},
+			},
+		},
+	}
+	reconciler := newTestReconciler(newTestClient(scheme, xtrinode), scheme)
+	reconciler.GatewayService = &gatewayServiceTestDouble{}
+	nodePoolAdapter := &recordingNodePoolAdapter{}
+	reconciler.NodePoolAdapter = nodePoolAdapter
+
+	err := reconciler.cleanupResources(ctx, xtrinode, newTestLogger())
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, nodePoolAdapter.deleteCalls)
+	assert.Equal(t, 1, nodePoolAdapter.retainCalls)
+	require.Len(t, nodePoolAdapter.retainedNodePools, 1)
+	assert.Equal(t, "runtime-pool", nodePoolAdapter.retainedNodePools[0].Name)
+	assert.Equal(t, analyticsv1.NodePoolDeletionPolicyRetain, nodePoolAdapter.retainedNodePools[0].DeletionPolicy)
+}
+
 func TestCleanupResourcesDeletesNodePoolWhenPolicyDelete(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()

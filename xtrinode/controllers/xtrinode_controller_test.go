@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -27,11 +28,13 @@ import (
 )
 
 type recordingNodePoolAdapter struct {
-	ensurePhases []string
-	deleteCalls  int
-	retainCalls  int
-	scaleCalls   int
-	scaleValues  []int32
+	ensurePhases      []string
+	deleteCalls       int
+	retainCalls       int
+	retainErr         error
+	retainedNodePools []analyticsv1.NodePoolSpec
+	scaleCalls        int
+	scaleValues       []int32
 }
 
 func (r *recordingNodePoolAdapter) EnsureNodePool(_ context.Context, xtrinode *analyticsv1.XTrinode) error {
@@ -44,9 +47,12 @@ func (r *recordingNodePoolAdapter) DeleteNodePool(_ context.Context, _ *analytic
 	return nil
 }
 
-func (r *recordingNodePoolAdapter) RetainNodePool(_ context.Context, _ *analyticsv1.XTrinode) error {
+func (r *recordingNodePoolAdapter) RetainNodePool(_ context.Context, xtrinode *analyticsv1.XTrinode) error {
 	r.retainCalls++
-	return nil
+	if xtrinode.Spec.NodePool != nil {
+		r.retainedNodePools = append(r.retainedNodePools, *xtrinode.Spec.NodePool.DeepCopy())
+	}
+	return r.retainErr
 }
 
 func (r *recordingNodePoolAdapter) ScaleNodePoolMinNodes(_ context.Context, _ *analyticsv1.XTrinode, minNodes int32) error {
@@ -1832,6 +1838,148 @@ func TestCalculateRequeueInterval_WakeWindow(t *testing.T) {
 	interval := reconciler.calculateRequeueInterval(xtrinode)
 	assert.True(t, interval > 0, "Should have non-zero requeue interval for active wake")
 	assert.True(t, interval <= 2*time.Minute+time.Second, "Requeue interval should be ≤ remaining wake time")
+}
+
+func TestXTrinodeReconciler_reconcileRemovedNodePool_RetainsObservedNodePool(t *testing.T) {
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "runtime-a",
+			Namespace:  "team-a",
+			UID:        types.UID("runtime-a-uid"),
+			Generation: 3,
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			ObservedRuntimeShape: &analyticsv1.ObservedRuntimeShapeStatus{
+				Version: analyticsv1.ObservedRuntimeShapeStatusVersion,
+				NodePool: analyticsv1.ObservedRuntimeNodePoolStatus{
+					ProvisioningRequested: true,
+					Provider:              "gcp",
+					ProviderMode:          "managed",
+					Name:                  "runtime-a-pool",
+					SchedulePods:          true,
+					DeletionPolicy:        analyticsv1.NodePoolDeletionPolicyDelete,
+				},
+			},
+		},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(xtrinode).
+		WithStatusSubresource(&analyticsv1.XTrinode{}).
+		Build()
+	reconciler := newTestReconciler(cli, scheme)
+	nodePoolAdapter := &recordingNodePoolAdapter{}
+	reconciler.NodePoolAdapter = nodePoolAdapter
+
+	result, err := reconciler.reconcileRemovedNodePool(context.Background(), xtrinode)
+	assert.NoError(t, err)
+	assert.Equal(t, time.Duration(0), result.RequeueAfter)
+	assert.Equal(t, 1, nodePoolAdapter.retainCalls)
+	if assert.Len(t, nodePoolAdapter.retainedNodePools, 1) {
+		retained := nodePoolAdapter.retainedNodePools[0]
+		assert.Equal(t, "gcp", retained.Provider)
+		assert.Equal(t, "managed", retained.ProviderMode)
+		assert.Equal(t, "runtime-a-pool", retained.Name)
+		assert.True(t, retained.SchedulePods)
+		assert.Equal(t, analyticsv1.NodePoolDeletionPolicyRetain, retained.DeletionPolicy)
+	}
+
+	if assert.NotNil(t, xtrinode.Status.ObservedRuntimeShape) {
+		assert.False(t, xtrinode.Status.ObservedRuntimeShape.NodePool.ProvisioningRequested)
+		assert.Empty(t, xtrinode.Status.ObservedRuntimeShape.NodePool.Provider)
+	}
+	condition := status.GetCondition(xtrinode, status.ConditionTypeNodePoolReady)
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+		assert.Equal(t, "NodePoolRetained", condition.Reason)
+	}
+
+	stored := &analyticsv1.XTrinode{}
+	assert.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: xtrinode.Name, Namespace: xtrinode.Namespace}, stored))
+	if assert.NotNil(t, stored.Status.ObservedRuntimeShape) {
+		assert.False(t, stored.Status.ObservedRuntimeShape.NodePool.ProvisioningRequested)
+	}
+}
+
+func TestXTrinodeReconciler_reconcileRemovedNodePool_SkipsWithoutObservedNodePool(t *testing.T) {
+	scheme := newTestScheme()
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-a",
+			Namespace: "team-a",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			ObservedRuntimeShape: &analyticsv1.ObservedRuntimeShapeStatus{
+				Version: analyticsv1.ObservedRuntimeShapeStatusVersion,
+			},
+		},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(xtrinode).
+		WithStatusSubresource(&analyticsv1.XTrinode{}).
+		Build()
+	reconciler := newTestReconciler(cli, scheme)
+	nodePoolAdapter := &recordingNodePoolAdapter{}
+	reconciler.NodePoolAdapter = nodePoolAdapter
+
+	result, err := reconciler.reconcileRemovedNodePool(context.Background(), xtrinode)
+	assert.NoError(t, err)
+	assert.Equal(t, time.Duration(0), result.RequeueAfter)
+	assert.Equal(t, 0, nodePoolAdapter.retainCalls)
+}
+
+func TestXTrinodeReconciler_reconcileRemovedNodePool_RetainFailureKeepsObservedNodePool(t *testing.T) {
+	scheme := newTestScheme()
+	retainErr := errors.New("retain failed")
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-a",
+			Namespace: "team-a",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			ObservedRuntimeShape: &analyticsv1.ObservedRuntimeShapeStatus{
+				Version: analyticsv1.ObservedRuntimeShapeStatusVersion,
+				NodePool: analyticsv1.ObservedRuntimeNodePoolStatus{
+					ProvisioningRequested: true,
+					Provider:              "aws",
+					Name:                  "runtime-a-pool",
+				},
+			},
+		},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(xtrinode).
+		WithStatusSubresource(&analyticsv1.XTrinode{}).
+		Build()
+	reconciler := newTestReconciler(cli, scheme)
+	nodePoolAdapter := &recordingNodePoolAdapter{retainErr: retainErr}
+	reconciler.NodePoolAdapter = nodePoolAdapter
+
+	result, err := reconciler.reconcileRemovedNodePool(context.Background(), xtrinode)
+	assert.ErrorIs(t, err, retainErr)
+	assert.Equal(t, config.NodePoolProvisioningErrorRequeueInterval, result.RequeueAfter)
+	assert.Equal(t, 1, nodePoolAdapter.retainCalls)
+	assert.True(t, xtrinode.Status.ObservedRuntimeShape.NodePool.ProvisioningRequested)
+	condition := status.GetCondition(xtrinode, status.ConditionTypeNodePoolReady)
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, status.ConditionReasonNodePoolFailed, condition.Reason)
+	}
 }
 
 // --- Regression tests for regressions ---

@@ -10,6 +10,12 @@ ${TYPED_RUNTIME_NAME}           typed-runtime-shape
 ${TYPED_RUNTIME_NODE_LABEL}     cloud.google.com/gke-nodepool
 ${TYPED_RUNTIME_NODE_VALUE}     typed-shape
 ${SCHEDULING_BLOCKED_NAME}      schedulability-blocked
+${TAINT_BLOCKED_NAME}           schedulability-taint-blocked
+${TAINT_BLOCKED_NODE_LABEL}     xtrinode.io/e2e-taint-target
+${TAINT_BLOCKED_NODE_VALUE}     true
+${TAINT_BLOCKED_TAINT_KEY}      xtrinode.io/e2e-taint
+${TAINT_BLOCKED_TAINT_VALUE}    blocked
+${CAPACITY_BLOCKED_NAME}        schedulability-capacity-blocked
 
 *** Test Cases ***
 Rendered Trino Images Use Requested Version
@@ -147,12 +153,46 @@ Schedulability Conditions Classify Placement Blockers
     Command Should Succeed    kubectl    apply    -f    ${manifest}
     Command Should Succeed    kubectl    wait    xtrinode/${SCHEDULING_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=condition=SchedulingReady=False    --timeout=${WAIT_TIMEOUT}
     Command Should Succeed    kubectl    wait    xtrinode/${SCHEDULING_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=condition=PlacementReady=False    --timeout=${WAIT_TIMEOUT}
+    Wait Until Keyword Succeeds    120s    ${POLL_INTERVAL}    Runtime Condition Message Should Match    ${SCHEDULING_BLOCKED_NAME}    PlacementReady    False    PlacementBlocked    node selector|required node affinity|node affinity
     ${runtime}=    Set Variable    /tmp/xtrinode-schedulability-blocked-runtime.json
     ${json}=    Kubectl Output    get    xtrinode/${SCHEDULING_BLOCKED_NAME}    -n    ${NAMESPACE}    -o    json
     Create File    ${runtime}    ${json}
     JQ Should Match    ${runtime}    any(.status.conditions[]; .type == "SchedulingReady" and .status == "False" and .reason == "SchedulingBlocked") and any(.status.conditions[]; .type == "PlacementReady" and .status == "False" and .reason == "PlacementBlocked") and any(.status.conditions[]; .type == "TaintsReady" and .status == "True") and any(.status.conditions[]; .type == "QuotaReady" and .status == "True") and any(.status.conditions[]; .type == "CapacityReady" and .status == "True")
 
+Schedulability Conditions Classify Taint Blockers
+    [Setup]    Prepare Taint Blocker Contract
+    [Teardown]    Cleanup Taint Blocker Contract Objects
+    Command Should Succeed    kubectl    wait    xtrinode/${TAINT_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=condition=SchedulingReady=False    --timeout=${WAIT_TIMEOUT}
+    Command Should Succeed    kubectl    wait    xtrinode/${TAINT_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=condition=TaintsReady=False    --timeout=${WAIT_TIMEOUT}
+    Wait Until Keyword Succeeds    120s    ${POLL_INTERVAL}    Runtime Condition Message Should Match    ${TAINT_BLOCKED_NAME}    TaintsReady    False    TaintsBlocked    untolerated|taint|tolerat
+    ${runtime}=    Set Variable    /tmp/xtrinode-schedulability-taint-blocked-runtime.json
+    ${json}=    Kubectl Output    get    xtrinode/${TAINT_BLOCKED_NAME}    -n    ${NAMESPACE}    -o    json
+    Create File    ${runtime}    ${json}
+    JQ Should Match    ${runtime}    any(.status.conditions[]; .type == "SchedulingReady" and .status == "False" and .reason == "SchedulingBlocked") and any(.status.conditions[]; .type == "PlacementReady" and .status == "True") and any(.status.conditions[]; .type == "TaintsReady" and .status == "False" and .reason == "TaintsBlocked") and any(.status.conditions[]; .type == "QuotaReady" and .status == "True") and any(.status.conditions[]; .type == "CapacityReady" and .status == "True")
+
+Schedulability Conditions Classify Capacity Blockers
+    [Teardown]    Cleanup Capacity Blocker Contract Objects
+    Cleanup Capacity Blocker Contract Objects
+    ${manifest}=    Set Variable    /tmp/xtrinode-schedulability-capacity-blocked.json
+    ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"${CAPACITY_BLOCKED_NAME}","namespace":"${NAMESPACE}","labels":{"test.xtrinode.io/contract":"schedulability-capacity-blocked"}},"spec":{"size":"xs","minWorkers":1,"maxWorkers":1,"autoSuspendAfter":"30m","keda":{"enabled":false},"resources":{"coordinator":{"requests":{"cpu":"100000","memory":"384Mi"},"limits":{"cpu":"100000","memory":"768Mi"}},"worker":{"requests":{"cpu":"100000","memory":"512Mi"},"limits":{"cpu":"100000","memory":"1Gi"}}},"routing":{"header":"X-Trino-XTrinode=${NAMESPACE}/${CAPACITY_BLOCKED_NAME}","routingGroup":"schedulability-capacity-blocked"},"valuesOverlay":{"image":{"repository":"${TRINO_IMAGE_REPOSITORY}","tag":"${TRINO_IMAGE_TAG}","pullPolicy":"IfNotPresent"},"coordinator":{"additionalJVMConfig":["-Xmx768M","-XX:ReservedCodeCacheSize=128M"]},"worker":{"additionalJVMConfig":["-Xmx768M","-XX:ReservedCodeCacheSize=128M"]},"additionalConfigProperties":["query.max-memory=512MB","query.max-memory-per-node=384MB","memory.heap-headroom-per-node=256MB"]}}}
+    Create File    ${manifest}    ${json}
+    Command Should Succeed    kubectl    apply    -f    ${manifest}
+    Command Should Succeed    kubectl    wait    xtrinode/${CAPACITY_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=condition=SchedulingReady=False    --timeout=${WAIT_TIMEOUT}
+    Command Should Succeed    kubectl    wait    xtrinode/${CAPACITY_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=condition=CapacityReady=False    --timeout=${WAIT_TIMEOUT}
+    Wait Until Keyword Succeeds    120s    ${POLL_INTERVAL}    Runtime Condition Message Should Match    ${CAPACITY_BLOCKED_NAME}    CapacityReady    False    CapacityBlocked    bestAvailable|insufficient allocatable|Insufficient cpu|insufficient cpu
+    ${runtime}=    Set Variable    /tmp/xtrinode-schedulability-capacity-blocked-runtime.json
+    ${json}=    Kubectl Output    get    xtrinode/${CAPACITY_BLOCKED_NAME}    -n    ${NAMESPACE}    -o    json
+    Create File    ${runtime}    ${json}
+    JQ Should Match    ${runtime}    any(.status.conditions[]; .type == "SchedulingReady" and .status == "False" and .reason == "SchedulingBlocked") and any(.status.conditions[]; .type == "PlacementReady" and .status == "True") and any(.status.conditions[]; .type == "TaintsReady" and .status == "True") and any(.status.conditions[]; .type == "QuotaReady" and .status == "True") and any(.status.conditions[]; .type == "CapacityReady" and .status == "False" and .reason == "CapacityBlocked")
+
 *** Keywords ***
+Runtime Condition Message Should Match
+    [Arguments]    ${runtime}    ${condition_type}    ${condition_status}    ${reason}    ${message_pattern}
+    ${runtime_file}=    Set Variable    /tmp/xtrinode-${runtime}-${condition_type}.json
+    ${json}=    Kubectl Output    get    xtrinode/${runtime}    -n    ${NAMESPACE}    -o    json
+    Create File    ${runtime_file}    ${json}
+    JQ Should Match    ${runtime_file}    any(.status.conditions[]; .type == $type and .status == $status and .reason == $reason and ((.message // "") | test($message_pattern)))    --arg    type    ${condition_type}    --arg    status    ${condition_status}    --arg    reason    ${reason}    --arg    message_pattern    ${message_pattern}
+
 Prepare Typed Runtime Shape Contract
     Cleanup Typed Runtime Shape Contract Objects
     ${node}=    Kubectl Output    get    nodes    -o    jsonpath={.items[0].metadata.name}
@@ -174,6 +214,29 @@ Cleanup Scheduling Blocker Contract Objects
     Run Command Allow Failure    kubectl    delete    xtrinode/${SCHEDULING_BLOCKED_NAME}    -n    ${NAMESPACE}    --wait=false    --ignore-not-found=true
     Run Command Allow Failure    kubectl    wait    xtrinode/${SCHEDULING_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=delete    --timeout=120s
     Run Command Allow Failure    kubectl    delete    deployment,service,configmap,poddisruptionbudget,serviceaccount,horizontalpodautoscaler,scaledobject,triggerauthentication    -n    ${NAMESPACE}    -l    app.kubernetes.io/instance=${SCHEDULING_BLOCKED_NAME}    --ignore-not-found=true    --wait=false
+
+Prepare Taint Blocker Contract
+    Cleanup Taint Blocker Contract Objects
+    Command Should Succeed    kubectl    label    nodes    --all    ${TAINT_BLOCKED_NODE_LABEL}=${TAINT_BLOCKED_NODE_VALUE}    --overwrite
+    Command Should Succeed    kubectl    taint    nodes    --all    ${TAINT_BLOCKED_TAINT_KEY}=${TAINT_BLOCKED_TAINT_VALUE}:NoSchedule    --overwrite
+    ${manifest}=    Set Variable    /tmp/xtrinode-schedulability-taint-blocked.json
+    ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"${TAINT_BLOCKED_NAME}","namespace":"${NAMESPACE}","labels":{"test.xtrinode.io/contract":"schedulability-taint-blocked"}},"spec":{"size":"xs","minWorkers":1,"maxWorkers":1,"autoSuspendAfter":"30m","keda":{"enabled":false},"placement":{"nodeSelector":{"${TAINT_BLOCKED_NODE_LABEL}":"${TAINT_BLOCKED_NODE_VALUE}"}},"routing":{"header":"X-Trino-XTrinode=${NAMESPACE}/${TAINT_BLOCKED_NAME}","routingGroup":"schedulability-taint-blocked"},"valuesOverlay":{"image":{"repository":"${TRINO_IMAGE_REPOSITORY}","tag":"${TRINO_IMAGE_TAG}","pullPolicy":"IfNotPresent"}}}}
+    Create File    ${manifest}    ${json}
+    Command Should Succeed    kubectl    apply    -f    ${manifest}
+
+Cleanup Taint Blocker Contract Objects
+    Run Command Allow Failure    kubectl    patch    xtrinode/${TAINT_BLOCKED_NAME}    -n    ${NAMESPACE}    --type=merge    -p    {"metadata":{"finalizers":[]}}
+    Run Command Allow Failure    kubectl    delete    xtrinode/${TAINT_BLOCKED_NAME}    -n    ${NAMESPACE}    --wait=false    --ignore-not-found=true
+    Run Command Allow Failure    kubectl    wait    xtrinode/${TAINT_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=delete    --timeout=120s
+    Run Command Allow Failure    kubectl    delete    deployment,service,configmap,poddisruptionbudget,serviceaccount,horizontalpodautoscaler,scaledobject,triggerauthentication    -n    ${NAMESPACE}    -l    app.kubernetes.io/instance=${TAINT_BLOCKED_NAME}    --ignore-not-found=true    --wait=false
+    Run Command Allow Failure    kubectl    taint    nodes    --all    ${TAINT_BLOCKED_TAINT_KEY}-
+    Run Command Allow Failure    kubectl    label    nodes    --all    ${TAINT_BLOCKED_NODE_LABEL}-    --overwrite
+
+Cleanup Capacity Blocker Contract Objects
+    Run Command Allow Failure    kubectl    patch    xtrinode/${CAPACITY_BLOCKED_NAME}    -n    ${NAMESPACE}    --type=merge    -p    {"metadata":{"finalizers":[]}}
+    Run Command Allow Failure    kubectl    delete    xtrinode/${CAPACITY_BLOCKED_NAME}    -n    ${NAMESPACE}    --wait=false    --ignore-not-found=true
+    Run Command Allow Failure    kubectl    wait    xtrinode/${CAPACITY_BLOCKED_NAME}    -n    ${NAMESPACE}    --for=delete    --timeout=120s
+    Run Command Allow Failure    kubectl    delete    deployment,service,configmap,poddisruptionbudget,serviceaccount,horizontalpodautoscaler,scaledobject,triggerauthentication    -n    ${NAMESPACE}    -l    app.kubernetes.io/instance=${CAPACITY_BLOCKED_NAME}    --ignore-not-found=true    --wait=false
 
 Cleanup KEDA Admission Contract Objects
     Run Command Allow Failure    kubectl    delete    scaledobject    invalid-memory-zero-contract    -n    ${NAMESPACE}    --ignore-not-found=true

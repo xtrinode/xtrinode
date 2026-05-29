@@ -87,6 +87,89 @@ func (r *XTrinodeReconciler) reconcileNodePoolBlocking(ctx context.Context, xtri
 	return ctrl.Result{}, nil
 }
 
+// reconcileRemovedNodePool retains the last observed provider node-pool
+// resources when spec.nodePool is removed from an existing runtime.
+func (r *XTrinodeReconciler) reconcileRemovedNodePool(ctx context.Context, xtrinode *analyticsv1.XTrinode) (ctrl.Result, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	retained, ok, err := xtrinodeWithRemovedObservedNodePool(xtrinode)
+	if !ok {
+		return ctrl.Result{}, nil
+	}
+	if err != nil {
+		wrapped := fmt.Errorf("cannot retain removed node pool: %w", err)
+		log.Error(wrapped, "failed to reconstruct removed node pool from observed status")
+		status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionFalse, status.ConditionReasonNodePoolFailed, wrapped.Error())
+		r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolRetainFailed, "Failed to retain node pool after spec.nodePool removal: %v", err)
+		if updateErr := r.updateStatus(ctx, xtrinode, log); updateErr != nil {
+			log.Error(updateErr, "unable to update XTrinode status after node pool retention failure")
+		}
+		return ctrl.Result{RequeueAfter: config.NodePoolProvisioningErrorRequeueInterval}, wrapped
+	}
+
+	err = external.CallWithTimeout(ctx, config.NodePoolTimeout, func(ctx context.Context) error {
+		return r.NodePoolAdapter.RetainNodePool(ctx, retained)
+	})
+	if err != nil {
+		log.Error(err, "failed to retain removed node pool")
+		status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionFalse, status.ConditionReasonNodePoolFailed, fmt.Sprintf("Failed to retain removed node pool: %v", err))
+		r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolRetainFailed, "Failed to retain node pool after spec.nodePool removal: %v", err)
+		if updateErr := r.updateStatus(ctx, xtrinode, log); updateErr != nil {
+			log.Error(updateErr, "unable to update XTrinode status after node pool retention failure")
+		}
+		return ctrl.Result{RequeueAfter: getNodePoolErrorRequeueInterval(retained.Spec.NodePool)}, err
+	}
+
+	if err := setObservedRuntimeShapeStatus(xtrinode); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to refresh observed runtime shape after node pool retention: %w", err)
+	}
+	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionTrue, events.ReasonNodePoolRetained, "Node pool retained because spec.nodePool was removed")
+	if err := r.updateStatus(ctx, xtrinode, log); err != nil {
+		log.Error(err, "unable to update XTrinode status after node pool retention")
+		return ctrl.Result{}, err
+	}
+
+	r.EventRecorder.Normalf(
+		xtrinode,
+		events.ReasonNodePoolRetained,
+		"Node pool %q retained because spec.nodePool was removed",
+		getNodePoolName(retained.Spec.NodePool, xtrinode.Name),
+	)
+	log.Info("Retained removed node pool", "nodePool", getNodePoolName(retained.Spec.NodePool, xtrinode.Name), "provider", retained.Spec.NodePool.Provider)
+	return ctrl.Result{}, nil
+}
+
+func xtrinodeWithRemovedObservedNodePool(xtrinode *analyticsv1.XTrinode) (*analyticsv1.XTrinode, bool, error) {
+	if xtrinode.Spec.NodePool != nil || xtrinode.Status.ObservedRuntimeShape == nil {
+		return nil, false, nil
+	}
+	observed := &xtrinode.Status.ObservedRuntimeShape.NodePool
+	if !observed.ProvisioningRequested {
+		return nil, false, nil
+	}
+
+	nodePool, err := nodePoolSpecFromObservedStatus(observed)
+	if err != nil {
+		return nil, true, err
+	}
+	retained := xtrinode.DeepCopy()
+	retained.Spec.NodePool = nodePool
+	return retained, true, nil
+}
+
+func nodePoolSpecFromObservedStatus(observed *analyticsv1.ObservedRuntimeNodePoolStatus) (*analyticsv1.NodePoolSpec, error) {
+	if observed.Provider == "" {
+		return nil, fmt.Errorf("last observed node-pool provider is empty")
+	}
+	return &analyticsv1.NodePoolSpec{
+		Provider:       observed.Provider,
+		ProviderMode:   observed.ProviderMode,
+		Name:           observed.Name,
+		SchedulePods:   observed.SchedulePods,
+		DeletionPolicy: analyticsv1.NodePoolDeletionPolicyRetain,
+	}, nil
+}
+
 // waitForNodePoolReady checks if node pool nodes are ready
 // Returns: (ready bool, result ctrl.Result, error)
 func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode *analyticsv1.XTrinode, log logr.Logger) (ready bool, result ctrl.Result, err error) {
@@ -113,6 +196,22 @@ func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode 
 			return false, ctrl.Result{RequeueAfter: requeueAfter}, nil
 		}
 		return false, ctrl.Result{}, err
+	}
+
+	diagnostic, diagnosticErr := r.nodePoolProvisioningFailureDiagnostic(ctx, xtrinode, res)
+	if diagnosticErr != nil {
+		log.Error(diagnosticErr, "failed to inspect node pool provisioning diagnostics")
+	}
+	if diagnostic != nil {
+		message := diagnostic.statusMessage()
+		log.Info("Node pool provisioning reported failure", "xtrinode", xtrinode.Name, "message", message)
+		status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionFalse, status.ConditionReasonNodePoolFailed, message)
+		r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolProvisionFailed, "Node pool provisioning reported failure: %s", message)
+		metrics.NodePoolProvisionFailed.WithLabelValues(xtrinode.Namespace, xtrinode.Name, nodePool.Provider).Inc()
+		if updateErr := r.updateStatus(ctx, xtrinode, log); updateErr != nil {
+			return false, ctrl.Result{}, updateErr
+		}
+		return false, ctrl.Result{RequeueAfter: getNodePoolErrorRequeueInterval(nodePool)}, nil
 	}
 
 	// Check status.readyReplicas

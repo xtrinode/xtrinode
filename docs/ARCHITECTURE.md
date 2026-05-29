@@ -421,7 +421,10 @@ flowchart TB
   event["Watch event<br/>XTrinode, owned runtime child,<br/>catalog ConfigMap, referenced ConfigMap/Secret,<br/>gateway route ConfigMap,<br/>namespace guardrail"] --> reconcile["Reconcile XTrinode"]
   reconcile --> finalizer["Ensure finalizer"]
   finalizer --> commands["Process command annotations<br/>resume, suspend, auto-suspend, wake"]
-  commands --> suspended{"spec.suspended?"}
+  commands --> removednp{"spec.nodePool removed<br/>and observed pool exists?"}
+  removednp -- yes --> retainnp["Retain old node pool<br/>remove owner refs"]
+  removednp -- no --> suspended{"spec.suspended?"}
+  retainnp --> suspended
 
   suspended -- yes --> suspend["Suspend flow<br/>drain, disable scaling, scale down"]
   suspended -- no --> resume["Resume flow<br/>restore coordinator and worker floor"]
@@ -447,11 +450,14 @@ The effective order is important:
 1. Catalog discovery happens before resource rendering so catalog mounts and
    secret-derived environment variables are reflected in pod templates.
 2. Namespace guardrails are applied before runtime resources are created.
-3. If a node pool is requested, node-pool readiness blocks Trino resource
+3. If `spec.nodePool` was removed and status records a previously provisioned
+   pool, the operator retains that pool before suspend/resume and before the
+   observed runtime shape is refreshed.
+4. If a node pool is requested, node-pool readiness blocks Trino resource
    scheduling; without a node pool, the node-pool step is skipped after resources.
-4. Wake TTL runs before KEDA so an expired wake window can lower KEDA
+5. Wake TTL runs before KEDA so an expired wake window can lower KEDA
    `minReplicaCount` in the same reconciliation pass.
-5. Runtime readiness gates the final gateway state. A not-yet-ready runtime gets
+6. Runtime readiness gates the final gateway state. A not-yet-ready runtime gets
    a `RESUMING` route and a requeue; only a ready runtime gets the `RUNNING` route
    and `Ready` status.
 
@@ -461,6 +467,19 @@ operator owns only its configured guardrail object names
 and labels those objects for watch ownership. Their spec, label, annotation,
 create, and delete events enqueue all `XTrinode`s in that namespace for drift
 repair while ignoring quota status churn.
+
+Clusters that already enforce namespace quota, default `LimitRange`s, or
+namespace label policy should choose the guardrail mode deliberately. Use
+`managed` only when XTrinode should own the configured quota and limit object
+names, `createOnly` when it may create missing guardrails but must not take over
+existing objects, `observe` when another platform controller owns enforcement,
+and `disabled` when namespace policy is entirely external. External quota and
+limit policy must reserve enough headroom for the resolved runtime shape,
+rolling-update surge, KEDA/HPA worker floors, and resumed capacity; otherwise the
+operator reports quota or scheduling blockers while Kubernetes remains the
+detailed source of truth. Namespace labels required by cluster admission policy
+should be applied before creating runtimes so generated Trino, KEDA, and
+node-pool resources are admitted consistently.
 
 ## API Server Resume Gate
 
@@ -544,10 +563,17 @@ strategies do not reserve surge.
 Runtime status also carries focused operational conditions. `SchedulingReady`
 summarizes pod and deployment scheduling blockers, and `PlacementReady`,
 `TaintsReady`, `QuotaReady`, and `CapacityReady` classify common placement,
-taint/toleration, namespace quota, and node capacity failures. `NodePoolFitReady`
+taint/toleration, namespace quota, and node capacity failures. When runtime pods
+are pending, the operator also inspects Ready schedulable Nodes, active Pods, and
+DaemonSets to report selector mismatch, untolerated taints, allocatable CPU,
+memory, ephemeral-storage, pod-slot pressure, and DaemonSet overhead. This
+diagnostic pass is bounded to status conditions; Kubernetes Events, pod status,
+and scheduler diagnostics remain the detailed source of truth. `NodePoolFitReady`
 records best-effort fit checks between resolved pod resources and known provider
-machine types. Kubernetes Events and pod status remain the detailed source of
-truth.
+machine types. For configured node pools, `NodePoolReady` also correlates hard
+provisioning failures from Cluster API resources, provider managed-pool resources,
+child Machines, and Machine infrastructure refs when those resources expose
+failure fields or failed/error conditions.
 
 ### Runtime Configuration Layers
 
@@ -593,6 +619,7 @@ boundaries.
 | Override route/resume capacity | Set `spec.routing.capacityUnits`. |
 | Bigger or different nodes with the same pod resources | Set `spec.nodePool` provider and machine type fields; use `spec.nodePool.deletionPolicy` to choose delete, retain, or scale-to-zero behavior on XTrinode deletion. |
 | More workers or provider node-pool bounds | Set `spec.nodePool.minNodes`, `maxNodes`, prewarm, spot, labels, taints, disk, or zone fields. |
+| Stop managing a provisioned node pool | Remove `spec.nodePool`; the operator uses the last observed node-pool identity to remove XTrinode owner references and retain the provider resources. |
 | Chart-shaped pod, image, or Trino config changes | Use `spec.valuesOverlay`, subject to privileged overlay admission. |
 
 Prefer the smallest preset that fits steady-state query needs, then increase the
@@ -625,6 +652,65 @@ installations can add ValidatingAdmissionPolicy, OPA Gatekeeper, Kyverno, or an
 equivalent policy layer for stricter local registry, Secret, and annotation
 rules.
 
+Trusted overlay editor RBAC should be narrow and namespace-scoped:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: xtrinode-overlay-editor
+  namespace: team-analytics
+rules:
+  - apiGroups: ["analytics.xtrinode.io"]
+    resources: ["xtrinodes"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["analytics.xtrinode.io"]
+    resources: ["xtrinodes/valuesoverlay"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: xtrinode-overlay-editors
+  namespace: team-analytics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: xtrinode-overlay-editor
+subjects:
+  - kind: Group
+    name: platform-overlay-editors
+    apiGroup: rbac.authorization.k8s.io
+```
+
+Tenant runtime authors should not receive
+`analytics.xtrinode.io/xtrinodes/valuesoverlay`. Status or read-only roles also
+must not include it.
+
+Local overlay policy examples:
+
+| Policy Area | Example Rule |
+| --- | --- |
+| Image registry | Allow `valuesOverlay.image.repository` only when empty or prefixed with an approved registry such as `registry.example.com/xtrinode/`. Pair this with image signing or digest policy when available. |
+| Secret references | Keep references namespace-local and restrict overlay Secret names with a prefix such as `xtrinode-`. Secret label checks require a policy engine that can inspect referenced Secrets; require a label such as `xtrinode.io/overlay-readable=true` when available. |
+| Service annotations | Reject annotation keys outside a small allowlist, for example `prometheus.io/scrape`, `prometheus.io/port`, and explicitly approved cloud-provider keys. Validate structured annotation values separately. |
+| Node selectors | Use typed `spec.placement`, not `valuesOverlay`, and allow only approved keys and values such as `xtrinode.io/nodepool=analytics-standard`. |
+| Existing pools | Allow only approved `spec.placement.existingNodePool` pairs, for example `provider: gcp, name: analytics-standard`. |
+| Tolerations | Prefer narrow `Equal` tolerations for XTrinode-dedicated taints such as `xtrinode.io/workload=trino:NoSchedule`; avoid broad `Exists` tolerations for tenant namespaces. |
+
+ValidatingAdmissionPolicy-style CEL for an approved image registry:
+
+```text
+!has(object.spec.valuesOverlay) ||
+!has(object.spec.valuesOverlay.image) ||
+!has(object.spec.valuesOverlay.image.repository) ||
+object.spec.valuesOverlay.image.repository.startsWith("registry.example.com/xtrinode/")
+```
+
+For catalog credentials, prefer `XTrinodeCatalog.propertySecretRefs` and typed
+Secret fields. The catalog webhook already checks whether the admission user can
+`get` referenced Secrets in the catalog namespace.
+
 When Trino HTTP authentication is enabled, configure `spec.trinoControlAuth` so
 the operator and worker shutdown hooks can call internal Trino lifecycle APIs:
 
@@ -648,6 +734,79 @@ also rejects raw config-property overrides that disable the HTTP listener or
 change the HTTP port. Use `valuesOverlay.service.port` for supported port
 changes so generated Services, routes, status, autosuspend, and graceful
 shutdown stay aligned.
+
+### Admission Webhook Operations
+
+XTrinode admission webhooks are served by the operator process. They default and
+validate `XTrinode` resources and validate `XTrinodeCatalog` resources. Keep
+`webhook.failurePolicy: Fail` in production so privileged overlay checks,
+catalog Secret checks, break-glass checks, defaults, and runtime-shape
+validation fail closed when the webhook is unreachable.
+
+Rollout checklist:
+
+1. Confirm CRDs are installed before applying `XTrinode` or `XTrinodeCatalog`
+   objects.
+2. Confirm the operator Deployment is ready and exposes the webhook port through
+   its Service.
+3. Confirm the webhook TLS Secret exists and is mounted into the operator pod.
+4. Confirm the `MutatingWebhookConfiguration` and
+   `ValidatingWebhookConfiguration` point at the operator Service and have a
+   `caBundle`.
+5. Keep `webhook.timeoutSeconds` below the API server request timeout and high
+   enough for SubjectAccessReview checks used by privileged overlay and catalog
+   Secret authorization.
+6. Apply a harmless server-side dry-run `XTrinode` create or update before
+   rolling changes to tenant namespaces.
+
+Useful checks:
+
+```bash
+kubectl -n xtrinode-system get deploy,svc,endpointslices,secret \
+  -l app.kubernetes.io/name=xtrinode-operator
+
+kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration \
+  -l app.kubernetes.io/name=xtrinode-operator -o wide
+
+kubectl -n xtrinode-system logs deploy/xtrinode-operator --tail=200
+
+kubectl auth can-i update xtrinodes/valuesoverlay.analytics.xtrinode.io \
+  -n team-analytics --as user@example.com
+```
+
+`failurePolicy: Ignore` is an emergency-only availability tradeoff. While it is
+active, the Kubernetes API server can admit `valuesOverlay` or
+`helmChartConfig` changes without the privileged authorization check, catalog
+Secret references without the webhook Secret access check, specs that should
+have been rejected, and objects that miss webhook defaults. If `Ignore` is used,
+scope it to the shortest possible window, record the reason, review all
+`XTrinode` and `XTrinodeCatalog` changes admitted during that window, and revert
+to `Fail` as soon as the webhook Service is healthy.
+
+When creates or updates fail with webhook connection, TLS, or timeout errors:
+
+1. Stop broad rollout automation that writes `XTrinode` or `XTrinodeCatalog`
+   resources.
+2. Check operator readiness, logs, Service endpoints, and webhook configuration.
+3. Roll back the Helm release if the failure started after an upgrade.
+4. Confirm the webhook Secret name matches the Deployment volume and webhook
+   `caBundle`.
+5. Retry a server-side dry-run update against a non-critical runtime.
+6. Use `failurePolicy: Ignore` only when the control plane must admit unrelated
+   changes before the webhook can be restored.
+
+The API server is not in the admission webhook serving path. If the API server is
+down but the operator webhook is healthy, Kubernetes admission for `XTrinode`
+objects can still work. The outage affects direct lifecycle API calls and gateway
+auto-resume requests. Operators with Kubernetes RBAC can still patch
+`spec.suspended` directly, and the admission webhook still validates that patch.
+
+Alert or run a periodic check for operator Deployment availability, empty
+webhook Service endpoints, webhook timeout/TLS/connection errors, admission
+latency approaching `webhook.timeoutSeconds`, webhook certificate expiry,
+`failurePolicy` changes away from `Fail`, denied privileged overlay or catalog
+Secret admission attempts, API server availability, resume Lease errors, and
+sustained gated resume or suspend requests.
 
 ## Gateway Route States
 
@@ -701,6 +860,21 @@ stateDiagram-v2
   Deleting --> [*]: resources cleaned and finalizer removed
 ```
 
+The compact ordering table below is the operational contract for lifecycle race
+questions:
+
+| Operation | Gate Or Trigger | Operator Order | Route State Before Ready | New Query Acceptance |
+| --- | --- | --- | --- | --- |
+| Create or spec update | Kubernetes watch event | Process commands, apply guardrails, optionally wait for node pool, render Trino resources, reconcile wake TTL, configure KEDA or fixed workers, check runtime readiness | `RESUMING` until readiness passes | Rejected until route becomes `RUNNING` |
+| Remove node pool | `spec.nodePool` removed while status records a previously provisioned node pool | Remove XTrinode owner references from the last observed provider node-pool resources, refresh observed runtime shape, then reconcile the runtime without a managed node pool | Follows normal create or update route behavior | No direct query impact; runtime readiness still gates `RUNNING` |
+| Explicit suspend | Direct spec change or API-server suspend command; API requests use a suspend Lease | Set `Suspending`, publish `PAUSED`, check active queries, disable KEDA or native HPA, scale coordinator/workers down, optionally scale node pool down, mark `Suspended` | `PAUSED` before scale-down starts | Rejected while existing query drain is checked |
+| Autosuspend | Idle check after runtime readiness | Patch `spec.suspended=true` through the same command path, then follow suspend ordering | `PAUSED` after the suspend reconcile publishes route state | Rejected after `PAUSED` is visible to the gateway |
+| Explicit resume | Direct spec change or API-server resume command; API requests use a runtime Lease | Clear suspended intent, set `Resuming`, apply wake window, restore node-pool minimum when needed, scale coordinator, seed fixed/native-HPA workers when needed, reconcile KEDA, wait for readiness | `RESUMING` until readiness passes | Rejected with retry guidance until `RUNNING` |
+| Gateway auto-resume | No selectable backend or coordinator connection failure | Gateway calls API server, API server acquires pool or runtime Lease and annotates target runtime, operator follows resume ordering | Existing `PAUSED` or `RESUMING` backend remains non-routable | Original query gets `503` and `Retry-After`; retry can run after `RUNNING` |
+| KEDA handoff | `spec.keda.enabled=true` and scaler config present | Wake TTL is reconciled before KEDA so expired wake floors are removed, then the ScaledObject is created or updated; suspend disables KEDA before scale-down | Route state still follows runtime readiness, not KEDA object creation alone | New queries require `RUNNING`; KEDA may scale workers after resume |
+| Native HPA handoff | `valuesOverlay.server.autoscaling.enabled=true` | Resume scales the coordinator and seeds worker replicas to the HPA floor if the target is zero; suspend deletes the HPA before scale-down | Route state still follows runtime readiness | New queries require `RUNNING`; HPA owns worker scaling after seed |
+| Delete | Deletion timestamp and finalizer | Mark route `DRAINING`, wait for query-aware drain or fallback window, deregister route, delete KEDA and Trino resources, apply node-pool deletion policy, reconcile guardrails, remove finalizer | `DRAINING`, then `REMOVED` | New queries rejected; sticky continuations allowed only while `DRAINING` |
+
 ### Create Or Update
 
 For create and update operations, the operator resolves catalogs, applies
@@ -708,6 +882,17 @@ guardrails, optionally waits for node-pool readiness, renders Kubernetes
 resources, configures worker scaling, waits for runtime readiness, publishes the
 ready gateway route, and updates status. Spec changes are the normal source of
 reconciliation.
+
+Removing `spec.nodePool` from a live runtime stops XTrinode management of the
+previously provisioned provider node pool. The operator uses
+`status.observedRuntimeShape.nodePool` to reconstruct the provider, mode, and
+resolved node-pool name, removes XTrinode owner references from the CAPI/CAP*
+resources, refreshes observed runtime shape, and continues reconciliation
+without managed node-pool ownership. This is a retain operation; it does not
+delete or scale down the provider resources. If the runtime is deleted after the
+field is removed but before a normal update reconcile completes, finalizer
+cleanup applies the same observed-status retain path before removing the
+XTrinode finalizer.
 
 ### Suspend
 
@@ -735,6 +920,13 @@ guardrails, and removes the finalizer. `deletionPolicy: Retain` removes
 XTrinode owner references and leaves managed node-pool resources in place, while
 `deletionPolicy: ScaleToZero` scales the pool down through the node-pool scale
 path and then retains the object.
+
+`ScaleToZero` is a best-effort provider handoff. The operator patches the
+provider node-pool scale fields or autoscaler annotations it owns, then retains
+the object. Actual cloud node removal can lag behind finalizer completion, and
+provider quotas, autoscaler limits, or provider controllers may keep nodes longer
+than XTrinode reconciliation. Inspect the retained CAPI/CAP* resource and cloud
+provider node-pool status when cost or capacity release is urgent.
 
 ## Catalog Flow
 

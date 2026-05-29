@@ -135,6 +135,7 @@ func (r *XTrinodeReconciler) syncSchedulingCondition(ctx context.Context, xtrino
 			blockers.add(reason, message, fmt.Sprintf("%s deployment %s: %s: %s", component, deployment.Name, reason, message))
 		}
 	}
+	r.addClusterSchedulingDiagnostics(ctx, &blockers, pods.Items, log)
 	if blockers.hasAny() {
 		setSchedulingBlockedConditions(xtrinode, &blockers)
 		return

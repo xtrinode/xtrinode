@@ -45,6 +45,9 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments/scale"]
   verbs: ["get", "patch", "update"]
+- apiGroups: ["apps"]
+  resources: ["daemonsets"]
+  verbs: ["get", "list", "watch"]
 
 # HorizontalPodAutoscaler permissions
 - apiGroups: ["autoscaling"]
@@ -69,6 +72,9 @@ rules:
 # Runtime readiness permissions
 - apiGroups: ["discovery.k8s.io"]
   resources: ["endpointslices"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes"]
   verbs: ["get", "list", "watch"]
 
 # ServiceAccount permissions (for creating ServiceAccounts for XTrinode instances)
@@ -136,6 +142,17 @@ rules:
     - machinepools/status
     - machinepools/finalizers
   verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+
+# Provider machine diagnostics for node-pool provisioning failures
+- apiGroups: ["infrastructure.cluster.x-k8s.io"]
+  resources:
+    - awsmachines
+    - awsmachines/status
+    - azuremachines
+    - azuremachines/status
+    - gcpmachines
+    - gcpmachines/status
+  verbs: ["get", "list", "watch"]
 
 # Infrastructure provider permissions used by the node pool adapter
 - apiGroups: ["infrastructure.cluster.x-k8s.io"]

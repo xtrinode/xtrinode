@@ -16,6 +16,7 @@ AUTO_SUSPEND_AFTER="${AUTO_SUSPEND_AFTER:-1h}"
 WAIT_FOR_NODEPOOL="${WAIT_FOR_NODEPOOL:-true}"
 WAIT_FOR_WORKLOAD_NODES="${WAIT_FOR_WORKLOAD_NODES:-true}"
 WAIT_FOR_TRINO_ROLLOUT="${WAIT_FOR_TRINO_ROLLOUT:-false}"
+VERIFY_NODEPOOL_REMOVAL_RETAIN="${VERIFY_NODEPOOL_REMOVAL_RETAIN:-false}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-30m}"
 KUBECTL="${KUBECTL:-kubectl}"
 
@@ -70,6 +71,61 @@ workload_nodepool_converged() {
   fi
 
   printf '%s\n' "$readiness" | awk 'NF && $2 != "True" { bad = 1 } END { exit bad }'
+}
+
+xtrinode_owner_reference_names() {
+  local kind="$1"
+  local name="$2"
+
+  "$KUBECTL" get "${kind}/${name}" -n "$TARGET_NAMESPACE" \
+    -o jsonpath="{range .metadata.ownerReferences[?(@.kind==\"XTrinode\")]}{.name}{\"\n\"}{end}"
+}
+
+retained_resource_is_unowned_by_xtrinode() {
+  local kind="$1"
+  local name="$2"
+  local owners
+
+  owners="$(xtrinode_owner_reference_names "$kind" "$name")" || return 1
+  ! printf '%s\n' "$owners" | grep -Fxq "$XTRINODE_NAME"
+}
+
+wait_for_retained_nodepool_resources() {
+  local wait_seconds
+  local deadline
+
+  wait_seconds="$(duration_to_seconds "$WAIT_TIMEOUT")"
+  deadline="$(( SECONDS + wait_seconds ))"
+
+  until "$KUBECTL" get "machinepool/${NODEPOOL_NAME}" "gcpmanagedmachinepool/${NODEPOOL_NAME}" -n "$TARGET_NAMESPACE" >/dev/null 2>&1; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "Timed out waiting for retained node-pool resources ${NODEPOOL_NAME}" >&2
+      exit 1
+    fi
+    sleep 10
+  done
+
+  until retained_resource_is_unowned_by_xtrinode machinepool "$NODEPOOL_NAME" \
+    && retained_resource_is_unowned_by_xtrinode gcpmanagedmachinepool "$NODEPOOL_NAME"; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "Timed out waiting for retained node-pool resources to drop XTrinode owner references" >&2
+      "$KUBECTL" get "machinepool/${NODEPOOL_NAME}" "gcpmanagedmachinepool/${NODEPOOL_NAME}" -n "$TARGET_NAMESPACE" -o yaml
+      exit 1
+    fi
+    sleep 10
+  done
+}
+
+verify_nodepool_removal_retain() {
+  echo "Verifying spec.nodePool removal retains provider node-pool resources..."
+  "$KUBECTL" patch xtrinode "$XTRINODE_NAME" -n "$TARGET_NAMESPACE" \
+    --type=merge \
+    -p '{"spec":{"nodePool":null}}'
+  "$KUBECTL" wait "xtrinode/${XTRINODE_NAME}" -n "$TARGET_NAMESPACE" \
+    --for=jsonpath='{.status.conditions[?(@.type=="NodePoolReady")].reason}'=NodePoolRetained \
+    --timeout="$WAIT_TIMEOUT"
+  wait_for_retained_nodepool_resources
+  echo "Retained MachinePool and GCPManagedMachinePool no longer have XTrinode owner references."
 }
 
 CONTROL_PLANE_VERSION="$(
@@ -198,6 +254,14 @@ if [ "$WAIT_FOR_NODEPOOL" = "true" ]; then
     fi
     echo "Skipping Trino rollout wait; CAPG managed node pools are created in the workload cluster and the smoke runtime remains suspended."
   fi
+fi
+
+if [ "$VERIFY_NODEPOOL_REMOVAL_RETAIN" = "true" ]; then
+  if [ "$WAIT_FOR_NODEPOOL" != "true" ]; then
+    echo "ERROR: VERIFY_NODEPOOL_REMOVAL_RETAIN=true requires WAIT_FOR_NODEPOOL=true" >&2
+    exit 1
+  fi
+  verify_nodepool_removal_retain
 fi
 
 "$KUBECTL" get xtrinode "$XTRINODE_NAME" -n "$TARGET_NAMESPACE" -o wide
