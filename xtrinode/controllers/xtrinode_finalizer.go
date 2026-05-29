@@ -295,6 +295,22 @@ func (r *XTrinodeReconciler) cleanupResources(ctx context.Context, xtrinode *ana
 				r.EventRecorder.Normal(xtrinode, events.ReasonNodePoolDeleted, "Node pool deletion completed")
 			}
 		}
+	} else if retained, ok, err := xtrinodeWithRemovedObservedNodePool(xtrinode); ok {
+		if err != nil {
+			log.Error(err, "failed to reconstruct removed node pool from observed status during cleanup")
+			r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolRetainFailed, "Failed to retain removed node pool: %v", err)
+			criticalErr = errors.Join(criticalErr, fmt.Errorf("failed to retain removed node pool: %w", err))
+		} else {
+			nodePoolName := getNodePoolName(retained.Spec.NodePool, xtrinode.Name)
+			log.Info("Retaining removed node pool during XTrinode cleanup", "xtrinode", xtrinode.Name, "nodePool", nodePoolName)
+			if err := r.NodePoolAdapter.RetainNodePool(ctx, retained); err != nil {
+				log.Error(err, "failed to retain removed node pool")
+				r.EventRecorder.Warningf(xtrinode, events.ReasonNodePoolRetainFailed, "Failed to retain removed node pool: %v", err)
+				criticalErr = errors.Join(criticalErr, fmt.Errorf("failed to retain removed node pool: %w", err))
+			} else {
+				r.EventRecorder.Normal(xtrinode, events.ReasonNodePoolRetained, "Node pool retained because spec.nodePool was removed before deletion")
+			}
+		}
 	}
 
 	// Note: Catalog ConfigMaps are managed by XTrinodeCatalog controller via owner references

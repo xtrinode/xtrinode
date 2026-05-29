@@ -98,6 +98,8 @@ require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'WAIT_FOR_WORKLOAD_NOD
   "CAPG smoke waits for workload-cluster nodes by default"
 require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'WAIT_FOR_TRINO_ROLLOUT="${WAIT_FOR_TRINO_ROLLOUT:-false}"' \
   "CAPG smoke does not wait for management-cluster Trino rollout by default"
+require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'VERIFY_NODEPOOL_REMOVAL_RETAIN="${VERIFY_NODEPOOL_REMOVAL_RETAIN:-false}"' \
+  "CAPG smoke keeps nodepool removal retain verification opt-in"
 require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'XTRINODE_SUSPENDED="${XTRINODE_SUSPENDED:-true}"' \
   "CAPG provisioning-only smoke keeps the runtime suspended by default"
 require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'NODEPOOL_SCALE_DOWN_ON_SUSPEND="${NODEPOOL_SCALE_DOWN_ON_SUSPEND:-false}"' \
@@ -110,5 +112,11 @@ require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'xtrinode.io/node-pool
   "CAPG smoke verifies workload nodes by XTrinode nodepool label"
 require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'Timed out waiting for workload nodes labelled xtrinode.io/node-pool=${NODEPOOL_NAME}' \
   "CAPG smoke handles the zero-matching-node wait edge case"
+require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'NodePoolRetained' \
+  "CAPG smoke can verify spec.nodePool removal retention"
+require_contains "scripts/capi/test-xtrinode-nodepool.sh" 'Retained MachinePool and GCPManagedMachinePool no longer have XTrinode owner references.' \
+  "CAPG retain smoke checks provider resources were retained without XTrinode owners"
+require_contains "Makefile" "gcp-capg-nodepool-retain-smoke" \
+  "Makefile exposes the CAPG nodepool retain smoke"
 
 printf 'Completed %s edge-case checks.\n' "$CHECKS"

@@ -15,6 +15,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -67,7 +68,12 @@ func TestSyncSchedulingConditionReportsUnschedulablePod(t *testing.T) {
 			},
 		},
 	}
-	reconciler := newRuntimeReadinessReconciler(t, xtrinode, pod)
+	node := testReadySchedulingNode("node-a", nil, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("4"),
+		corev1.ResourceMemory: resource.MustParse("16Gi"),
+		corev1.ResourcePods:   resource.MustParse("20"),
+	})
+	reconciler := newRuntimeReadinessReconciler(t, xtrinode, pod, node)
 
 	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
 
@@ -108,7 +114,12 @@ func TestSyncSchedulingConditionClassifiesPlacementAndTaintBlockers(t *testing.T
 			},
 		},
 	}
-	reconciler := newRuntimeReadinessReconciler(t, xtrinode, pod)
+	node := testReadySchedulingNode("node-a", nil, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("4"),
+		corev1.ResourceMemory: resource.MustParse("16Gi"),
+		corev1.ResourcePods:   resource.MustParse("20"),
+	})
+	reconciler := newRuntimeReadinessReconciler(t, xtrinode, pod, node)
 
 	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
 
@@ -151,6 +162,98 @@ func TestSyncSchedulingConditionReportsQuotaReplicaFailures(t *testing.T) {
 	require.Equal(t, metav1.ConditionFalse, quotaCondition.Status)
 	require.Equal(t, status.ConditionReasonQuotaBlocked, quotaCondition.Reason)
 	require.Contains(t, quotaCondition.Message, "exceeded quota")
+}
+
+func TestSyncSchedulingConditionAddsNodeSelectorDiagnostics(t *testing.T) {
+	xtrinode := testRuntimeReadinessXTrinode(nil)
+	pod := testPendingRuntimePod(xtrinode, "runtime-worker-0", corev1.ResourceList{})
+	pod.Spec.NodeSelector = map[string]string{"disk": "ssd"}
+	node := testReadySchedulingNode("node-a", map[string]string{"disk": "hdd"}, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("4"),
+		corev1.ResourceMemory: resource.MustParse("16Gi"),
+		corev1.ResourcePods:   resource.MustParse("20"),
+	})
+	reconciler := newRuntimeReadinessReconciler(t, pod, node)
+
+	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
+
+	placementCondition := status.GetCondition(xtrinode, status.ConditionTypePlacementReady)
+	require.NotNil(t, placementCondition)
+	require.Equal(t, metav1.ConditionFalse, placementCondition.Status)
+	require.Equal(t, status.ConditionReasonPlacementBlocked, placementCondition.Reason)
+	require.Contains(t, placementCondition.Message, "node selector")
+}
+
+func TestSyncSchedulingConditionTreatsEmptyRequiredNodeSelectorTermAsNoMatch(t *testing.T) {
+	xtrinode := testRuntimeReadinessXTrinode(nil)
+	pod := testPendingRuntimePod(xtrinode, "runtime-worker-0", corev1.ResourceList{})
+	pod.Spec.Affinity = &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{}},
+			},
+		},
+	}
+	node := testReadySchedulingNode("node-a", nil, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("4"),
+		corev1.ResourceMemory: resource.MustParse("16Gi"),
+		corev1.ResourcePods:   resource.MustParse("20"),
+	})
+	reconciler := newRuntimeReadinessReconciler(t, pod, node)
+
+	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
+
+	placementCondition := status.GetCondition(xtrinode, status.ConditionTypePlacementReady)
+	require.NotNil(t, placementCondition)
+	require.Equal(t, metav1.ConditionFalse, placementCondition.Status)
+	require.Equal(t, status.ConditionReasonPlacementBlocked, placementCondition.Reason)
+}
+
+func TestSyncSchedulingConditionAddsTaintDiagnostics(t *testing.T) {
+	xtrinode := testRuntimeReadinessXTrinode(nil)
+	pod := testPendingRuntimePod(xtrinode, "runtime-worker-0", corev1.ResourceList{})
+	node := testReadySchedulingNode("node-a", nil, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("4"),
+		corev1.ResourceMemory: resource.MustParse("16Gi"),
+		corev1.ResourcePods:   resource.MustParse("20"),
+	})
+	node.Spec.Taints = []corev1.Taint{
+		{Key: "dedicated", Value: "analytics", Effect: corev1.TaintEffectNoSchedule},
+	}
+	reconciler := newRuntimeReadinessReconciler(t, pod, node)
+
+	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
+
+	taintsCondition := status.GetCondition(xtrinode, status.ConditionTypeTaintsReady)
+	require.NotNil(t, taintsCondition)
+	require.Equal(t, metav1.ConditionFalse, taintsCondition.Status)
+	require.Equal(t, status.ConditionReasonTaintsBlocked, taintsCondition.Reason)
+	require.Contains(t, taintsCondition.Message, "untolerated")
+}
+
+func TestSyncSchedulingConditionAccountsForDaemonSetOverhead(t *testing.T) {
+	xtrinode := testRuntimeReadinessXTrinode(nil)
+	pod := testPendingRuntimePod(xtrinode, "runtime-worker-0", corev1.ResourceList{
+		corev1.ResourceCPU: resource.MustParse("900m"),
+	})
+	node := testReadySchedulingNode("node-a", nil, corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("1"),
+		corev1.ResourceMemory: resource.MustParse("16Gi"),
+		corev1.ResourcePods:   resource.MustParse("20"),
+	})
+	daemonSet := testSchedulingDaemonSet("node-agent", "kube-system", corev1.ResourceList{
+		corev1.ResourceCPU: resource.MustParse("200m"),
+	})
+	reconciler := newRuntimeReadinessReconciler(t, pod, node, daemonSet)
+
+	reconciler.syncSchedulingCondition(context.Background(), xtrinode, newTestLogger())
+
+	capacityCondition := status.GetCondition(xtrinode, status.ConditionTypeCapacityReady)
+	require.NotNil(t, capacityCondition)
+	require.Equal(t, metav1.ConditionFalse, capacityCondition.Status)
+	require.Equal(t, status.ConditionReasonCapacityBlocked, capacityCondition.Reason)
+	require.Contains(t, capacityCondition.Message, "DaemonSet overhead")
+	require.Contains(t, capacityCondition.Message, "bestAvailable=cpu=800m")
 }
 
 func TestCheckTrinoRuntimeReadyRequiresWorkerFloor(t *testing.T) {
@@ -425,6 +528,76 @@ func testRuntimeReadinessEndpoint(xtrinode *analyticsv1.XTrinode) *discoveryv1.E
 		},
 		Ports: []discoveryv1.EndpointPort{
 			{Name: stringPtr("http"), Port: int32Ptr(config.TrinoPortHTTP)},
+		},
+	}
+}
+
+func testPendingRuntimePod(xtrinode *analyticsv1.XTrinode, name string, requests corev1.ResourceList) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: xtrinode.Namespace,
+			Labels:    trinoresources.TrinoSelectorLabels(xtrinode, trinoresources.ComponentWorker),
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "trino",
+					Resources: corev1.ResourceRequirements{
+						Requests: requests,
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+		},
+	}
+}
+
+func testReadySchedulingNode(name string, labels map[string]string, allocatable corev1.ResourceList) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: labels,
+		},
+		Status: corev1.NodeStatus{
+			Allocatable: allocatable,
+			Conditions: []corev1.NodeCondition{
+				{
+					Type:   corev1.NodeReady,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		},
+	}
+}
+
+func testSchedulingDaemonSet(name, namespace string, requests corev1.ResourceList) *appsv1.DaemonSet {
+	return &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": name},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": name},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: name,
+							Resources: corev1.ResourceRequirements{
+								Requests: requests,
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 }

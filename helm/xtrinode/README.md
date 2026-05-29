@@ -175,6 +175,16 @@ Raw config-property overlays may not disable the Trino HTTP listener or override
 `http-server.http.port` directly. Use `valuesOverlay.service.port` for supported HTTP port changes
 so generated Services, routes, status, autosuspend, and graceful shutdown use the same port.
 
+### Admission Webhook Failure Policy
+
+`xtrinode-operator.webhook.failurePolicy` defaults to `Fail`. Keep that default in production so
+privileged overlay authorization, catalog Secret authorization, break-glass checks, defaults, and
+runtime-shape validation fail closed when the operator webhook is unreachable.
+
+Setting it to `Ignore` is an emergency availability tradeoff. During that window, the Kubernetes API
+server can admit `XTrinode` or `XTrinodeCatalog` changes that the webhook would normally reject or
+default. Review all admitted changes and revert to `Fail` after the webhook Service is healthy.
+
 ### Control-Plane Node Pool Placement
 
 Keep XTrinode control-plane agents on a small, always-on node pool and keep Trino coordinator and

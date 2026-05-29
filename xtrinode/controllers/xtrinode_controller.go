@@ -59,12 +59,14 @@ type XTrinodeReconciler struct {
 // +kubebuilder:rbac:groups=analytics.xtrinode.io,resources=xtrinodes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=analytics.xtrinode.io,resources=xtrinodes/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;create;update;patch
+// +kubebuilder:rbac:groups="",resources=pods;nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=resourcequotas;limitranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments/scale,verbs=get;update;patch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses;networkpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -72,6 +74,8 @@ type XTrinodeReconciler struct {
 // +kubebuilder:rbac:groups=keda.sh,resources=scaledobjects,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=keda.sh,resources=triggerauthentications,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinedeployments;machinepools,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines;machinesets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=awsmachines;azuremachines;gcpmachines,verbs=get;list;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 
 func (r *XTrinodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -151,6 +155,15 @@ func (r *XTrinodeReconciler) reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
+	result, nodePoolRemovalErr := r.reconcileRemovedNodePool(ctx, &xtrinode)
+	if nodePoolRemovalErr != nil || result.RequeueAfter > 0 {
+		if nodePoolRemovalErr != nil {
+			metrics.ReconcileTotal.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "error").Inc()
+			metrics.ReconcileErrors.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "nodepool_removal_error").Inc()
+		}
+		return result, nodePoolRemovalErr
+	}
+
 	// Handle suspend/resume logic
 	if xtrinode.Spec.Suspended {
 		// XTrinode is suspended - disable KEDA first, then scale deployments
@@ -184,15 +197,15 @@ func (r *XTrinodeReconciler) reconcile(ctx context.Context, req ctrl.Request) (c
 	// Execute reconciliation pipeline
 	// KEDA remains fixed-replica unless the XTrinode has an explicit scaler config.
 	pipeline := NewReconciliationPipeline(r, &xtrinode)
-	result, err := pipeline.Execute(ctx, &xtrinode, log)
-	if err != nil {
-		r.EventRecorder.Warningf(&xtrinode, events.ReasonReconcileError, "Reconciliation failed: %v", err)
+	pipelineResult, pipelineErr := pipeline.Execute(ctx, &xtrinode, log)
+	if pipelineErr != nil {
+		r.EventRecorder.Warningf(&xtrinode, events.ReasonReconcileError, "Reconciliation failed: %v", pipelineErr)
 		metrics.ReconcileTotal.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "error").Inc()
 		metrics.ReconcileErrors.WithLabelValues(xtrinode.Namespace, xtrinode.Name, "pipeline_error").Inc()
-		return result, err
+		return pipelineResult, pipelineErr
 	}
-	if result.RequeueAfter > 0 {
-		return result, nil
+	if pipelineResult.RequeueAfter > 0 {
+		return pipelineResult, nil
 	}
 
 	if err := r.reconcileReadyGatewayRoute(ctx, &xtrinode); err != nil {

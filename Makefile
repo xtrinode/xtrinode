@@ -1440,6 +1440,11 @@ gcp-capg-nodepool-smoke: gcp-configure-kubectl ## Apply a XTrinode CR that creat
 	@echo "Running CAPG nodepool smoke..."
 	TARGET_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE) CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME) WAIT_TIMEOUT=$(CAPG_WAIT_TIMEOUT) KUBECTL="$(KUBECTL)" bash scripts/capi/test-xtrinode-nodepool.sh
 
+.PHONY: gcp-capg-nodepool-retain-smoke
+gcp-capg-nodepool-retain-smoke: gcp-configure-kubectl ## Verify removing spec.nodePool retains CAPG provider resources
+	@echo "Running CAPG nodepool retain smoke..."
+	TARGET_NAMESPACE=$(CAPG_WORKLOAD_NAMESPACE) CLUSTER_NAME=$(CAPG_WORKLOAD_CLUSTER_NAME) WAIT_TIMEOUT=$(CAPG_WAIT_TIMEOUT) VERIFY_NODEPOOL_REMOVAL_RETAIN=true KUBECTL="$(KUBECTL)" bash scripts/capi/test-xtrinode-nodepool.sh
+
 .PHONY: gcp-capg-workload-kubeconfig
 gcp-capg-workload-kubeconfig: gcp-configure-kubectl ## Write the generated CAPG workload cluster kubeconfig
 	$(KUBECTL) get secret $(CAPG_WORKLOAD_CLUSTER_NAME)-user-kubeconfig -n $(CAPG_WORKLOAD_NAMESPACE) -o jsonpath='{.data.value}' | base64 -d > $(CAPG_WORKLOAD_KUBECONFIG)
