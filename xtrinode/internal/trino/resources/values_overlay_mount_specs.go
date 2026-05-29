@@ -71,7 +71,10 @@ func roleSecretMountsFromOverlay(xtrinode *analyticsv1.XTrinode, role string) []
 }
 
 func overlayString(values map[string]interface{}, key string) string {
-	value, _ := values[key].(string)
+	value, ok := values[key].(string)
+	if !ok {
+		return ""
+	}
 	return value
 }
 

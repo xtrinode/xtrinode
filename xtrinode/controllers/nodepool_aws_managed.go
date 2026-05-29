@@ -25,8 +25,8 @@ func (n *NodePoolAdapter) ensureAWSManagedMachinePool(ctx context.Context, xtrin
 	}
 
 	// Validate required fields before creation
-	if err := validateNodePoolForCreation(nodePool, resourceExists); err != nil {
-		return fmt.Errorf("nodepool validation failed: %w", err)
+	if validationErr := validateNodePoolForCreation(nodePool, resourceExists); validationErr != nil {
+		return fmt.Errorf("nodepool validation failed: %w", validationErr)
 	}
 
 	// Step 1: Create/update AWSManagedMachinePool (provider infra CRD)
