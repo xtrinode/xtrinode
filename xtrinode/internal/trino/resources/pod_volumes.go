@@ -96,54 +96,10 @@ func buildVolumes(
 	// Add role-specific secret mount volumes
 	addRoleSpecificSecretVolumes(&volumes, xtrinode, role)
 
-	// Add configMount volumes from valuesOverlay (global)
-	if xtrinode.Spec.GetValuesOverlayMap() != nil {
-		if configMounts, ok := xtrinode.Spec.GetValuesOverlayMap()["configMounts"].([]interface{}); ok {
-			for _, cm := range configMounts {
-				if cmMap, ok := cm.(map[string]interface{}); ok {
-					//nolint:errcheck // best-effort type assertion; validated by empty string check below
-					name, _ := cmMap["name"].(string)
-					//nolint:errcheck // best-effort type assertion; validated by empty string check below
-					configMap, _ := cmMap["configMap"].(string)
-					if name != "" && configMap != "" {
-						volumes = append(volumes, corev1.Volume{
-							Name: name,
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: configMap,
-									},
-								},
-							},
-						})
-					}
-				}
-			}
-		}
-		// Add role-specific configMount volumes
+	if values := xtrinode.Spec.GetValuesOverlayMap(); values != nil {
+		appendValuesOverlayConfigVolumes(&volumes, configMountsFromOverlay(values))
 		addRoleSpecificConfigVolumes(&volumes, xtrinode, role)
-		// Add secretMount volumes from valuesOverlay (global)
-		if secretMounts, ok := xtrinode.Spec.GetValuesOverlayMap()["secretMounts"].([]interface{}); ok {
-			for _, sm := range secretMounts {
-				if smMap, ok := sm.(map[string]interface{}); ok {
-					//nolint:errcheck // best-effort type assertion; validated by empty string check below
-					name, _ := smMap["name"].(string)
-					//nolint:errcheck // best-effort type assertion; validated by empty string check below
-					secretName, _ := smMap["secretName"].(string)
-					if name != "" && secretName != "" {
-						volumes = append(volumes, corev1.Volume{
-							Name: name,
-							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
-									SecretName: secretName,
-								},
-							},
-						})
-					}
-				}
-			}
-		}
-		// Add role-specific secretMount volumes
+		appendValuesOverlaySecretVolumes(&volumes, secretMountsFromOverlay(values))
 		addRoleSpecificSecretVolumesFromOverlay(&volumes, xtrinode, role)
 	}
 

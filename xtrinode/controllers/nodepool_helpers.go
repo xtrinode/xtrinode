@@ -56,6 +56,27 @@ func effectiveNodePoolLabels(nodePool *analyticsv1.NodePoolSpec, poolName string
 	return labels
 }
 
+func managedMachinePoolExists(cli client.Client, ctx context.Context, name, namespace string) (bool, error) {
+	existingCheck := buildUnstructuredForDeletion(getMachineResourceGVK(true), name, namespace)
+	return checkResourceExists(cli, ctx, existingCheck)
+}
+
+func newManagedInfrastructurePool(provider, poolName, namespace, clusterName string, xtrinode *analyticsv1.XTrinode) (*unstructured.Unstructured, error) {
+	infraPool := &unstructured.Unstructured{}
+	infraPool.SetGroupVersionKind(getManagedInfrastructureGVK(provider))
+	infraPool.SetName(poolName)
+	infraPool.SetNamespace(namespace)
+	infraPool.SetLabels(map[string]string{
+		"cluster.x-k8s.io/cluster-name": clusterName,
+	})
+
+	// CAPI MachinePool must become the controller owner for managed infra pools.
+	if err := setXTrinodeNonControllerOwnerReference(infraPool, xtrinode); err != nil {
+		return nil, err
+	}
+	return infraPool, nil
+}
+
 // getNodePoolDefaults extracts default values from node pool spec
 // Priority: Per-XTrinode spec → Operator-level defaults → Code defaults
 func getNodePoolDefaults(nodePool *analyticsv1.NodePoolSpec, xtrinode *analyticsv1.XTrinode) NodePoolDefaults {
