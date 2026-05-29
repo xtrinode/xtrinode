@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 )
@@ -22,45 +21,19 @@ func (n *NodePoolAdapter) ensureGCPManagedMachinePool(ctx context.Context, xtrin
 	defaults := getNodePoolDefaults(nodePool, xtrinode)
 	machinePoolVersion := gcpManagedMachinePoolTemplateVersion(nodePool.KubernetesVersion)
 
-	// Check if MachinePool already exists to gate replica setting
-	existingCheck := &unstructured.Unstructured{}
-	existingCheck.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "cluster.x-k8s.io",
-		Version: "v1beta1",
-		Kind:    "MachinePool",
-	})
-	existingCheck.SetName(poolName)
-	existingCheck.SetNamespace(xtrinode.Namespace)
-	resourceExists, err := checkResourceExists(n.client, ctx, existingCheck)
+	resourceExists, err := managedMachinePoolExists(n.client, ctx, poolName, xtrinode.Namespace)
 	if err != nil {
 		return fmt.Errorf("failed to check if MachinePool exists: %w", err)
 	}
 
 	// Validate required fields before creation
-	if err := validateNodePoolForCreation(nodePool, resourceExists); err != nil {
-		return fmt.Errorf("nodepool validation failed: %w", err)
+	if validationErr := validateNodePoolForCreation(nodePool, resourceExists); validationErr != nil {
+		return fmt.Errorf("nodepool validation failed: %w", validationErr)
 	}
 
 	// Step 1: Create/update GCPManagedMachinePool (provider infra CRD)
-	infraPool := &unstructured.Unstructured{}
-	infraPool.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "infrastructure.cluster.x-k8s.io",
-		Version: "v1beta1",
-		Kind:    "GCPManagedMachinePool",
-	})
-	infraPool.SetName(poolName)
-	infraPool.SetNamespace(xtrinode.Namespace)
-
-	// Set cluster label (CAPI standard for cluster association)
-	labels := infraPool.GetLabels()
-	if labels == nil {
-		labels = make(map[string]string)
-	}
-	labels["cluster.x-k8s.io/cluster-name"] = clusterName
-	infraPool.SetLabels(labels)
-
-	// CAPI MachinePool must become the controller owner for managed infra pools.
-	if err := setXTrinodeNonControllerOwnerReference(infraPool, xtrinode); err != nil {
+	infraPool, err := newManagedInfrastructurePool("gcp", poolName, xtrinode.Namespace, clusterName, xtrinode)
+	if err != nil {
 		return err
 	}
 

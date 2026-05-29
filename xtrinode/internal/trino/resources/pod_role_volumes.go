@@ -39,94 +39,10 @@ func addRoleSpecificSecretVolumes(volumes *[]corev1.Volume, xtrinode *analyticsv
 
 // addRoleSpecificConfigVolumes adds role-specific config volumes from valuesOverlay
 func addRoleSpecificConfigVolumes(volumes *[]corev1.Volume, xtrinode *analyticsv1.XTrinode, role string) {
-	if xtrinode.Spec.GetValuesOverlayMap() == nil {
-		return
-	}
-
-	var roleConfig map[string]interface{}
-	var ok bool
-
-	switch role {
-	case "coordinator":
-		roleConfig, ok = xtrinode.Spec.GetValuesOverlayMap()["coordinator"].(map[string]interface{})
-	case "worker":
-		roleConfig, ok = xtrinode.Spec.GetValuesOverlayMap()["worker"].(map[string]interface{})
-	default:
-		return
-	}
-
-	if !ok {
-		return
-	}
-
-	if configMounts, ok := roleConfig["configMounts"].([]interface{}); ok {
-		for _, cm := range configMounts {
-			cmMap, ok := cm.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			//nolint:errcheck // best-effort type assertion; validated by empty string check below
-			name, _ := cmMap["name"].(string)
-			//nolint:errcheck // best-effort type assertion; validated by empty string check below
-			configMap, _ := cmMap["configMap"].(string)
-			if name != "" && configMap != "" {
-				*volumes = append(*volumes, corev1.Volume{
-					Name: name,
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: configMap,
-							},
-						},
-					},
-				})
-			}
-		}
-	}
+	appendValuesOverlayConfigVolumes(volumes, roleConfigMountsFromOverlay(xtrinode, role))
 }
 
 // addRoleSpecificSecretVolumesFromOverlay adds role-specific secret volumes from valuesOverlay
 func addRoleSpecificSecretVolumesFromOverlay(volumes *[]corev1.Volume, xtrinode *analyticsv1.XTrinode, role string) {
-	if xtrinode.Spec.GetValuesOverlayMap() == nil {
-		return
-	}
-
-	var roleConfig map[string]interface{}
-	var ok bool
-
-	switch role {
-	case "coordinator":
-		roleConfig, ok = xtrinode.Spec.GetValuesOverlayMap()["coordinator"].(map[string]interface{})
-	case "worker":
-		roleConfig, ok = xtrinode.Spec.GetValuesOverlayMap()["worker"].(map[string]interface{})
-	default:
-		return
-	}
-
-	if !ok {
-		return
-	}
-
-	if secretMounts, ok := roleConfig["secretMounts"].([]interface{}); ok {
-		for _, sm := range secretMounts {
-			smMap, ok := sm.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			//nolint:errcheck // best-effort type assertion; validated by empty string check below
-			name, _ := smMap["name"].(string)
-			//nolint:errcheck // best-effort type assertion; validated by empty string check below
-			secretName, _ := smMap["secretName"].(string)
-			if name != "" && secretName != "" {
-				*volumes = append(*volumes, corev1.Volume{
-					Name: name,
-					VolumeSource: corev1.VolumeSource{
-						Secret: &corev1.SecretVolumeSource{
-							SecretName: secretName,
-						},
-					},
-				})
-			}
-		}
-	}
+	appendValuesOverlaySecretVolumes(volumes, roleSecretMountsFromOverlay(xtrinode, role))
 }

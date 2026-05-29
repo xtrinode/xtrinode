@@ -14,41 +14,8 @@ import (
 
 // BuildCoordinatorService builds the coordinator Service
 func BuildCoordinatorService(xtrinode *analyticsv1.XTrinode) *corev1.Service {
-	servicePort := trinoHTTPPort(xtrinode)
-
-	ports := []corev1.ServicePort{
-		{
-			Name:       "http",
-			Port:       servicePort,
-			TargetPort: intstr.FromString("http"),
-			Protocol:   corev1.ProtocolTCP,
-		},
-	}
-
-	// Add HTTPS port if TLS enabled
-	if xtrinode.Spec.TLS != nil && xtrinode.Spec.TLS.ServerSecretClass != "" {
-		ports = append(ports, corev1.ServicePort{
-			Name:       "https",
-			Port:       config.TrinoPortHTTPS,
-			TargetPort: intstr.FromString("https"),
-			Protocol:   corev1.ProtocolTCP,
-		})
-	}
-
-	// Add JMX exporter port if enabled
-	if jmxExporterEnabled(xtrinode, "coordinator") {
-		jmxPort := jmxExporterPort(xtrinode, "coordinator")
-		ports = append(ports, corev1.ServicePort{
-			Name:       "jmx-exporter",
-			Port:       jmxPort,
-			TargetPort: intstr.FromString("jmx-exporter"),
-			Protocol:   corev1.ProtocolTCP,
-		})
-	}
-
+	ports := buildRoleServicePorts(xtrinode, "coordinator")
 	serviceType, annotations, nodePort := getServiceConfig(xtrinode)
-	// Add additional exposed ports from coordinator config
-	addAdditionalExposedPorts(&ports, xtrinode, "coordinator")
 
 	// Set nodePort on HTTP port if specified and service type supports it
 	if nodePort != nil && (serviceType == corev1.ServiceTypeNodePort || serviceType == corev1.ServiceTypeLoadBalancer) {
@@ -76,39 +43,7 @@ func BuildCoordinatorService(xtrinode *analyticsv1.XTrinode) *corev1.Service {
 // BuildWorkerService builds the worker Service
 // Worker service is headless (clusterIP: None) per Helm chart pattern
 func BuildWorkerService(xtrinode *analyticsv1.XTrinode) *corev1.Service {
-	servicePort := trinoHTTPPort(xtrinode)
-	ports := []corev1.ServicePort{
-		{
-			Name:       "http",
-			Port:       servicePort,
-			TargetPort: intstr.FromString("http"),
-			Protocol:   corev1.ProtocolTCP,
-		},
-	}
-
-	// Add HTTPS port if TLS enabled
-	if xtrinode.Spec.TLS != nil && xtrinode.Spec.TLS.ServerSecretClass != "" {
-		ports = append(ports, corev1.ServicePort{
-			Name:       "https",
-			Port:       config.TrinoPortHTTPS,
-			TargetPort: intstr.FromString("https"),
-			Protocol:   corev1.ProtocolTCP,
-		})
-	}
-
-	// Add JMX exporter port if enabled
-	if jmxExporterEnabled(xtrinode, "worker") {
-		jmxPort := jmxExporterPort(xtrinode, "worker")
-		ports = append(ports, corev1.ServicePort{
-			Name:       "jmx-exporter",
-			Port:       jmxPort,
-			TargetPort: intstr.FromString("jmx-exporter"),
-			Protocol:   corev1.ProtocolTCP,
-		})
-	}
-
-	// Add additional exposed ports from worker config
-	addAdditionalExposedPorts(&ports, xtrinode, "worker")
+	ports := buildRoleServicePorts(xtrinode, "worker")
 
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -124,6 +59,38 @@ func BuildWorkerService(xtrinode *analyticsv1.XTrinode) *corev1.Service {
 			Selector:  TrinoSelectorLabels(xtrinode, ComponentWorker),
 		},
 	}
+}
+
+func buildRoleServicePorts(xtrinode *analyticsv1.XTrinode, role string) []corev1.ServicePort {
+	ports := []corev1.ServicePort{
+		{
+			Name:       "http",
+			Port:       trinoHTTPPort(xtrinode),
+			TargetPort: intstr.FromString("http"),
+			Protocol:   corev1.ProtocolTCP,
+		},
+	}
+
+	if xtrinode.Spec.TLS != nil && xtrinode.Spec.TLS.ServerSecretClass != "" {
+		ports = append(ports, corev1.ServicePort{
+			Name:       "https",
+			Port:       config.TrinoPortHTTPS,
+			TargetPort: intstr.FromString("https"),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+
+	if jmxExporterEnabled(xtrinode, role) {
+		ports = append(ports, corev1.ServicePort{
+			Name:       "jmx-exporter",
+			Port:       jmxExporterPort(xtrinode, role),
+			TargetPort: intstr.FromString("jmx-exporter"),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+
+	addAdditionalExposedPorts(&ports, xtrinode, role)
+	return ports
 }
 
 func coordinatorServiceName(xtrinode *analyticsv1.XTrinode) string {
