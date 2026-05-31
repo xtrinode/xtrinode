@@ -19,7 +19,7 @@ maintainers:
 dependencies:
   - name: kube-prometheus-stack
     alias: prometheus-stack
-    version: "85.2.0"
+    version: 86.1.0
     repository: https://prometheus-community.github.io/helm-charts
     condition: prometheus-stack.enabled
   - name: xtrinode-vector
