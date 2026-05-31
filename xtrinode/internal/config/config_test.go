@@ -5,6 +5,22 @@ import (
 	"time"
 )
 
+func clearNodePoolPolicyEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		NodePoolEnvDefaultMinNodes,
+		NodePoolEnvDefaultMaxNodes,
+		NodePoolEnvDefaultOSDiskGB,
+		NodePoolEnvValidationMinNodesMin,
+		NodePoolEnvValidationMaxNodesMin,
+		NodePoolEnvValidationMaxNodesMax,
+		NodePoolEnvValidationOSDiskGBMin,
+		NodePoolEnvValidationOSDiskGBMax,
+	} {
+		t.Setenv(name, "")
+	}
+}
+
 func TestBuildCoordinatorServiceName(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -317,5 +333,119 @@ func TestConstants(t *testing.T) {
 	}
 	if DefaultBackendWeight != 100 {
 		t.Errorf("Expected DefaultBackendWeight to be 100, got %d", DefaultBackendWeight)
+	}
+}
+
+func TestNodePoolValidationBoundsFromEnv(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	bounds := NodePoolValidationBoundsFromEnv()
+	if bounds.MinNodesMin != NodePoolValidationMinNodesMin {
+		t.Fatalf("expected default MinNodesMin %d, got %d", NodePoolValidationMinNodesMin, bounds.MinNodesMin)
+	}
+	if bounds.MaxNodesMin != NodePoolValidationMaxNodesMin {
+		t.Fatalf("expected default MaxNodesMin %d, got %d", NodePoolValidationMaxNodesMin, bounds.MaxNodesMin)
+	}
+	if bounds.MaxNodesMax != NodePoolValidationMaxNodesMax {
+		t.Fatalf("expected default MaxNodesMax %d, got %d", NodePoolValidationMaxNodesMax, bounds.MaxNodesMax)
+	}
+	if bounds.OSDiskGBMin != NodePoolValidationOSDiskGBMin {
+		t.Fatalf("expected default OSDiskGBMin %d, got %d", NodePoolValidationOSDiskGBMin, bounds.OSDiskGBMin)
+	}
+	if bounds.OSDiskGBMax != NodePoolValidationOSDiskGBMax {
+		t.Fatalf("expected default OSDiskGBMax %d, got %d", NodePoolValidationOSDiskGBMax, bounds.OSDiskGBMax)
+	}
+
+	t.Setenv(NodePoolEnvValidationMinNodesMin, "1")
+	t.Setenv(NodePoolEnvValidationMaxNodesMin, "2")
+	t.Setenv(NodePoolEnvValidationMaxNodesMax, "200")
+	t.Setenv(NodePoolEnvValidationOSDiskGBMin, "64")
+	t.Setenv(NodePoolEnvValidationOSDiskGBMax, "1024")
+
+	bounds = NodePoolValidationBoundsFromEnv()
+	if bounds != (NodePoolValidationBounds{
+		MinNodesMin: 1,
+		MaxNodesMin: 2,
+		MaxNodesMax: 200,
+		OSDiskGBMin: 64,
+		OSDiskGBMax: 1024,
+	}) {
+		t.Fatalf("unexpected env-backed node-pool validation bounds: %+v", bounds)
+	}
+}
+
+func TestNodePoolValidationBoundsFromEnvNormalizesInvalidValues(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	t.Setenv(NodePoolEnvValidationMinNodesMin, "-5")
+	t.Setenv(NodePoolEnvValidationMaxNodesMin, "0")
+	t.Setenv(NodePoolEnvValidationMaxNodesMax, "0")
+	t.Setenv(NodePoolEnvValidationOSDiskGBMin, "0")
+	t.Setenv(NodePoolEnvValidationOSDiskGBMax, "20")
+
+	bounds := NodePoolValidationBoundsFromEnv()
+	if bounds != (NodePoolValidationBounds{
+		MinNodesMin: NodePoolValidationMinNodesMin,
+		MaxNodesMin: NodePoolValidationMaxNodesMin,
+		MaxNodesMax: NodePoolValidationMaxNodesMin,
+		OSDiskGBMin: NodePoolValidationOSDiskGBMin,
+		OSDiskGBMax: NodePoolValidationOSDiskGBMin,
+	}) {
+		t.Fatalf("unexpected normalized node-pool validation bounds: %+v", bounds)
+	}
+}
+
+func TestNodePoolValidationBoundsFromEnvNormalizesMinAboveMax(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	t.Setenv(NodePoolEnvValidationMinNodesMin, "40")
+	t.Setenv(NodePoolEnvValidationMaxNodesMax, "20")
+
+	bounds := NodePoolValidationBoundsFromEnv()
+	if bounds != (NodePoolValidationBounds{
+		MinNodesMin: 40,
+		MaxNodesMin: NodePoolValidationMaxNodesMin,
+		MaxNodesMax: 40,
+		OSDiskGBMin: NodePoolValidationOSDiskGBMin,
+		OSDiskGBMax: NodePoolValidationOSDiskGBMax,
+	}) {
+		t.Fatalf("unexpected normalized node-pool validation bounds: %+v", bounds)
+	}
+}
+
+func TestNodePoolDefaultValuesFromEnv(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	values := NodePoolDefaultValuesFromEnv()
+	if values != (NodePoolDefaultValues{
+		MinNodes:   NodePoolDefaultMinNodes,
+		MaxNodes:   NodePoolDefaultMaxNodes,
+		DiskSizeGB: NodePoolDefaultDiskSizeGB,
+	}) {
+		t.Fatalf("unexpected default node-pool values: %+v", values)
+	}
+
+	t.Setenv(NodePoolEnvDefaultMinNodes, "3")
+	t.Setenv(NodePoolEnvDefaultMaxNodes, "9")
+	t.Setenv(NodePoolEnvDefaultOSDiskGB, "256")
+
+	values = NodePoolDefaultValuesFromEnv()
+	if values != (NodePoolDefaultValues{MinNodes: 3, MaxNodes: 9, DiskSizeGB: 256}) {
+		t.Fatalf("unexpected env-backed node-pool defaults: %+v", values)
+	}
+}
+
+func TestNodePoolDefaultValuesFromEnvClampsToValidationBounds(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	t.Setenv(NodePoolEnvValidationMaxNodesMax, "20")
+	t.Setenv(NodePoolEnvValidationOSDiskGBMax, "512")
+	t.Setenv(NodePoolEnvDefaultMinNodes, "30")
+	t.Setenv(NodePoolEnvDefaultMaxNodes, "1")
+	t.Setenv(NodePoolEnvDefaultOSDiskGB, "1024")
+
+	values := NodePoolDefaultValuesFromEnv()
+	if values != (NodePoolDefaultValues{MinNodes: 20, MaxNodes: 20, DiskSizeGB: 512}) {
+		t.Fatalf("unexpected clamped node-pool defaults: %+v", values)
 	}
 }

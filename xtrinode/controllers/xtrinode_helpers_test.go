@@ -1240,6 +1240,13 @@ func TestGetNodePoolMinRequiredReplicasWhenMinNodesZero(t *testing.T) {
 			expected: config.NodePoolMinRequiredReplicasWhenMinNodesZero,
 		},
 		{
+			name: "custom zero value",
+			nodePool: &analyticsv1.NodePoolSpec{
+				MinRequiredReplicasWhenMinNodesZero: func() *int32 { v := int32(0); return &v }(),
+			},
+			expected: 0,
+		},
+		{
 			name: "custom value",
 			nodePool: &analyticsv1.NodePoolSpec{
 				MinRequiredReplicasWhenMinNodesZero: func() *int32 { v := int32(5); return &v }(),

@@ -13,6 +13,7 @@ import (
 	"github.com/xtrinode/xtrinode/internal/config"
 	"github.com/xtrinode/xtrinode/internal/trino/controlauth"
 	"github.com/xtrinode/xtrinode/internal/trino/controlendpoint"
+	"github.com/xtrinode/xtrinode/internal/trino/querystate"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,7 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// CheckQueriesBeforeScaleDown checks if there are active queries running/queued
+// CheckQueriesBeforeScaleDown checks if there are active non-terminal queries.
 // Returns true if safe to scale down (no queries), false if queries are active
 // Used for controller-controlled operations (suspend/delete), NOT for KEDA scaling
 func CheckQueriesBeforeScaleDown(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XTrinode, log logr.Logger) (bool, error) {
@@ -91,13 +92,15 @@ func checkQueriesBeforeScaleDownURLWithCredential(ctx context.Context, queryURL 
 		return false, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Count active queries (state: QUEUED or RUNNING)
+	// Count active queries. Fail closed: terminal states are idle; anything else blocks scale-down.
 	activeCount := 0
 	for _, query := range queries {
-		if state, ok := query["state"].(string); ok {
-			if state == "QUEUED" || state == "RUNNING" {
-				activeCount++
-			}
+		state, ok := query["state"].(string)
+		if !ok {
+			state = ""
+		}
+		if querystate.IsActive(state) {
+			activeCount++
 		}
 	}
 

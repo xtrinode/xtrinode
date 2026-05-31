@@ -70,6 +70,43 @@ XTrinode Admission Webhook Rejects Invalid Min Max
     Should Not Be Equal As Integers    ${apply.rc}    0
     Should Contain    ${apply.stdout}    minWorkers must be less than or equal to maxWorkers
 
+XTrinode Admission Webhook Preserves NodePool Sizing For Operator Defaults
+    ${manifest}=    Set Variable    /tmp/xtrinode-nodepool-default-preserve.json
+    ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"nodepool-default-preserve","namespace":"${NAMESPACE}"},"spec":{"size":"xs","minWorkers":0,"maxWorkers":1,"suspended":true,"operatorNodePoolDefaults":{"defaultMinNodes":2,"defaultMaxNodes":20,"defaultOSDiskGB":256},"nodePool":{"provider":"gcp","gcp":{"machineType":"e2-standard-4"}}}}
+    Create File    ${manifest}    ${json}
+    ${result}=    Run Process    kubectl    create    --dry-run\=server    -f    ${manifest}    -o    json
+    Log    ${result.stderr}
+    Should Be Equal As Integers    ${result.rc}    0    msg=${result.stderr}${result.stdout}
+    ${admitted}=    Strip String    ${result.stdout}
+    ${admitted_file}=    Set Variable    /tmp/xtrinode-nodepool-default-preserve-admitted.json
+    Create File    ${admitted_file}    ${admitted}
+    JQ Should Match    ${admitted_file}    .spec.nodePool.minNodes == null and .spec.nodePool.maxNodes == null and .spec.nodePool.osDiskGB == null and .spec.operatorNodePoolDefaults.defaultMinNodes == 2 and .spec.operatorNodePoolDefaults.defaultMaxNodes == 20 and .spec.operatorNodePoolDefaults.defaultOSDiskGB == 256
+
+XTrinode Admission Webhook Rejects Effective NodePool Min Above Max
+    ${manifest}=    Set Variable    /tmp/xtrinode-nodepool-invalid-effective-minmax.json
+    ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"nodepool-invalid-effective-minmax","namespace":"${NAMESPACE}"},"spec":{"size":"xs","minWorkers":0,"maxWorkers":1,"suspended":true,"operatorNodePoolDefaults":{"defaultMinNodes":10},"nodePool":{"provider":"gcp","maxNodes":5,"gcp":{"machineType":"e2-standard-4"}}}}
+    Create File    ${manifest}    ${json}
+    ${apply}=    Run Command Allow Failure    kubectl    apply    --validate=false    -f    ${manifest}
+    Should Not Be Equal As Integers    ${apply.rc}    0
+    Should Contain    ${apply.stdout}    effective minNodes must be less than or equal to effective maxNodes
+
+XTrinode Admission Webhook Honors Operator NodePool Policy Env
+    [Teardown]    Run Keywords    Restore Operator NodePool Policy Env
+    ...    AND    Run Keyword If Test Failed    Dump Debug
+    Set Operator NodePool Policy Env    XTRINODE_NODEPOOL_VALIDATION_MAX_NODES_MAX=20    XTRINODE_NODEPOOL_VALIDATION_OS_DISK_GB_MIN=64
+    ${default_manifest}=    Set Variable    /tmp/xtrinode-nodepool-env-defaultmax.json
+    ${default_json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"nodepool-env-defaultmax","namespace":"${NAMESPACE}"},"spec":{"size":"xs","minWorkers":0,"maxWorkers":1,"suspended":true,"operatorNodePoolDefaults":{"defaultMaxNodes":21},"nodePool":{"provider":"gcp","gcp":{"machineType":"e2-standard-4"}}}}
+    Create File    ${default_manifest}    ${default_json}
+    ${default_apply}=    Run Command Allow Failure    kubectl    apply    --validate=false    -f    ${default_manifest}
+    Should Not Be Equal As Integers    ${default_apply.rc}    0
+    Should Contain    ${default_apply.stdout}    defaultMaxNodes must be at most 20
+    ${disk_manifest}=    Set Variable    /tmp/xtrinode-nodepool-env-disk.json
+    ${disk_json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"nodepool-env-disk","namespace":"${NAMESPACE}"},"spec":{"size":"xs","minWorkers":0,"maxWorkers":1,"suspended":true,"nodePool":{"provider":"gcp","osDiskGB":32,"gcp":{"machineType":"e2-standard-4"}}}}
+    Create File    ${disk_manifest}    ${disk_json}
+    ${disk_apply}=    Run Command Allow Failure    kubectl    apply    --validate=false    -f    ${disk_manifest}
+    Should Not Be Equal As Integers    ${disk_apply.rc}    0
+    Should Contain    ${disk_apply.stdout}    osDiskGB must be at least 64
+
 XTrinode Admission Webhook Rejects KEDA And Native HPA
     ${manifest}=    Set Variable    /tmp/xtrinode-invalid-keda-native-hpa.json
     ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"invalid-keda-native-hpa-contract","namespace":"${NAMESPACE}"},"spec":{"size":"xs","keda":{"enabled":true,"scalerType":"prometheus","scalingMetric":"query"},"valuesOverlay":{"server":{"autoscaling":{"enabled":true,"targetCPUUtilizationPercentage":70}}}}}
@@ -192,6 +229,17 @@ Runtime Condition Message Should Match
     ${json}=    Kubectl Output    get    xtrinode/${runtime}    -n    ${NAMESPACE}    -o    json
     Create File    ${runtime_file}    ${json}
     JQ Should Match    ${runtime_file}    any(.status.conditions[]; .type == $type and .status == $status and .reason == $reason and ((.message // "") | test($message_pattern)))    --arg    type    ${condition_type}    --arg    status    ${condition_status}    --arg    reason    ${reason}    --arg    message_pattern    ${message_pattern}
+
+Set Operator NodePool Policy Env
+    [Arguments]    @{env_args}
+    Command Should Succeed    kubectl    set    env    deployment/xtrinode-operator    -n    ${OPERATOR_NAMESPACE}    @{env_args}
+    Command Should Succeed    kubectl    rollout    status    deployment/xtrinode-operator    -n    ${OPERATOR_NAMESPACE}    --timeout=180s
+    Wait Until Keyword Succeeds    180s    ${POLL_INTERVAL}    Deployment Should Be Available    ${OPERATOR_NAMESPACE}    xtrinode-operator    1
+
+Restore Operator NodePool Policy Env
+    Run Command Allow Failure    kubectl    set    env    deployment/xtrinode-operator    -n    ${OPERATOR_NAMESPACE}    XTRINODE_NODEPOOL_VALIDATION_MAX_NODES_MAX-    XTRINODE_NODEPOOL_VALIDATION_OS_DISK_GB_MIN-
+    Run Command Allow Failure    kubectl    rollout    status    deployment/xtrinode-operator    -n    ${OPERATOR_NAMESPACE}    --timeout=180s
+    Wait Until Keyword Succeeds    180s    ${POLL_INTERVAL}    Deployment Should Be Available    ${OPERATOR_NAMESPACE}    xtrinode-operator    1
 
 Prepare Typed Runtime Shape Contract
     Cleanup Typed Runtime Shape Contract Objects

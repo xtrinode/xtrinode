@@ -24,6 +24,21 @@ func TestQueryActivityTrackerObserveAndTerminalState(t *testing.T) {
 	require.Equal(t, 0.0, testutil.ToFloat64(gatewayInflightQueries.WithLabelValues("team-a", "test", "test", "RUNNING")))
 }
 
+func TestQueryActivityTrackerTreatsNonTerminalStatesAsActive(t *testing.T) {
+	gatewayInflightQueries.Reset()
+	tracker := NewQueryActivityTracker(time.Minute)
+
+	tracker.Observe("q1", "team-a", "test", "test", "http://trino-1:8080", " planning ")
+	require.Equal(t, 1.0, testutil.ToFloat64(gatewayInflightQueries.WithLabelValues("team-a", "test", "test", "PLANNING")))
+
+	load := tracker.BackendLoads()["http://trino-1:8080"]
+	require.Equal(t, 1, load.RunningQueries)
+	require.Equal(t, 0, load.QueuedQueries)
+
+	tracker.Observe("q1", "team-a", "test", "test", "http://trino-1:8080", "FAILED")
+	require.Equal(t, 0.0, testutil.ToFloat64(gatewayInflightQueries.WithLabelValues("team-a", "test", "test", "PLANNING")))
+}
+
 func TestQueryActivityTrackerCleanupExpired(t *testing.T) {
 	gatewayInflightQueries.Reset()
 	now := time.Now()
@@ -83,11 +98,4 @@ func TestQueryActivityTrackerStartCleanupReturnsForNilAndCanceledContext(t *test
 	case <-time.After(time.Second):
 		t.Fatal("StartCleanup did not return after context cancellation")
 	}
-}
-
-func TestNormalizeQueryState(t *testing.T) {
-	require.Equal(t, "UNKNOWN", normalizeQueryState(""))
-	require.Equal(t, "RUNNING", normalizeQueryState("RUNNING"))
-	require.True(t, isTerminalQueryState("FAILED"))
-	require.False(t, isTerminalQueryState("RUNNING"))
 }

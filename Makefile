@@ -218,7 +218,7 @@ TRIVY_CONFIG_TARGETS ?= \
 	$(VECTOR_HELM_CHART_PATH)
 
 # Test configuration
-COVERAGE_THRESHOLD ?= $(if $(coverage),$(coverage),65)
+COVERAGE_THRESHOLD ?= $(if $(coverage),$(coverage),70)
 CI_COVERAGE_THRESHOLD ?= $(COVERAGE_THRESHOLD)
 TEST_TIMEOUT ?= 10m
 TEST_FLAGS ?= -v -race -timeout $(TEST_TIMEOUT) -failfast -count=1
@@ -248,7 +248,7 @@ help: ## Display this help message
 	@echo "  OPERATOR_NAMESPACE   Operator namespace (default: xtrinode-system)"
 	@echo "  GATEWAY_NAMESPACE    Gateway namespace (default: xtrinode-gateway)"
 	@echo "  API_SERVER_NAMESPACE API Server namespace (default: xtrinode-system)"
-	@echo "  COVERAGE_THRESHOLD   Minimum test coverage (default: 65)"
+	@echo "  COVERAGE_THRESHOLD   Minimum test coverage (default: 70)"
 	@echo "  TF_ENV               Terraform environment (default: dev)"
 	@echo "  TF_VAR_FILE          Terraform variables file (default: terraform.tfvars)"
 	@echo "  TERRAFORM_CLOUDS     Terraform clouds used by generic/CI checks (default: gcp)"

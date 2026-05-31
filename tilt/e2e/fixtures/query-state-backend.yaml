@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-state-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: query-state-backend
+  template:
+    metadata:
+      labels:
+        app: query-state-backend
+        app.kubernetes.io/component: coordinator
+        app.kubernetes.io/instance: local-trino-keda
+        app.kubernetes.io/managed-by: xtrinode-operator
+        app.kubernetes.io/name: trino
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: python:3.12-alpine
+          command: ["python", "/app/server.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: BACKEND_NAME
+              value: query-state
+            - name: STATUS_CODE
+              value: "200"
+            - name: GET_QUERY_STATE
+              value: PLANNING
+            - name: POST_QUERY_STATE
+              value: PLANNING
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: query-state-backend-script

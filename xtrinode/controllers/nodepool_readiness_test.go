@@ -48,17 +48,103 @@ func TestWaitForNodePoolReady(t *testing.T) {
 			expectedRequeueAfter: config.NodePoolResourceNotFoundRequeueInterval.String(),
 		},
 		{
-			name: "status missing requeues",
+			name: "status missing requeues when replicas are required",
 			xtrinode: testReadinessXTrinode(
 				&analyticsv1.NodePoolSpec{
 					Provider: "aws",
 					AWS:      &analyticsv1.AWSNodePoolSpec{InstanceType: "m5.xlarge"},
+					MinNodes: int32Ptr(1),
 				},
 			),
 			resource:             testReadinessResource("runtime", "team-a", nil),
 			wantReady:            false,
 			wantRequeueAfter:     true,
 			expectedRequeueAfter: config.NodePoolStatusNotAvailableRequeueInterval.String(),
+		},
+		{
+			name: "min nodes zero default allows missing status",
+			xtrinode: testReadinessXTrinode(
+				&analyticsv1.NodePoolSpec{
+					Provider: "aws",
+					AWS:      &analyticsv1.AWSNodePoolSpec{InstanceType: "m5.xlarge"},
+					MinNodes: int32Ptr(0),
+				},
+			),
+			resource:  testReadinessResource("runtime", "team-a", nil),
+			wantReady: true,
+		},
+		{
+			name: "min nodes zero default allows zero ready replicas",
+			xtrinode: testReadinessXTrinode(
+				&analyticsv1.NodePoolSpec{
+					Provider: "aws",
+					AWS:      &analyticsv1.AWSNodePoolSpec{InstanceType: "m5.xlarge"},
+					MinNodes: int32Ptr(0),
+				},
+			),
+			resource:  testReadinessResource("runtime", "team-a", map[string]interface{}{"readyReplicas": int64(0), "replicas": int64(0)}),
+			wantReady: true,
+		},
+		{
+			name: "min nodes zero custom required replicas requeues",
+			xtrinode: testReadinessXTrinode(
+				&analyticsv1.NodePoolSpec{
+					Provider:                            "aws",
+					AWS:                                 &analyticsv1.AWSNodePoolSpec{InstanceType: "m5.xlarge"},
+					MinNodes:                            int32Ptr(0),
+					MinRequiredReplicasWhenMinNodesZero: int32Ptr(1),
+				},
+			),
+			resource:             testReadinessResource("runtime", "team-a", map[string]interface{}{"readyReplicas": int64(0), "replicas": int64(0)}),
+			wantReady:            false,
+			wantRequeueAfter:     true,
+			expectedRequeueAfter: config.NodePoolNoNodesReadyRequeueInterval.String(),
+		},
+		{
+			name: "operator default min nodes requires status when nodePool minNodes unset",
+			xtrinode: testReadinessXTrinodeWithDefaults(
+				&analyticsv1.NodePoolSpec{
+					Provider: "aws",
+					AWS:      &analyticsv1.AWSNodePoolSpec{InstanceType: "m5.xlarge"},
+				},
+				&analyticsv1.OperatorNodePoolDefaultsSpec{
+					DefaultMinNodes: int32Ptr(2),
+				},
+			),
+			resource:             testReadinessResource("runtime", "team-a", nil),
+			wantReady:            false,
+			wantRequeueAfter:     true,
+			expectedRequeueAfter: config.NodePoolStatusNotAvailableRequeueInterval.String(),
+		},
+		{
+			name: "operator default min nodes below required requeues",
+			xtrinode: testReadinessXTrinodeWithDefaults(
+				&analyticsv1.NodePoolSpec{
+					Provider: "aws",
+					AWS:      &analyticsv1.AWSNodePoolSpec{InstanceType: "m5.xlarge"},
+				},
+				&analyticsv1.OperatorNodePoolDefaultsSpec{
+					DefaultMinNodes: int32Ptr(2),
+				},
+			),
+			resource:             testReadinessResource("runtime", "team-a", map[string]interface{}{"readyReplicas": int64(1), "replicas": int64(2)}),
+			wantReady:            false,
+			wantRequeueAfter:     true,
+			expectedRequeueAfter: config.NodePoolNodesReadyRequeueInterval.String(),
+		},
+		{
+			name: "operator default min nodes satisfied",
+			xtrinode: testReadinessXTrinodeWithDefaults(
+				&analyticsv1.NodePoolSpec{
+					Provider: "aws",
+					AWS:      &analyticsv1.AWSNodePoolSpec{InstanceType: "m5.xlarge"},
+				},
+				&analyticsv1.OperatorNodePoolDefaultsSpec{
+					DefaultMinNodes: int32Ptr(2),
+				},
+			),
+			resource:  testReadinessResource("runtime", "team-a", map[string]interface{}{"readyReplicas": int64(2), "replicas": int64(2)}),
+			wantReady: true,
 		},
 		{
 			name: "ready replicas below required requeues",
@@ -302,6 +388,12 @@ func testReadinessXTrinode(nodePool *analyticsv1.NodePoolSpec) *analyticsv1.XTri
 			NodePool: nodePool,
 		},
 	}
+}
+
+func testReadinessXTrinodeWithDefaults(nodePool *analyticsv1.NodePoolSpec, defaults *analyticsv1.OperatorNodePoolDefaultsSpec) *analyticsv1.XTrinode {
+	xtrinode := testReadinessXTrinode(nodePool)
+	xtrinode.Spec.OperatorNodePoolDefaults = defaults
+	return xtrinode
 }
 
 func testReadinessResource(xtrinodeName, namespace string, resourceStatus map[string]interface{}) *unstructured.Unstructured {

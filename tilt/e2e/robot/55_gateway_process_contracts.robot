@@ -18,6 +18,7 @@ ${CIRCUIT_ROUTE}                e2e-process-circuit
 ${HALF_OPEN_OVERLOAD_ROUTE}     e2e-process-half-open-overload
 ${HALF_OPEN_PAUSED_ROUTE}       e2e-process-half-open-paused
 ${RATE_ROUTE}                   e2e-process-rate-limit
+${LOAD_ROUTE}                   e2e-process-load-state
 ${PROCESS_QUERY_ID}             20260508_000000_00001_e2e01
 ${PAUSED_FAIL_SEQUENCE}         500,500,500,500,500,200,200
 ${PAUSED_HEALTHY_SEQUENCE}      200,200
@@ -47,6 +48,25 @@ Gateway Keeps Sticky Query On Draining Backend And Persists It In Redis
     Set Gateway Process Routes    ${STICKY_ROUTE}    gateway-process-backend-a    process-a    DRAINING    false
     Wait Until Keyword Succeeds    60s    2s    Gateway Sticky Continuation Should Return Backend    ${STICKY_ROUTE}    process-a
     Wait Until Keyword Succeeds    60s    2s    Gateway New Statement Should Return Status    ${STICKY_ROUTE}    503
+
+Gateway Counts Non Terminal Query State As Backend Load
+    TRY
+        Set Gateway Process Backend Query States    gateway-process-backend-a    FINISHED    PLANNING
+        Restart Gateway Process Backend    gateway-process-backend-a
+        Set Gateway Process Dual Routes    ${LOAD_ROUTE}
+        Wait Until Keyword Succeeds    60s    2s    Gateway Process Info Should Return Backend    ${LOAD_ROUTE}    process-a
+
+        ${first_status}=    HTTP Request To File    POST    http://127.0.0.1:${GATEWAY_PORT}/v1/statement    /tmp/xtrinode-gateway-process-load-first.json    SELECT 1    X-Trino-User: local-e2e-contracts    X-Trino-XTrinode: ${LOAD_ROUTE}
+        Should Be Equal    ${first_status}    200
+        JQ Should Match    /tmp/xtrinode-gateway-process-load-first.json    .backend == "process-a" and .stats.state == "PLANNING"
+
+        ${second_status}=    HTTP Request To File    POST    http://127.0.0.1:${GATEWAY_PORT}/v1/statement    /tmp/xtrinode-gateway-process-load-second.json    SELECT 1    X-Trino-User: local-e2e-contracts    X-Trino-XTrinode: ${LOAD_ROUTE}
+        Should Be Equal    ${second_status}    200
+        JQ Should Match    /tmp/xtrinode-gateway-process-load-second.json    .backend == "process-b"
+    FINALLY
+        Run Command Allow Failure    kubectl    set    env    deployment/gateway-process-backend-a    -n    ${NAMESPACE}    GET_QUERY_STATE=FINISHED    POST_QUERY_STATE=RUNNING
+        Run Command Allow Failure    kubectl    rollout    status    deployment/gateway-process-backend-a    -n    ${NAMESPACE}    --timeout=180s
+    END
 
 Gateway Circuit Breaker Opens Against Failing Backend
     Set Gateway Process Routes    ${CIRCUIT_ROUTE}    gateway-process-backend-bad    process-bad    RUNNING    true
@@ -217,6 +237,10 @@ Set Gateway Process Backend Status Sequence
     [Arguments]    ${deployment}    ${sequence}
     Command Should Succeed    kubectl    set    env    deployment/${deployment}    -n    ${NAMESPACE}    STATUS_SEQUENCE=${sequence}
 
+Set Gateway Process Backend Query States
+    [Arguments]    ${deployment}    ${get_state}    ${post_state}
+    Command Should Succeed    kubectl    set    env    deployment/${deployment}    -n    ${NAMESPACE}    GET_QUERY_STATE=${get_state}    POST_QUERY_STATE=${post_state}
+
 Backend Pods Should Be Gone
     [Arguments]    ${app}
     ${pods}=    Kubectl Output    get    pods    -n    ${NAMESPACE}    -l    app=${app}    -o    jsonpath={.items[*].metadata.name}
@@ -225,6 +249,11 @@ Backend Pods Should Be Gone
 Set Gateway Process Routes
     [Arguments]    ${route_name}    ${backend_service}    ${backend_name}    ${state}    ${active}
     ${routes}=    Set Variable    {"routes":[{"name":"${route_name}","routingGroup":"${route_name}","header":"${route_name}","backends":[{"name":"${backend_service}","namespace":"${NAMESPACE}","coordinatorURL":"http://${backend_service}.${NAMESPACE}.svc.cluster.local:8080","state":"${state}","active":${active},"capacityUnits":1}]}]}
+    Patch Gateway Routes ConfigMap    ${routes}
+
+Set Gateway Process Dual Routes
+    [Arguments]    ${route_name}
+    ${routes}=    Set Variable    {"routes":[{"name":"${route_name}","routingGroup":"${route_name}","header":"${route_name}","backends":[{"name":"gateway-process-backend-a","namespace":"${NAMESPACE}","coordinatorURL":"http://gateway-process-backend-a.${NAMESPACE}.svc.cluster.local:8080","state":"RUNNING","active":true,"capacityUnits":1},{"name":"gateway-process-backend-b","namespace":"${NAMESPACE}","coordinatorURL":"http://gateway-process-backend-b.${NAMESPACE}.svc.cluster.local:8080","state":"RUNNING","active":true,"capacityUnits":1}]}]}
     Patch Gateway Routes ConfigMap    ${routes}
 
 Patch Gateway Routes ConfigMap

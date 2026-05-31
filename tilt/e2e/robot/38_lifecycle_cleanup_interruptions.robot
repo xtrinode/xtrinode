@@ -18,12 +18,16 @@ ${ROUTES_PATCH_FILE}                /tmp/xtrinode-lifecycle-cleanup-routes-patch
 ${TEMP_XTRINODE_FILE}               /tmp/xtrinode-lifecycle-cleanup-xtrinode.json
 ${LEASES_JSON_FILE}                 /tmp/xtrinode-lifecycle-cleanup-leases.json
 ${XTRINODE_JSON_FILE}               /tmp/xtrinode-lifecycle-cleanup-runtime.json
+${QUERY_STATE_BACKEND_SCRIPT}       ${REPO_ROOT}/tilt/e2e/fixtures/gateway-process-backend.py
+${QUERY_STATE_BACKEND_MANIFEST}     ${REPO_ROOT}/tilt/e2e/fixtures/query-state-backend.yaml
+${QUERY_STATE_BACKEND_DEPLOYMENT}   query-state-backend
 ${RESUME_REQUESTED_ANNOTATION}      xtrinode.analytics.xtrinode.io/resume-requested
 ${RESUME_REQUESTED_AT_ANNOTATION}   xtrinode.analytics.xtrinode.io/resume-requested-at
 ${SUSPEND_REQUESTED_ANNOTATION}     xtrinode.analytics.xtrinode.io/suspend-requested
 ${SUSPEND_REQUESTED_AT_ANNOTATION}  xtrinode.analytics.xtrinode.io/suspend-requested-at
 ${WAKE_MIN_WORKERS_ANNOTATION}      xtrinode.analytics.xtrinode.io/wake-min-workers
 ${WAKE_TTL_ANNOTATION}              xtrinode.analytics.xtrinode.io/wake-ttl
+${GATEWAY_STATUS_FILE}              /tmp/xtrinode-lifecycle-gateway-status.json
 
 *** Test Cases ***
 Gateway Route Registration Repairs After Operator Interruption
@@ -100,6 +104,7 @@ Gateway Rejects New Queries During Suspend And Resume Transitions
 
         Suspend Local Runtime Through API
         Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Contain Runtime With State    ${XTRINODE_NAME}    PAUSED
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Status Should Contain Runtime With State    ${XTRINODE_NAME}    PAUSED
         Gateway Statement Should Return Status    /tmp/xtrinode-lifecycle-suspend-transition-query.json    SELECT 1    503
         JQ Should Match    /tmp/xtrinode-lifecycle-suspend-transition-query.json    (.error // "") | test("resum|retry|suspend|unavailable")
         Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    XTrinode Suspended State Should Be    false
@@ -112,10 +117,12 @@ Gateway Rejects New Queries During Suspend And Resume Transitions
         Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Deployment Spec Replicas Should Equal    ${NAMESPACE}    ${COORDINATOR_DEPLOYMENT}    0
         Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Deployment Spec Replicas Should Equal    ${NAMESPACE}    ${WORKER_DEPLOYMENT}    0
         Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Contain Runtime With State    ${XTRINODE_NAME}    PAUSED
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Status Should Contain Runtime With State    ${XTRINODE_NAME}    PAUSED
 
         Gateway Statement Should Return Status    /tmp/xtrinode-lifecycle-resume-trigger-query.json    SELECT 1    503
         JQ Should Match    /tmp/xtrinode-lifecycle-resume-trigger-query.json    .triggered == true
         Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Contain Runtime With State    ${XTRINODE_NAME}    RESUMING
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Status Should Contain Runtime With State    ${XTRINODE_NAME}    RESUMING
         Gateway Statement Should Return Status    /tmp/xtrinode-lifecycle-resuming-transition-query.json    SELECT 1    503
         JQ Should Match    /tmp/xtrinode-lifecycle-resuming-transition-query.json    (.error // "") | test("resum|retry|unavailable")
         Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Gateway Route Should Be Registered
@@ -123,6 +130,31 @@ Gateway Rejects New Queries During Suspend And Resume Transitions
         Gateway Statement Should Return Status    /tmp/xtrinode-lifecycle-after-resume-query.json    SELECT 1    200
     FINALLY
         Ensure Local Runtime Resumed
+        Clear API Server Leases
+    END
+
+Suspend Waits While Query Endpoint Reports Non Terminal State
+    TRY
+        Ensure Local Runtime Resumed
+        Clear API Server Leases
+        Deploy Query State Backend
+        Set Query State Backend Query State    PLANNING
+        Route Local Coordinator Service To Query State Backend
+        Wait Until Keyword Succeeds    60s    2s    Local Coordinator Service Should Return Query State    PLANNING
+        Suspend Local Runtime Through API
+        Wait Until Keyword Succeeds    60s    2s    Gateway Route Should Contain Runtime With State    ${XTRINODE_NAME}    PAUSED
+        Sleep    5s
+        Deployment Spec Replicas Should Equal    ${NAMESPACE}    ${COORDINATOR_DEPLOYMENT}    1
+        Deployment Spec Replicas Should Equal    ${NAMESPACE}    ${WORKER_DEPLOYMENT}    1
+
+        Set Query State Backend Query State    FINISHED
+        Wait Until Keyword Succeeds    60s    2s    Local Coordinator Service Should Return Query State    FINISHED
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Deployment Spec Replicas Should Equal    ${NAMESPACE}    ${COORDINATOR_DEPLOYMENT}    0
+        Wait Until Keyword Succeeds    ${WAIT_TIMEOUT}    ${POLL_INTERVAL}    Deployment Spec Replicas Should Equal    ${NAMESPACE}    ${WORKER_DEPLOYMENT}    0
+    FINALLY
+        Run Keyword And Ignore Error    Restore Local Coordinator Service Selector
+        Run Keyword And Ignore Error    Delete Query State Backend
+        Run Keyword And Ignore Error    Ensure Local Runtime Resumed
         Clear API Server Leases
     END
 
@@ -135,6 +167,8 @@ Setup Lifecycle Cleanup Interruption Suite
 
 Teardown Lifecycle Cleanup Interruption Suite
     Run Keyword And Ignore Error    Restore Operator
+    Run Keyword And Ignore Error    Restore Local Coordinator Service Selector
+    Run Keyword And Ignore Error    Delete Query State Backend
     Run Keyword And Ignore Error    Cleanup Interrupted Runtime
     Run Keyword And Ignore Error    Restore Original Gateway Routes
     Run Keyword And Ignore Error    Clear API Server Leases
@@ -179,6 +213,12 @@ Gateway Route Should Contain Runtime With State
     Should Contain    ${routes}    name: ${runtime}
     Should Contain    ${routes}    state: ${state}
 
+Gateway Status Should Contain Runtime With State
+    [Arguments]    ${runtime}    ${state}
+    ${status}=    HTTP Request To File    GET    http://127.0.0.1:${GATEWAY_PORT}/ui/admin/api/gateway/status    ${GATEWAY_STATUS_FILE}    ${EMPTY}
+    Should Be Equal    ${status}    200
+    JQ Should Match    ${GATEWAY_STATUS_FILE}    any(.routes[].backends[]; .namespace == $namespace and .name == $runtime and .state == $state)    --arg    namespace    ${NAMESPACE}    --arg    runtime    ${runtime}    --arg    state    ${state}
+
 Ensure Interrupted Cleanup Runtime Route
     Cleanup Interrupted Runtime
     ${json}=    Set Variable    {"apiVersion":"analytics.xtrinode.io/v1","kind":"XTrinode","metadata":{"name":"${CLEANUP_XTRINODE_NAME}","namespace":"${NAMESPACE}","labels":{"test.xtrinode.io/contract":"lifecycle-cleanup"}},"spec":{"size":"xs","minWorkers":1,"maxWorkers":1,"suspended":true,"autoSuspendAfter":"30m","routing":{"header":"X-Trino-XTrinode=${CLEANUP_XTRINODE_NAME}","routingGroup":"${CLEANUP_ROUTE_GROUP}"}}}
@@ -215,6 +255,43 @@ ScaledObject Min Replicas Should Equal
 
 Clear API Server Leases
     Run Command Allow Failure    kubectl    delete    lease    -n    ${OPERATOR_NAMESPACE}    -l    app.kubernetes.io/name=xtrinode-operator,app.kubernetes.io/component=api-server    --ignore-not-found=true
+
+Deploy Query State Backend
+    ${configmap_yaml}=    Command Should Succeed    kubectl    create    configmap    query-state-backend-script    -n    ${NAMESPACE}    --from-file=server.py=${QUERY_STATE_BACKEND_SCRIPT}    --dry-run=client    -o    yaml
+    Create File    /tmp/xtrinode-query-state-backend-cm.yaml    ${configmap_yaml}
+    Command Should Succeed    kubectl    apply    -f    /tmp/xtrinode-query-state-backend-cm.yaml
+    Command Should Succeed    kubectl    apply    -n    ${NAMESPACE}    -f    ${QUERY_STATE_BACKEND_MANIFEST}
+    Command Should Succeed    kubectl    rollout    status    deployment/${QUERY_STATE_BACKEND_DEPLOYMENT}    -n    ${NAMESPACE}    --timeout=180s
+    Wait Until Keyword Succeeds    180s    3s    Deployment Should Be Available    ${NAMESPACE}    ${QUERY_STATE_BACKEND_DEPLOYMENT}    1
+
+Delete Query State Backend
+    Run Command Allow Failure    kubectl    delete    deployment/${QUERY_STATE_BACKEND_DEPLOYMENT}    -n    ${NAMESPACE}    --ignore-not-found=true    --wait=false
+    Run Command Allow Failure    kubectl    delete    configmap/query-state-backend-script    -n    ${NAMESPACE}    --ignore-not-found=true
+
+Set Query State Backend Query State
+    [Arguments]    ${state}
+    Command Should Succeed    kubectl    set    env    deployment/${QUERY_STATE_BACKEND_DEPLOYMENT}    -n    ${NAMESPACE}    GET_QUERY_STATE=${state}    POST_QUERY_STATE=${state}
+    Command Should Succeed    kubectl    rollout    status    deployment/${QUERY_STATE_BACKEND_DEPLOYMENT}    -n    ${NAMESPACE}    --timeout=180s
+
+Route Local Coordinator Service To Query State Backend
+    Detach Real Coordinator Pods From Local Service
+
+Detach Real Coordinator Pods From Local Service
+    ${selector}=    Set Variable    app.kubernetes.io/name=trino,app.kubernetes.io/instance=${XTRINODE_NAME},app.kubernetes.io/component=coordinator,!app
+    Command Should Succeed    kubectl    label    pods    -n    ${NAMESPACE}    -l    ${selector}    app.kubernetes.io/component=coordinator-detached    --overwrite
+
+Local Coordinator Service Should Return Query State
+    [Arguments]    ${state}
+    ${pod}=    Kubectl Output    get    pods    -n    ${NAMESPACE}    -l    app=query-state-backend    -o    jsonpath={.items[0].metadata.name}
+    ${url}=    Set Variable    http://trino-${XTRINODE_NAME}.${NAMESPACE}.svc.cluster.local:8080/v1/query
+    ${script}=    Set Variable    import urllib.request; print(urllib.request.urlopen('${url}', timeout=3).read().decode())
+    ${response}=    Command Should Succeed    kubectl    exec    -n    ${NAMESPACE}    ${pod}    --    python    -c    ${script}
+    Should Contain    ${response}    ${state}
+
+Restore Local Coordinator Service Selector
+    Run Command Allow Failure    kubectl    label    pods    -n    ${NAMESPACE}    -l    app.kubernetes.io/name=trino,app.kubernetes.io/instance=${XTRINODE_NAME},app.kubernetes.io/component=coordinator-detached    app.kubernetes.io/component=coordinator    --overwrite
+    ${selector_patch}=    Set Variable    [{"op":"replace","path":"/spec/selector","value":{"app.kubernetes.io/name":"trino","app.kubernetes.io/instance":"${XTRINODE_NAME}","app.kubernetes.io/managed-by":"xtrinode-operator","app.kubernetes.io/component":"coordinator"}}]
+    Run Command Allow Failure    kubectl    patch    service    trino-${XTRINODE_NAME}    -n    ${NAMESPACE}    --type=json    -p    ${selector_patch}
 
 Suspend Local Runtime Through API
     ${status}=    HTTP Request To File    POST    http://127.0.0.1:${API_SERVER_PORT}/api/v1/runtimes/${NAMESPACE}/${XTRINODE_NAME}/suspend    /tmp/xtrinode-lifecycle-cleanup-suspend.json    {}

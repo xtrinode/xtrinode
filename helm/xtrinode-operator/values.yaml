@@ -99,6 +99,9 @@ resources:
     cpu: 250m
     memory: 256Mi
 
+# Additional environment variables for operator-wide policy knobs.
+extraEnv: []
+
 priorityClassName: ""
 
 nodeSelector: {}

@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -714,6 +716,145 @@ const (
 	NodePoolTemplateSuffix = "-template"
 )
 
+// NodePoolEnvVars defines operator environment variables for node-pool policy.
+const (
+	// NodePoolEnvDefaultMinNodes overrides the fallback managed node-pool minimum.
+	NodePoolEnvDefaultMinNodes = "XTRINODE_NODEPOOL_DEFAULT_MIN_NODES"
+	// NodePoolEnvDefaultMaxNodes overrides the fallback managed node-pool maximum.
+	NodePoolEnvDefaultMaxNodes = "XTRINODE_NODEPOOL_DEFAULT_MAX_NODES"
+	// NodePoolEnvDefaultOSDiskGB overrides the fallback managed node-pool OS disk size.
+	NodePoolEnvDefaultOSDiskGB = "XTRINODE_NODEPOOL_DEFAULT_OS_DISK_GB"
+
+	// NodePoolEnvValidationMinNodesMin overrides the lowest admitted node-pool minNodes value.
+	NodePoolEnvValidationMinNodesMin = "XTRINODE_NODEPOOL_VALIDATION_MIN_NODES_MIN"
+	// NodePoolEnvValidationMaxNodesMin overrides the lowest admitted node-pool maxNodes value.
+	NodePoolEnvValidationMaxNodesMin = "XTRINODE_NODEPOOL_VALIDATION_MAX_NODES_MIN"
+	// NodePoolEnvValidationMaxNodesMax overrides the highest admitted node-pool maxNodes value.
+	NodePoolEnvValidationMaxNodesMax = "XTRINODE_NODEPOOL_VALIDATION_MAX_NODES_MAX"
+	// NodePoolEnvValidationOSDiskGBMin overrides the lowest admitted node-pool OS disk size.
+	NodePoolEnvValidationOSDiskGBMin = "XTRINODE_NODEPOOL_VALIDATION_OS_DISK_GB_MIN"
+	// NodePoolEnvValidationOSDiskGBMax overrides the highest admitted node-pool OS disk size.
+	NodePoolEnvValidationOSDiskGBMax = "XTRINODE_NODEPOOL_VALIDATION_OS_DISK_GB_MAX"
+)
+
+// NodePoolValidationDefaults defines default admission policy bounds for node pools.
+const (
+	// NodePoolValidationMinNodesMin is the default lowest admitted minNodes value.
+	NodePoolValidationMinNodesMin = 0
+	// NodePoolValidationMaxNodesMin is the default lowest admitted maxNodes value.
+	NodePoolValidationMaxNodesMin = 1
+	// NodePoolValidationMaxNodesMax is the default highest admitted maxNodes value.
+	NodePoolValidationMaxNodesMax = 1000
+	// NodePoolValidationOSDiskGBMin is the default lowest admitted OS disk size.
+	NodePoolValidationOSDiskGBMin = 30
+	// NodePoolValidationOSDiskGBMax is the default highest admitted OS disk size.
+	NodePoolValidationOSDiskGBMax = 2048
+)
+
+// NodePoolValidationBounds contains effective node-pool admission policy limits.
+type NodePoolValidationBounds struct {
+	MinNodesMin int32
+	MaxNodesMin int32
+	MaxNodesMax int32
+	OSDiskGBMin int32
+	OSDiskGBMax int32
+}
+
+// NodePoolDefaultValues contains effective fallback node-pool defaults.
+type NodePoolDefaultValues struct {
+	MinNodes   int32
+	MaxNodes   int32
+	DiskSizeGB int32
+}
+
+// NodePoolValidationBoundsFromEnv returns node-pool admission bounds after applying environment overrides.
+func NodePoolValidationBoundsFromEnv() NodePoolValidationBounds {
+	bounds := NodePoolValidationBounds{
+		MinNodesMin: envInt32(NodePoolEnvValidationMinNodesMin, NodePoolValidationMinNodesMin),
+		MaxNodesMin: envInt32(NodePoolEnvValidationMaxNodesMin, NodePoolValidationMaxNodesMin),
+		MaxNodesMax: envInt32(NodePoolEnvValidationMaxNodesMax, NodePoolValidationMaxNodesMax),
+		OSDiskGBMin: envInt32(NodePoolEnvValidationOSDiskGBMin, NodePoolValidationOSDiskGBMin),
+		OSDiskGBMax: envInt32(NodePoolEnvValidationOSDiskGBMax, NodePoolValidationOSDiskGBMax),
+	}
+
+	if bounds.MinNodesMin < 0 {
+		bounds.MinNodesMin = NodePoolValidationMinNodesMin
+	}
+	if bounds.MaxNodesMin < 1 {
+		bounds.MaxNodesMin = NodePoolValidationMaxNodesMin
+	}
+	if bounds.MaxNodesMax < bounds.MaxNodesMin {
+		bounds.MaxNodesMax = bounds.MaxNodesMin
+	}
+	if bounds.MaxNodesMax < bounds.MinNodesMin {
+		bounds.MaxNodesMax = bounds.MinNodesMin
+	}
+	if bounds.OSDiskGBMin < 1 {
+		bounds.OSDiskGBMin = NodePoolValidationOSDiskGBMin
+	}
+	if bounds.OSDiskGBMax < bounds.OSDiskGBMin {
+		bounds.OSDiskGBMax = bounds.OSDiskGBMin
+	}
+
+	return bounds
+}
+
+// NodePoolDefaultValuesFromEnv returns fallback node-pool defaults after applying environment overrides.
+func NodePoolDefaultValuesFromEnv() NodePoolDefaultValues {
+	bounds := NodePoolValidationBoundsFromEnv()
+	values := NodePoolDefaultValues{
+		MinNodes:   envInt32(NodePoolEnvDefaultMinNodes, NodePoolDefaultMinNodes),
+		MaxNodes:   envInt32(NodePoolEnvDefaultMaxNodes, NodePoolDefaultMaxNodes),
+		DiskSizeGB: envInt32(NodePoolEnvDefaultOSDiskGB, NodePoolDefaultDiskSizeGB),
+	}
+
+	if values.MinNodes < bounds.MinNodesMin {
+		values.MinNodes = bounds.MinNodesMin
+	}
+	if values.MinNodes > bounds.MaxNodesMax {
+		values.MinNodes = bounds.MaxNodesMax
+	}
+	if values.MaxNodes < bounds.MaxNodesMin {
+		values.MaxNodes = bounds.MaxNodesMin
+	}
+	if values.MaxNodes > bounds.MaxNodesMax {
+		values.MaxNodes = bounds.MaxNodesMax
+	}
+	if values.MaxNodes < values.MinNodes {
+		values.MaxNodes = values.MinNodes
+	}
+	if values.DiskSizeGB < bounds.OSDiskGBMin {
+		values.DiskSizeGB = bounds.OSDiskGBMin
+	}
+	if values.DiskSizeGB > bounds.OSDiskGBMax {
+		values.DiskSizeGB = bounds.OSDiskGBMax
+	}
+
+	return values
+}
+
+// NodePoolDefaultMinNodesValue returns the effective fallback node-pool minimum.
+func NodePoolDefaultMinNodesValue() int32 {
+	return NodePoolDefaultValuesFromEnv().MinNodes
+}
+
+// NodePoolDefaultMaxNodesValue returns the effective fallback node-pool maximum.
+func NodePoolDefaultMaxNodesValue() int32 {
+	return NodePoolDefaultValuesFromEnv().MaxNodes
+}
+
+func envInt32(name string, fallback int32) int32 {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 32)
+	if err != nil {
+		return fallback
+	}
+	return int32(parsed)
+}
+
 // NodePoolAPIVersions defines CAPI API versions
 const (
 	// NodePoolCAPIAPIVersion is the CAPI API version for MachineDeployment/MachinePool
@@ -789,9 +930,10 @@ const (
 	// This is used to prevent infinite waiting if provisioning fails silently
 	NodePoolProvisioningTimeout = 30 * time.Minute
 
-	// NodePoolMinRequiredReplicasWhenMinNodesZero is the minimum number of ready replicas required when minNodes=0
-	// This ensures at least one node is available for Cluster Autoscaler to work
-	NodePoolMinRequiredReplicasWhenMinNodesZero = 1
+	// NodePoolMinRequiredReplicasWhenMinNodesZero is the minimum number of ready replicas
+	// required before continuing when minNodes=0. The default keeps scale-to-zero
+	// pools unblocked so Trino pods can be created and trigger autoscaler scale-up.
+	NodePoolMinRequiredReplicasWhenMinNodesZero = 0
 )
 
 // RolloutPolicyDefaults defines operator-level defaults for deployment rollout policy

@@ -102,6 +102,18 @@ func getNodePoolMinRequiredReplicasWhenMinNodesZero(nodePool *analyticsv1.NodePo
 	return config.NodePoolMinRequiredReplicasWhenMinNodesZero
 }
 
+func requiredReadyReplicasForNodePool(xtrinode *analyticsv1.XTrinode) int64 {
+	if xtrinode == nil || xtrinode.Spec.NodePool == nil {
+		return 0
+	}
+	nodePool := xtrinode.Spec.NodePool
+	defaults := getNodePoolDefaults(nodePool, xtrinode)
+	if defaults.MinNodes == 0 {
+		return getNodePoolMinRequiredReplicasWhenMinNodesZero(nodePool)
+	}
+	return defaults.MinNodes
+}
+
 // getNodePoolProvisioningTimeout returns the maximum time to wait for node pool provisioning
 // This can be used in the future to implement timeout checking
 func getNodePoolProvisioningTimeout(nodePool *analyticsv1.NodePoolSpec) time.Duration {

@@ -17,6 +17,7 @@ import (
 	"github.com/xtrinode/xtrinode/internal/retry"
 	"github.com/xtrinode/xtrinode/internal/trino/controlauth"
 	"github.com/xtrinode/xtrinode/internal/trino/controlendpoint"
+	"github.com/xtrinode/xtrinode/internal/trino/querystate"
 	"github.com/xtrinode/xtrinode/pkg/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -106,7 +107,7 @@ func UpdateLastActivityAt(ctx context.Context, cli client.Client, xtrinode *anal
 
 // AutoSuspendIfNeeded checks auto-suspend conditions and suspends if needed
 func AutoSuspendIfNeeded(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XTrinode, log logr.Logger) (bool, error) {
-	// First, check for active queries and update lastActivity if queries are running
+	// First, check for active queries and update lastActivity if any query is non-terminal.
 	if err := UpdateLastActivityIfQueriesActive(ctx, cli, xtrinode, log); err != nil {
 		return false, fmt.Errorf("failed to check query activity before auto-suspend: %w", err)
 	} else {
@@ -171,8 +172,8 @@ func AutoSuspendIfNeeded(ctx context.Context, cli client.Client, xtrinode *analy
 	return true, nil
 }
 
-// UpdateLastActivityIfQueriesActive checks Trino coordinator for active queries and updates lastActivity
-// This prevents auto-suspend when queries are actively running
+// UpdateLastActivityIfQueriesActive checks Trino coordinator for active queries and updates lastActivity.
+// This prevents auto-suspend when queries are non-terminal.
 // Uses the Trino HTTP API directly.
 func UpdateLastActivityIfQueriesActive(ctx context.Context, cli client.Client, xtrinode *analyticsv1.XTrinode, log logr.Logger) error {
 	// Query the generated Trino coordinator HTTP service endpoint directly.
@@ -288,12 +289,14 @@ func queryTrinoQueryActivityWithCredential(ctx context.Context, queryURL string,
 		return activity, fmt.Errorf("failed to parse Trino API response: %w", err)
 	}
 
-	// Count active queries (state: QUEUED or RUNNING)
+	// Count active queries. Terminal states are idle; anything else keeps the runtime active.
 	for _, query := range queries {
-		if state, ok := query["state"].(string); ok {
-			if state == "QUEUED" || state == "RUNNING" {
-				activity.ActiveQueries++
-			}
+		state, ok := query["state"].(string)
+		if !ok {
+			state = ""
+		}
+		if querystate.IsActive(state) {
+			activity.ActiveQueries++
 		}
 		if queryTime, ok := latestQueryTimestamp(query); ok {
 			if activity.LatestActivity == nil || queryTime.After(*activity.LatestActivity) {
