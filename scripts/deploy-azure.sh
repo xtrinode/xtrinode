@@ -31,11 +31,21 @@ MAKE="${MAKE:-make}"
 AZ="${AZ:-az}"
 OPENSSL="${OPENSSL:-openssl}"
 
-DEFAULT_IMAGE_VERSION="$(
-  awk '/^appVersion:/ {print $2; exit}' "$ROOT_DIR/helm/xtrinode/Chart.yaml" 2>/dev/null |
-    tr -d '"' || true
-)"
-VERSION="${VERSION:-${DEFAULT_IMAGE_VERSION:-0.1.0}}"
+chart_app_version() {
+  local chart="$1"
+  local version
+
+  version="$(awk '/^appVersion:/ {print $2; exit}' "$chart" 2>/dev/null | tr -d '"' || true)"
+  if [ -z "$version" ]; then
+    echo "ERROR: Could not read appVersion from $chart" >&2
+    exit 1
+  fi
+  printf '%s\n' "$version"
+}
+
+OPERATOR_IMAGE_TAG="${OPERATOR_IMAGE_TAG:-$(chart_app_version "$ROOT_DIR/helm/xtrinode-operator/Chart.yaml")}"
+API_SERVER_IMAGE_TAG="${API_SERVER_IMAGE_TAG:-$(chart_app_version "$ROOT_DIR/helm/xtrinode-api-server/Chart.yaml")}"
+GATEWAY_IMAGE_TAG="${GATEWAY_IMAGE_TAG:-$(chart_app_version "$ROOT_DIR/helm/xtrinode-gateway/Chart.yaml")}"
 
 AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID:-${ARM_SUBSCRIPTION_ID:-}}"
 AZURE_REGION="${AZURE_REGION:-eastus}"
@@ -105,6 +115,15 @@ postgres_enabled() {
     grep -Eq '^[[:space:]]*postgres_enabled[[:space:]]*=[[:space:]]*true([[:space:]#]|$)' "$TF_DIR/terraform.tfvars"
 }
 
+component_image_tag() {
+  case "$1" in
+    operator) printf '%s\n' "$OPERATOR_IMAGE_TAG" ;;
+    api-server) printf '%s\n' "$API_SERVER_IMAGE_TAG" ;;
+    gateway) printf '%s\n' "$GATEWAY_IMAGE_TAG" ;;
+    *) fail "Unknown component: $1" ;;
+  esac
+}
+
 terraform_vars=()
 append_terraform_vars() {
   terraform_vars=(
@@ -157,7 +176,7 @@ AZURE_SUBSCRIPTION_ID="$("$AZ" account show --query id -o tsv 2>/dev/null)" \
   || fail "Azure CLI is not authenticated. Run: az login"
 [ -n "$AZURE_SUBSCRIPTION_ID" ] || fail "Azure subscription ID is empty."
 ok "Azure subscription: $AZURE_SUBSCRIPTION_ID  Region: $AZURE_REGION"
-ok "XTrinode image tag: $VERSION"
+ok "Image tags: operator=$OPERATOR_IMAGE_TAG api-server=$API_SERVER_IMAGE_TAG gateway=$GATEWAY_IMAGE_TAG"
 
 append_terraform_vars
 
@@ -233,16 +252,16 @@ if [ "$SKIP_BUILD" = false ]; then
   for comp in "${COMPONENTS[@]}"; do
     IFS=':' read -r name app_package app_port <<< "$comp"
     image_name="xtrinode-${name}"
-    tag="${ACR_LOGIN_SERVER}/${image_name}:${VERSION}"
+    image_tag="$(component_image_tag "$name")"
+    tag="${ACR_LOGIN_SERVER}/${image_name}:${image_tag}"
     info "Building ${image_name}"
     "$DOCKER" build \
       --build-arg APP_PACKAGE="$app_package" \
       --build-arg APP_PORT="$app_port" \
-      --build-arg VERSION="$VERSION" \
+      --build-arg VERSION="$image_tag" \
       --build-arg GIT_COMMIT="$GIT_COMMIT" \
       --build-arg BUILD_DATE="$BUILD_DATE" \
       -t "$tag" \
-      -t "${ACR_LOGIN_SERVER}/${image_name}:latest" \
       -f "$DOCKERFILE" \
       "$OPERATOR_DIR"
   done
@@ -253,8 +272,8 @@ if [ "$SKIP_BUILD" = false ]; then
   for comp in "${COMPONENTS[@]}"; do
     IFS=':' read -r name _ <<< "$comp"
     image_name="xtrinode-${name}"
-    "$DOCKER" push "${ACR_LOGIN_SERVER}/${image_name}:${VERSION}"
-    "$DOCKER" push "${ACR_LOGIN_SERVER}/${image_name}:latest"
+    image_tag="$(component_image_tag "$name")"
+    "$DOCKER" push "${ACR_LOGIN_SERVER}/${image_name}:${image_tag}"
   done
 else
   info "Step 3/5: Skipping Docker build (--skip-build)"
@@ -355,7 +374,7 @@ info "Deploying xtrinode-operator"
   --take-ownership \
   --namespace "$OPERATOR_NAMESPACE" \
   --set image.repository="${ACR_LOGIN_SERVER}/xtrinode-operator" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$OPERATOR_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set keda.enabled=true \
   --set webhook.enabled="$WEBHOOK_ENABLED" \
@@ -369,7 +388,7 @@ info "Deploying xtrinode-api-server"
   --take-ownership \
   --namespace "$OPERATOR_NAMESPACE" \
   --set image.repository="${ACR_LOGIN_SERVER}/xtrinode-api-server" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$API_SERVER_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set apiServer.auth.enabled=true \
   --set apiServer.auth.existingSecret="$API_SERVER_AUTH_SECRET" \
@@ -383,7 +402,7 @@ info "Deploying xtrinode-gateway"
   --force \
   --namespace "$GATEWAY_NAMESPACE" \
   --set image.repository="${ACR_LOGIN_SERVER}/xtrinode-gateway" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$GATEWAY_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set replicaCount="$GATEWAY_REPLICA_COUNT" \
   --set gateway.redis.enabled="$GATEWAY_REDIS_ENABLED" \
@@ -409,7 +428,10 @@ cat <<EOF
   Region:     $AZURE_REGION
   Resource group: $RESOURCE_GROUP_NAME
   Registry:   $ACR_LOGIN_SERVER
-  Image tag:  $VERSION
+  Image tags:
+    operator:   $OPERATOR_IMAGE_TAG
+    api-server: $API_SERVER_IMAGE_TAG
+    gateway:    $GATEWAY_IMAGE_TAG
 
   Namespaces:
     Operator + API Server:  $OPERATOR_NAMESPACE

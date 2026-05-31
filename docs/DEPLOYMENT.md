@@ -97,8 +97,8 @@ cluster. The script first tries regional credentials with `--region
 $GCP_REGION`, then zonal credentials with `--zone $GCP_ZONE`.
 
 Images are resolved from `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}`, so
-the pushed image repositories and `VERSION` tag must exist in that region before
-deploying to an arbitrary cluster.
+the pushed image repositories and component image tags must exist in that region
+before deploying to an arbitrary cluster.
 
 Using an existing GKE node pool for Trino pods is a runtime-level setting, not a
 control-plane deploy setting. For an existing node pool, leave
@@ -123,7 +123,9 @@ pod placement to the managed pool label.
 | `GCP_PROJECT_ID` | project-40642592-0c4f-4ce1-9d6 | GCP project |
 | `GCP_CLUSTER_NAME` | xtrinode-gke-test | GKE cluster name |
 | `GCP_ZONE` | us-central1-a | GKE zone |
-| `VERSION` | 0.1.0 | Image tag |
+| `OPERATOR_IMAGE_TAG` | operator chart appVersion | Operator image tag |
+| `API_SERVER_IMAGE_TAG` | API server chart appVersion | API server image tag |
+| `GATEWAY_IMAGE_TAG` | gateway chart appVersion | Gateway image tag |
 | `OPERATOR_NAMESPACE` | xtrinode-system | Namespace for operator + API server |
 
 ---
@@ -182,7 +184,9 @@ Key environment variables:
 | `AWS_PROFILE` | default | AWS CLI profile |
 | `AWS_REGION` | us-east-1 | AWS region |
 | `CLUSTER_NAME` | xtrinode-eks-test | EKS cluster name |
-| `VERSION` | chart appVersion | Image tag |
+| `OPERATOR_IMAGE_TAG` | operator chart appVersion | Operator image tag |
+| `API_SERVER_IMAGE_TAG` | API server chart appVersion | API server image tag |
+| `GATEWAY_IMAGE_TAG` | gateway chart appVersion | Gateway image tag |
 | `POSTGRES_ENABLED` / `TF_VAR_postgres_enabled` | false | Enable RDS PostgreSQL catalog-test infrastructure |
 | `PROMETHEUS_ENABLED` | false | Install observability and render ServiceMonitors |
 | `VECTOR_ENABLED` | false | Install Vector through the observability chart |
@@ -248,7 +252,9 @@ Key environment variables:
 | `RESOURCE_GROUP_NAME` | xtrinode-rg | Azure resource group |
 | `CLUSTER_NAME` | xtrinode-aks-test | AKS cluster name |
 | `ACR_LOGIN_SERVER` | Terraform output | ACR login server override |
-| `VERSION` | chart appVersion | Image tag |
+| `OPERATOR_IMAGE_TAG` | operator chart appVersion | Operator image tag |
+| `API_SERVER_IMAGE_TAG` | API server chart appVersion | API server image tag |
+| `GATEWAY_IMAGE_TAG` | gateway chart appVersion | Gateway image tag |
 | `POSTGRES_ENABLED` / `TF_VAR_postgres_enabled` | false | Enable Azure PostgreSQL catalog-test infrastructure |
 | `PROMETHEUS_ENABLED` | false | Install observability and render ServiceMonitors |
 | `VECTOR_ENABLED` | false | Install Vector through the observability chart |
@@ -311,6 +317,7 @@ node-pool policy knobs.
 | `make terraform-apply-gcp` | Apply the GCP Terraform deployment |
 | `make gcp-management-up` | Create the GCP management cluster and Kubernetes/cloud add-ons |
 | `make gcp-images-push` | Build and push operator, API server, and gateway images to GCP Artifact Registry |
+| `make gcp-operator-image-push` / `make gcp-api-server-image-push` / `make gcp-gateway-image-push` | Build and push one GCP component image |
 | `make gcp-control-plane-deploy` | Deploy operator, API server, and gateway to the GCP management cluster |
 | `make deploy-gcp` | Full GCP deploy via scripts/deploy-gcp.sh |
 | `make deploy-aws` | Experimental AWS provider-validation deploy via scripts/deploy-aws.sh |

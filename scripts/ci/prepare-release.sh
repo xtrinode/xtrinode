@@ -13,14 +13,69 @@ output() {
   printf '%s=%s\n' "$1" "$2" >> "${GITHUB_OUTPUT}"
 }
 
+current_version="$(chart_field helm/xtrinode/Chart.yaml version)"
+current_app_version="$(chart_field helm/xtrinode/Chart.yaml appVersion)"
+target_sha="$(git rev-parse HEAD)"
+
 output should_release false
 output should_publish_images false
-output target_sha "$(git rev-parse HEAD)"
+output image_matrix '{"include":[]}'
+output target_sha "${target_sha}"
+output version "${current_version}"
+output app_version "${current_app_version}"
+output tag "v${current_version}"
+
+for component in $(release_components); do
+  output "${component//-/_}_chart_version" "$(chart_field "$(component_chart_path "${component}")" version)"
+  output "${component//-/_}_image_version" "$(chart_field "$(component_chart_path "${component}")" appVersion)"
+done
 
 if [ "${BEFORE_SHA}" = "0000000000000000000000000000000000000000" ]; then
   echo "Initial branch push; skipping release."
   exit 0
 fi
+
+previous_version="$(chart_field_at_ref "${BEFORE_SHA}" helm/xtrinode/Chart.yaml version)"
+
+if [ -z "${previous_version}" ]; then
+  echo "No previous XTrinode umbrella chart version found at ${BEFORE_SHA}; initial project import does not create a release."
+  exit 0
+fi
+
+if ! release_metadata_changed_since "${BEFORE_SHA}"; then
+  echo "Release metadata did not change; skipping release and image publishing."
+  exit 0
+fi
+
+validate_release_version_metadata
+
+should_release=false
+if [ "${current_version}" != "${previous_version}" ]; then
+  should_release=true
+fi
+
+should_publish_images=false
+matrix_entries=""
+for component in $(release_components); do
+  chart="$(component_chart_path "${component}")"
+  current_image_version="$(chart_field "${chart}" appVersion)"
+  previous_image_version="$(chart_field_at_ref "${BEFORE_SHA}" "${chart}" appVersion)"
+
+  if [ "${current_image_version}" != "${previous_image_version}" ]; then
+    should_publish_images=true
+    entry="$(printf '{"component":"%s","image":"%s","package":"%s","port":"%s","version":"%s"}' \
+      "${component}" \
+      "$(component_image_name "${component}")" \
+      "$(component_package "${component}")" \
+      "$(component_port "${component}")" \
+      "${current_image_version}")"
+    if [ -z "${matrix_entries}" ]; then
+      matrix_entries="${entry}"
+    else
+      matrix_entries="${matrix_entries},${entry}"
+    fi
+  fi
+done
 
 pr_number="$(
   gh api \
@@ -70,76 +125,60 @@ if [ -z "${pr_head_owner}" ]; then
   exit 1
 fi
 
-current_version="$(awk '/^version:/ {print $2; exit}' helm/xtrinode/Chart.yaml | tr -d '"')"
-current_image_version="$(release_image_version)"
-previous_version="$(
-  git show "${BEFORE_SHA}:helm/xtrinode/Chart.yaml" 2>/dev/null |
-    awk '/^version:/ {print $2; exit}' |
-    tr -d '"' || true
-)"
-previous_image_version="$(
-  git show "${BEFORE_SHA}:helm/xtrinode/Chart.yaml" 2>/dev/null |
-    awk '/^appVersion:/ {print $2; exit}' |
-    tr -d '"' || true
-)"
-
 output pr_number "${pr_number}"
 output pr_author "${pr_author}"
 output pr_head_owner "${pr_head_owner}"
 output merged_by "${merged_by}"
-output version "${current_version}"
-output image_version "${current_image_version}"
-output tag "v${current_version}"
-
-if [ "${current_version}" = "${previous_version}" ]; then
-  echo "Chart version did not change (${current_version}); skipping release."
-  exit 0
-fi
-
-if [ -z "${previous_version}" ]; then
-  echo "No previous XTrinode chart version found at ${BEFORE_SHA}; initial project import does not create a release."
-  exit 0
-fi
-
-validate_release_version_metadata "${current_version}"
-
-if [ "${current_image_version}" != "${previous_image_version}" ]; then
-  output should_publish_images true
-fi
 
 owners="$(codeowners_at_ref "${BEFORE_SHA}")"
 
 if ! printf '%s\n' "${owners}" | grep -Fxq "@${pr_author}"; then
   echo "::error::PR #${pr_number} was opened by @${pr_author}, who is not an explicit CODEOWNER."
-  echo "::error::Release tags are only created from PRs opened by users listed in .github/CODEOWNERS."
+  echo "::error::Release metadata is only published from PRs opened by users listed in .github/CODEOWNERS."
   exit 1
 fi
 
 if ! printf '%s\n' "${owners}" | grep -Fxq "@${pr_head_owner}"; then
   echo "::error::PR #${pr_number} branch is owned by @${pr_head_owner}, not an explicit CODEOWNER."
-  echo "::error::Release tags are only created from PR branches owned by .github/CODEOWNERS users."
+  echo "::error::Release metadata is only published from PR branches owned by .github/CODEOWNERS users."
   exit 1
 fi
 
 if ! printf '%s\n' "${owners}" | grep -Fxq "@${merged_by}"; then
   echo "::error::PR #${pr_number} was merged by @${merged_by}, who is not an explicit CODEOWNER."
-  echo "::error::Release tags are only created when the PR merger is listed in .github/CODEOWNERS."
+  echo "::error::Release metadata is only published when the PR merger is listed in .github/CODEOWNERS."
   exit 1
 fi
 
-git fetch --tags --force
-if git show-ref --tags --verify --quiet "refs/tags/v${current_version}"; then
-  existing_tag_sha="$(git rev-list -n 1 "v${current_version}")"
-  target_sha="$(git rev-parse HEAD)"
-  if [ "${existing_tag_sha}" != "${target_sha}" ]; then
-    echo "::error::Tag v${current_version} already exists at ${existing_tag_sha}, expected ${target_sha}."
-    echo "::error::Bump the chart version before release."
-    exit 1
+if [ "${should_release}" = true ]; then
+  git fetch --tags --force
+  if git show-ref --tags --verify --quiet "refs/tags/v${current_version}"; then
+    existing_tag_sha="$(git rev-list -n 1 "v${current_version}")"
+    if [ "${existing_tag_sha}" != "${target_sha}" ]; then
+      echo "::error::Tag v${current_version} already exists at ${existing_tag_sha}, expected ${target_sha}."
+      echo "::error::Bump the umbrella chart version before release."
+      exit 1
+    fi
+    echo "Tag v${current_version} already exists at the target commit; continuing release rerun."
   fi
-  echo "Tag v${current_version} already exists at the target commit; continuing release rerun."
+  output should_release true
 fi
 
-output should_release true
-echo "Release v${current_version} will be created from PR #${pr_number}."
-echo "Release image version: ${current_image_version}."
+if [ "${should_publish_images}" = true ]; then
+  output should_publish_images true
+  output image_matrix "{\"include\":[${matrix_entries}]}"
+fi
+
+if [ "${should_release}" = true ]; then
+  echo "GitHub Release v${current_version} will be created from PR #${pr_number}."
+else
+  echo "Umbrella chart version did not change; no GitHub Release tag will be created."
+fi
+
+if [ "${should_publish_images}" = true ]; then
+  echo "Changed component images will be published to GHCR: ${matrix_entries}."
+else
+  echo "No component appVersion changed; no Docker images will be published."
+fi
+
 echo "Release PR author: @${pr_author}; branch owner: @${pr_head_owner}; merger: @${merged_by}."

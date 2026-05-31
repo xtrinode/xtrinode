@@ -10,36 +10,31 @@ source "${script_dir}/release-lib.sh"
 
 git fetch origin "${BASE_REF}" --depth=1
 
-current_version="$(awk '/^version:/ {print $2; exit}' helm/xtrinode/Chart.yaml | tr -d '"')"
-previous_version="$(
-  git show "FETCH_HEAD:helm/xtrinode/Chart.yaml" 2>/dev/null |
-    awk '/^version:/ {print $2; exit}' |
-    tr -d '"' || true
-)"
+previous_version="$(chart_field_at_ref FETCH_HEAD helm/xtrinode/Chart.yaml version)"
 
 if [ -z "${previous_version}" ]; then
-  echo "No previous XTrinode chart version found on ${BASE_REF}; release PR policy does not apply."
+  echo "No previous XTrinode umbrella chart version found on ${BASE_REF}; release PR policy does not apply."
   exit 0
 fi
 
-if [ "${current_version}" = "${previous_version}" ]; then
-  echo "Chart version did not change; release PR policy does not apply."
+if ! release_metadata_changed_since FETCH_HEAD; then
+  echo "Release metadata did not change; release PR policy does not apply."
   exit 0
 fi
 
-validate_release_version_metadata "${current_version}"
+validate_release_version_metadata
 
 owners="$(codeowners_at_ref FETCH_HEAD)"
 
 if ! printf '%s\n' "${owners}" | grep -Fxq "@${PR_AUTHOR}"; then
   echo "::error::Release PR was opened by @${PR_AUTHOR}, who is not an explicit CODEOWNER."
-  echo "::error::Only an explicit CODEOWNER may open a release version-bump PR."
+  echo "::error::Only an explicit CODEOWNER may open a release metadata PR."
   exit 1
 fi
 
 if ! printf '%s\n' "${owners}" | grep -Fxq "@${HEAD_REPO_OWNER}"; then
   echo "::error::Release PR branch is owned by @${HEAD_REPO_OWNER}, not an explicit CODEOWNER."
-  echo "::error::Release version-bump PR branches must be owned by an explicit CODEOWNER."
+  echo "::error::Release metadata PR branches must be owned by an explicit CODEOWNER."
   exit 1
 fi
 
