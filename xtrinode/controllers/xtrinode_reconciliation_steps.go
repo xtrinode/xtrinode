@@ -256,6 +256,10 @@ func (s *reconcileNodePoolStep) Execute(ctx context.Context, xtrinode *analytics
 	if result.RequeueAfter > 0 {
 		state.Log.Info("Node pool not ready yet, requeuing", "xtrinode", xtrinode.Name, "requeueAfter", result.RequeueAfter)
 		s.reconciler.EventRecorder.Normalf(xtrinode, events.ReasonNodePoolProvisioning, "Node pool provisioning in progress, requeue in %v", result.RequeueAfter)
+		if updateErr := s.reconciler.updateStatus(ctx, xtrinode, state.Log); updateErr != nil {
+			state.Log.Error(updateErr, "unable to update active node pool provisioning status")
+			return ctrl.Result{}, false, updateErr
+		}
 		return result, false, nil
 	}
 
