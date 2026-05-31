@@ -4,25 +4,31 @@
 
 ### **Semantic Versioning**
 
-We use [Semantic Versioning](https://semver.org/) (SemVer) for releases:
+We use Semantic Versioning-style release versions:
 
-- **Format**: `MAJOR.MINOR.PATCH` (e.g., `1.2.3`)
+- **Format**: `MAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH-PRERELEASE`
 - **MAJOR**: Breaking changes (incompatible API changes)
 - **MINOR**: New features (backward-compatible)
 - **PATCH**: Bug fixes (backward-compatible)
+- **Build metadata**: `+build` suffixes are not supported because Docker image tags do not support
+  `+`.
 
 ### **Version Sources**
 
 1. **Merged release PR** (Primary):
 
-   - A release PR bumps all XTrinode Helm chart `version` fields, `appVersion` fields, and umbrella
-     dependency versions to the intended XTrinode release.
+   - The umbrella Helm chart `version` controls GitHub Release tags and chart release assets.
+   - Operator, API server, and gateway chart `appVersion` fields control Docker image publishing for
+     each component independently.
+   - Component chart `version` fields may move independently, but umbrella dependency versions must
+     match the corresponding component chart versions.
    - The PR must be opened from a CODEOWNER-owned branch, approved, and merged by a CODEOWNER.
-   - GitHub Actions creates the annotated `vMAJOR.MINOR.PATCH` tag after the merge.
+   - GitHub Actions creates the annotated `v<umbrella-version>` tag after the merge only when the
+     umbrella chart `version` changes.
    - Manual release tag pushes should be blocked with a repository ruleset.
 
-   Docker images are tagged with the XTrinode component image version, for example
-   `ghcr.io/xtrinode/xtrinode-operator:0.1.0`. All XTrinode Helm charts use the same release
+   Docker images are tagged with each component image version, for example
+   `ghcr.io/xtrinode/xtrinode-operator:0.1.0`. GitHub Release assets are tied to the umbrella chart
    version, for example `xtrinode-0.1.0.tgz`.
 
    The managed Trino runtime image is pinned separately, for example `trinodb/trino:480`. That
@@ -32,13 +38,14 @@ We use [Semantic Versioning](https://semver.org/) (SemVer) for releases:
 2. **Makefile Variable**:
 
    ```bash
-   make docker-build VERSION=0.1.0
+   make docker-build OPERATOR_IMAGE_TAG=0.1.0 GATEWAY_IMAGE_TAG=0.1.0 API_SERVER_IMAGE_TAG=0.1.0
    ```
 
 3. **Git Tag Detection**:
-   - Exact `vMAJOR.MINOR.PATCH` tags are used as the default version, with the leading `v` stripped.
+   - Exact `v<release-version>` tags are used as the default version, with the leading `v` stripped.
    - If the current commit is not exactly tagged, the default version is `dev`.
-   - Set `VERSION=0.1.0` explicitly for manual component image builds.
+   - Set `OPERATOR_IMAGE_TAG`, `GATEWAY_IMAGE_TAG`, or `API_SERVER_IMAGE_TAG` explicitly for manual
+     component image builds from an untagged checkout.
 
 ---
 
@@ -52,12 +59,28 @@ We use [Semantic Versioning](https://semver.org/) (SemVer) for releases:
 
 ### **Image Tags**
 
-Multiple tags are created from the component image `appVersion` for each release image push:
+Stable component image `appVersion` releases create these tags:
 
 1. **Version Tag**: `0.1.0` (exact image version)
 2. **Major.Minor Tag**: `0.1` (latest patch for minor version)
 3. **Major Tag**: `0` (latest minor for major version)
 4. **Latest Tag**: `latest` (latest stable release; not created for prereleases)
+
+Image publishing is component-scoped. If only `helm/xtrinode-gateway/Chart.yaml` `appVersion`
+changes, only the gateway image is built, scanned, and pushed.
+
+Patch, minor, and major image releases use the same tagging rules. For example, an appVersion bump
+to `0.1.1` publishes `0.1.1`, `0.1`, `0`, and `latest`; `0.2.0` publishes `0.2.0`, `0.2`, `0`, and
+`latest`; `1.0.0` publishes `1.0.0`, `1.0`, `1`, and `latest`. Prerelease image versions do not
+move floating tags; `1.0.0-rc.1` publishes only `1.0.0-rc.1`. Umbrella prerelease chart versions
+create prerelease GitHub Releases.
+
+Exact image version tags are treated as immutable. Before publishing a component image, release CI
+checks whether `ghcr.io/<owner>/<component-image>:<appVersion>` already exists. If it exists with a
+different `org.opencontainers.image.revision` or version label, CI fails and the component
+`appVersion` must be bumped. If it already exists for the same release commit, CI treats the run as
+a recovery rerun, skips the rebuild and exact-tag push, and restores stable floating tags from the
+existing exact tag.
 
 ### **Architecture Support**
 
@@ -71,20 +94,20 @@ Multiple tags are created from the component image `appVersion` for each release
 
 ```bash
 # Local build
-make docker-build VERSION=0.1.0
+make docker-build OPERATOR_IMAGE_TAG=0.1.0 GATEWAY_IMAGE_TAG=0.1.0 API_SERVER_IMAGE_TAG=0.1.0
 
-# Buildx release publish
-make docker-buildx
+# Manual component Buildx push, outside release automation
+make docker-buildx-operator OPERATOR_IMAGE_TAG=0.1.0 IMG=ghcr.io/xtrinode/xtrinode-operator:0.1.0
 
 # Push to registry
-make docker-push VERSION=0.1.0
+make docker-push OPERATOR_IMAGE_TAG=0.1.0 GATEWAY_IMAGE_TAG=0.1.0 API_SERVER_IMAGE_TAG=0.1.0
 ```
 
 For a single component, use the component-specific targets and image variable:
 
 ```bash
-make docker-build-operator IMG=ghcr.io/xtrinode/xtrinode-operator:0.1.0
-make docker-push-operator IMG=ghcr.io/xtrinode/xtrinode-operator:0.1.0
+make docker-build-operator OPERATOR_IMAGE_TAG=0.1.0 IMG=ghcr.io/xtrinode/xtrinode-operator:0.1.0
+make docker-push-operator OPERATOR_IMAGE_TAG=0.1.0 IMG=ghcr.io/xtrinode/xtrinode-operator:0.1.0
 ```
 
 ---
@@ -94,8 +117,9 @@ make docker-push-operator IMG=ghcr.io/xtrinode/xtrinode-operator:0.1.0
 ### **Chart Version**
 
 - **Location**: `helm/xtrinode/Chart.yaml`
-- **Version**: XTrinode chart package version, for example `0.1.0`
-- **AppVersion**: XTrinode component image version, matching the XTrinode release version
+- **Version**: Chart package version, for example `0.1.0`
+- **AppVersion**: Default component image version for component charts. The umbrella chart
+  `appVersion` is product metadata and does not drive image publishing.
 - **Trino runtime tag**: Managed workload image tag, for example `480`, configured separately via
   `TRINO_IMAGE_TAG`, `internal/config`, or `XTrinode.spec.valuesOverlay.image`. The current Trino
   compatibility target is upstream chart `trino-1.42.2` / app `480`.
@@ -104,8 +128,7 @@ make docker-push-operator IMG=ghcr.io/xtrinode/xtrinode-operator:0.1.0
 
 ```bash
 # Package chart
-cd helm/xtrinode-operator
-helm package . --version 0.1.0 --app-version 0.1.0
+helm package helm/xtrinode-operator
 
 # Output: xtrinode-operator-0.1.0.tgz
 ```
@@ -116,15 +139,9 @@ helm package . --version 0.1.0 --app-version 0.1.0
    - Chart packaged and uploaded to GitHub Releases
    - Download: `https://github.com/xtrinode/xtrinode/releases/download/v0.1.0/xtrinode-operator-0.1.0.tgz`
 
-2. **OCI Registry** (Future):
-
-   ```bash
-   helm push xtrinode-operator-0.1.0.tgz oci://ghcr.io/xtrinode/xtrinode-operator-chart
-   ```
-
-3. **Helm Repository** (Future):
-   - Host chart repository (e.g., GitHub Pages)
-   - Add repo: `helm repo add xtrinode https://xtrinode.github.io/xtrinode/charts`
+2. **OCI Registry / Helm Repository**:
+   - Not implemented.
+   - Do not expect release CI to push Helm charts to GHCR OCI repositories or a Helm repository.
 
 ---
 
@@ -142,7 +159,11 @@ helm package . --version 0.1.0 --app-version 0.1.0
 ### **2. Create Release PR**
 
 ```bash
-# 1. Update chart version fields, appVersion fields, and umbrella dependency versions:
+# 1. Update release metadata:
+#    - For a GitHub/Helm release, update helm/xtrinode/Chart.yaml version.
+#    - For a component image release, update that component chart appVersion.
+#    - For a component chart version bump, update that component chart version and
+#      the matching umbrella dependency version.
 #    helm/xtrinode-api-server/Chart.yaml
 #    helm/xtrinode-gateway/Chart.yaml
 #    helm/xtrinode-operator/Chart.yaml
@@ -163,12 +184,12 @@ When a release PR opened from an explicit CODEOWNER-owned branch is merged to `m
 CODEOWNER, GitHub Actions automatically:
 
 1. Runs tests
-2. Creates the annotated release tag
-3. Builds Linux amd64 Docker images
-4. Pushes images to `ghcr.io`
-5. Packages Helm charts
-6. Creates GitHub Release
-7. Uploads Helm charts to the release
+2. Creates the annotated release tag when the umbrella chart version changed
+3. Builds Linux amd64 Docker images only for components whose `appVersion` changed
+4. Pushes changed images to `ghcr.io`
+5. Packages Helm charts when the umbrella chart version changed
+6. Creates GitHub Release when the umbrella chart version changed
+7. Uploads Helm charts to the release when the umbrella chart version changed
 
 ### **4. Verify Release**
 
@@ -224,14 +245,17 @@ through `package.json` and `package-lock.json`.
 
 ### **On Release PR Merge**
 
-1. **Detect Version**: From the updated umbrella chart version
+1. **Detect Chart Release**: From the updated umbrella chart version
 2. **Authorize**: Confirm the PR author, branch owner, and merger are explicit CODEOWNERS
-3. **Tag**: Create `vMAJOR.MINOR.PATCH` from the chart version after CI passes
-4. **Scan**: Build and Trivy-scan each release image before pushing tags
-5. **Build**: Linux amd64 Docker images
-6. **Push**: Images with component image tags (`0.1.0`, `0.1`, `0`, `latest`)
-7. **Package**: Helm charts
-8. **Release**: Create GitHub Release with notes and chart artifacts
+3. **Tag**: Create `v<umbrella-version>` from the umbrella chart version after CI passes
+4. **Detect Images**: Compare each component chart `appVersion` independently
+5. **Guard Tags**: Refuse conflicting existing exact image tags before publishing
+6. **Scan**: Build and Trivy-scan each changed component image before pushing tags
+7. **Build**: Linux amd64 Docker images for changed components
+8. **Push**: Changed images with component image tags (`0.1.0`, `0.1`, `0`, `latest` for stable
+   versions; exact tag only for prereleases)
+9. **Package**: Helm charts when the umbrella chart version changed
+10. **Release**: Create GitHub Release with notes and chart artifacts when the umbrella chart version changed
 
 ---
 
@@ -244,8 +268,9 @@ through `package.json` and `package-lock.json`.
   `ghcr.io/<owner>/xtrinode-operator`,
   `ghcr.io/<owner>/xtrinode-api-server`,
   `ghcr.io/<owner>/xtrinode-gateway`
-- **Tags**: Component image version, major.minor, major, latest
+- **Tags**: Stable component image version, major.minor, major, latest; prerelease exact tag only
 - **Architecture**: linux/amd64
+- **Trigger**: Per-component chart `appVersion` changes
 
 ### **Helm Charts** → GitHub Releases
 
@@ -255,7 +280,21 @@ through `package.json` and `package-lock.json`.
   `xtrinode-operator-<version>.tgz`,
   `xtrinode-api-server-<version>.tgz`,
   `xtrinode-gateway-<version>.tgz`
-- **Future**: OCI registry (`ghcr.io/<owner>/xtrinode-operator-chart`)
+- **Trigger**: Umbrella chart `version` changes
+- **Not published**: OCI Helm chart publishing is not implemented; release charts are GitHub
+  Release assets only.
+
+### **Coverage Reports** → GitHub Actions Artifacts
+
+- **Location**: Pull request and main-branch workflow runs
+- **Format**: `coverage-report` artifact containing `xtrinode/coverage.out`
+- **Retention**: 7 days
+- **Release assets**: Coverage reports are not attached to GitHub Releases
+
+### **Terraform** → Validation Only
+
+- Terraform CI validates configuration. Release CI does not publish Terraform state, plans, modules,
+  or artifacts.
 
 ### **Source Code** → GitHub Repository
 
@@ -272,15 +311,22 @@ through `package.json` and `package-lock.json`.
 ```makefile
 GIT_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || true)
 VERSION ?= $(if $(GIT_TAG),$(patsubst v%,%,$(GIT_TAG)),dev)
-IMAGE_VERSION ?= $(shell awk '/^appVersion:/ {print $$2; exit}' helm/xtrinode/Chart.yaml 2>/dev/null | tr -d '"' || echo "$(VERSION)")
-IMAGE_TAG ?= $(if $(GIT_TAG),$(IMAGE_VERSION),$(VERSION))
-CLOUD_IMAGE_TAG ?= $(if $(filter dev,$(IMAGE_TAG)),$(IMAGE_VERSION),$(IMAGE_TAG))
+OPERATOR_IMAGE_VERSION ?= $(shell awk '/^appVersion:/ {print $$2; exit}' helm/xtrinode-operator/Chart.yaml 2>/dev/null | tr -d '"' || echo "dev")
+GATEWAY_IMAGE_VERSION ?= $(shell awk '/^appVersion:/ {print $$2; exit}' helm/xtrinode-gateway/Chart.yaml 2>/dev/null | tr -d '"' || echo "dev")
+API_SERVER_IMAGE_VERSION ?= $(shell awk '/^appVersion:/ {print $$2; exit}' helm/xtrinode-api-server/Chart.yaml 2>/dev/null | tr -d '"' || echo "dev")
+OPERATOR_IMAGE_TAG ?= $(if $(GIT_TAG),$(OPERATOR_IMAGE_VERSION),dev)
+GATEWAY_IMAGE_TAG ?= $(if $(GIT_TAG),$(GATEWAY_IMAGE_VERSION),dev)
+API_SERVER_IMAGE_TAG ?= $(if $(GIT_TAG),$(API_SERVER_IMAGE_VERSION),dev)
+OPERATOR_CLOUD_IMAGE_TAG ?= $(if $(filter dev,$(OPERATOR_IMAGE_TAG)),$(OPERATOR_IMAGE_VERSION),$(OPERATOR_IMAGE_TAG))
+GATEWAY_CLOUD_IMAGE_TAG ?= $(if $(filter dev,$(GATEWAY_IMAGE_TAG)),$(GATEWAY_IMAGE_VERSION),$(GATEWAY_IMAGE_TAG))
+API_SERVER_CLOUD_IMAGE_TAG ?= $(if $(filter dev,$(API_SERVER_IMAGE_TAG)),$(API_SERVER_IMAGE_VERSION),$(API_SERVER_IMAGE_TAG))
 ```
 
-`VERSION` identifies the XTrinode release when the checkout is exactly on a release tag. `IMAGE_TAG`
-identifies the default local control-plane image tag and resolves to the same chart `appVersion` on
-release tags. `CLOUD_IMAGE_TAG` keeps cloud publish/deploy defaults on `appVersion` instead of
-publishing the local `dev` tag by accident.
+`VERSION` identifies the umbrella chart release when the checkout is exactly on a release tag.
+Component image tag defaults resolve from each component chart `appVersion` on release tags and to
+`dev` otherwise. Cloud publish/deploy defaults are component-specific: each `*_CLOUD_IMAGE_TAG`
+uses that component's chart `appVersion` when the matching local `*_IMAGE_TAG` would otherwise be
+`dev`.
 
 ### **In GitHub Actions**
 
@@ -299,12 +345,12 @@ Release version detection lives in `scripts/ci/prepare-release.sh` and is called
 ## Best Practices
 
 1. **Release Through PRs**: Do not push release tags manually
-2. **Update Chart.yaml deliberately**: Keep all XTrinode chart `version` fields, umbrella dependency
-   versions, and `appVersion` fields in sync on the XTrinode release version.
+2. **Update Chart.yaml deliberately**: Keep umbrella dependency versions aligned with the matching
+   component chart versions. Bump component `appVersion` fields only for images that should publish.
 3. **Test Before Release**: Run full test suite and linting
 4. **Document Changes**: Keep docs and PR descriptions clear enough for generated release notes
 5. **Image Builds**: Keep release image builds on the release publishing path
-6. **Immutable Tags**: Never overwrite version tags (use new version)
+6. **Immutable Tags**: Never overwrite exact version tags (use a new component `appVersion`)
 7. **Release Notes**: Include meaningful release notes in GitHub Releases
 
 ---

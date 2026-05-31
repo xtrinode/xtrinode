@@ -36,27 +36,32 @@ top-level ownership rules should be added when the corresponding root path is in
 Releases are intentionally tied to merged pull requests, not manual tag pushes.
 
 1. An explicit CODEOWNER opens a pull request from a branch owned by an explicit CODEOWNER. The PR
-   bumps the Helm chart version to the intended SemVer version.
+   changes release metadata: the umbrella Helm chart version, a component chart version, or an
+   operator, API server, or gateway chart `appVersion`.
 2. CI must pass on the pull request.
 3. A CODEOWNER must approve the pull request.
 4. A CODEOWNER must merge the pull request into `main`.
-5. The release workflow creates the missing `vMAJOR.MINOR.PATCH` tag from the chart version, builds
-   release images, packages Helm charts, and creates the GitHub Release.
+5. The release workflow creates the missing `v<umbrella-version>` tag only when the umbrella chart
+   version changes, packages Helm charts only for that umbrella release, and publishes only the
+   component images whose `appVersion` changed.
 
 The CI workflow checks the release PR author and branch owner against explicit individual owners in
-`.github/CODEOWNERS`, and it validates that every XTrinode chart `version` and umbrella dependency
-version matches the intended XTrinode SemVer release. The operator, API server, gateway, and
-umbrella chart `appVersion` fields must match that same XTrinode release version. The managed Trino
-runtime image tag is pinned separately and must not be used as a control-plane image tag. The release
-workflow repeats those owner checks, also checks the user who merged the pull request, and reuses the
-same version metadata validation. Team ownership is still useful for review enforcement, but release
-authoring, branch ownership, and merging need individual CODEOWNER entries unless the workflows are
-extended to resolve team membership.
+`.github/CODEOWNERS`, and it validates release metadata. The umbrella chart dependency versions must
+match the corresponding operator, API server, and gateway chart `version` fields, but component chart
+versions may differ from the umbrella chart version. The operator, API server, and gateway
+`appVersion` fields are independent Docker image versions. The managed Trino runtime image tag is
+pinned separately and must not be used as a control-plane image tag. The release workflow repeats
+those owner checks, also checks the user who merged the pull request, and reuses the same version
+metadata validation. Team ownership is still useful for review enforcement, but release authoring,
+branch ownership, and merging need individual CODEOWNER entries unless the workflows are extended to
+resolve team membership.
 
 `Release PR Policy` must be configured as a required check on `main`; workflow logic cannot enforce
 that requirement by itself. CODEOWNER approval is enforced by GitHub branch protection or rulesets,
 not by the workflow file.
 
-If the chart version does not change, the release workflow skips publishing. If a PR changes the
-version to one that already has a matching tag, the workflow fails so the release version can be
-corrected before publishing.
+If the umbrella chart version does not change, the release workflow does not create a Git tag or
+GitHub Release. Docker images can still publish from the merge commit without a release tag when one
+or more component `appVersion` fields change. If a PR changes the umbrella chart version to one that
+already has a matching tag, the workflow fails so the release version can be corrected before
+publishing.

@@ -7,12 +7,18 @@ GATEWAY_IMAGE_NAME ?= xtrinode-gateway
 API_SERVER_IMAGE_NAME ?= xtrinode-api-server
 GIT_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || true)
 VERSION ?= $(if $(GIT_TAG),$(patsubst v%,%,$(GIT_TAG)),dev)
-IMAGE_VERSION ?= $(shell awk '/^appVersion:/ {print $$2; exit}' helm/xtrinode/Chart.yaml 2>/dev/null | tr -d '"' || echo "$(VERSION)")
-IMAGE_TAG ?= $(if $(GIT_TAG),$(IMAGE_VERSION),$(VERSION))
-CLOUD_IMAGE_TAG ?= $(if $(filter dev,$(IMAGE_TAG)),$(IMAGE_VERSION),$(IMAGE_TAG))
-IMG ?= $(REGISTRY)/$(OPERATOR_IMAGE_NAME):$(IMAGE_TAG)
-GATEWAY_IMG ?= $(REGISTRY)/$(GATEWAY_IMAGE_NAME):$(IMAGE_TAG)
-API_SERVER_IMG ?= $(REGISTRY)/$(API_SERVER_IMAGE_NAME):$(IMAGE_TAG)
+OPERATOR_IMAGE_VERSION ?= $(shell awk '/^appVersion:/ {print $$2; exit}' helm/xtrinode-operator/Chart.yaml 2>/dev/null | tr -d '"' || echo "dev")
+GATEWAY_IMAGE_VERSION ?= $(shell awk '/^appVersion:/ {print $$2; exit}' helm/xtrinode-gateway/Chart.yaml 2>/dev/null | tr -d '"' || echo "dev")
+API_SERVER_IMAGE_VERSION ?= $(shell awk '/^appVersion:/ {print $$2; exit}' helm/xtrinode-api-server/Chart.yaml 2>/dev/null | tr -d '"' || echo "dev")
+OPERATOR_IMAGE_TAG ?= $(if $(GIT_TAG),$(OPERATOR_IMAGE_VERSION),dev)
+GATEWAY_IMAGE_TAG ?= $(if $(GIT_TAG),$(GATEWAY_IMAGE_VERSION),dev)
+API_SERVER_IMAGE_TAG ?= $(if $(GIT_TAG),$(API_SERVER_IMAGE_VERSION),dev)
+OPERATOR_CLOUD_IMAGE_TAG ?= $(if $(filter dev,$(OPERATOR_IMAGE_TAG)),$(OPERATOR_IMAGE_VERSION),$(OPERATOR_IMAGE_TAG))
+GATEWAY_CLOUD_IMAGE_TAG ?= $(if $(filter dev,$(GATEWAY_IMAGE_TAG)),$(GATEWAY_IMAGE_VERSION),$(GATEWAY_IMAGE_TAG))
+API_SERVER_CLOUD_IMAGE_TAG ?= $(if $(filter dev,$(API_SERVER_IMAGE_TAG)),$(API_SERVER_IMAGE_VERSION),$(API_SERVER_IMAGE_TAG))
+IMG ?= $(REGISTRY)/$(OPERATOR_IMAGE_NAME):$(OPERATOR_IMAGE_TAG)
+GATEWAY_IMG ?= $(REGISTRY)/$(GATEWAY_IMAGE_NAME):$(GATEWAY_IMAGE_TAG)
+API_SERVER_IMG ?= $(REGISTRY)/$(API_SERVER_IMAGE_NAME):$(API_SERVER_IMAGE_TAG)
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -196,6 +202,7 @@ MAKE_CMD ?= make
 GODOC ?= $(GO_TOOL_BIN)/godoc
 GODOC_VERSION ?= v0.1.0-deprecated
 OPEN ?= xdg-open
+PRE_COMMIT ?= pre-commit
 
 # Security tooling
 TRIVY ?= trivy
@@ -235,12 +242,18 @@ help: ## Display this help message
 	@echo "Variables:"
 	@echo "  REGISTRY             Docker registry/repository prefix (default: ghcr.io/xtrinode)"
 	@echo "  OPERATOR_IMAGE_NAME  Operator image name (default: xtrinode-operator)"
-	@echo "  IMG                  Operator image tag (default: \$${REGISTRY}/\$${OPERATOR_IMAGE_NAME}:\$${IMAGE_TAG})"
+	@echo "  IMG                  Operator image tag (default: \$${REGISTRY}/\$${OPERATOR_IMAGE_NAME}:\$${OPERATOR_IMAGE_TAG})"
 	@echo "  GIT_TAG              Exact git tag at HEAD, when present"
-	@echo "  VERSION              Version tag (default: exact git tag without leading v, or 'dev')"
-	@echo "  IMAGE_VERSION        Component image version from Helm appVersion (default: umbrella appVersion)"
-	@echo "  IMAGE_TAG            Docker image tag (default: appVersion on exact release tags, otherwise \$${VERSION})"
-	@echo "  CLOUD_IMAGE_TAG      Cloud publish/deploy tag (default: appVersion when IMAGE_TAG is dev)"
+	@echo "  VERSION              Binary/release metadata only; not a Docker image tag"
+	@echo "  OPERATOR_IMAGE_VERSION   Operator image version from Helm appVersion"
+	@echo "  GATEWAY_IMAGE_VERSION    Gateway image version from Helm appVersion"
+	@echo "  API_SERVER_IMAGE_VERSION API server image version from Helm appVersion"
+	@echo "  OPERATOR_IMAGE_TAG   Operator Docker image tag"
+	@echo "  GATEWAY_IMAGE_TAG    Gateway Docker image tag"
+	@echo "  API_SERVER_IMAGE_TAG API server Docker image tag"
+	@echo "  OPERATOR_CLOUD_IMAGE_TAG   Operator cloud image tag"
+	@echo "  GATEWAY_CLOUD_IMAGE_TAG    Gateway cloud image tag"
+	@echo "  API_SERVER_CLOUD_IMAGE_TAG API server cloud image tag"
 	@echo "  GO_VERSION           Go toolchain/image version (default: 1.26.3)"
 	@echo "  ALPINE_VERSION       Alpine image version (default: 3.23)"
 	@echo "  DOCKER_PLATFORMS     buildx platforms (default: linux/amd64)"
@@ -252,11 +265,12 @@ help: ## Display this help message
 	@echo "  TF_ENV               Terraform environment (default: dev)"
 	@echo "  TF_VAR_FILE          Terraform variables file (default: terraform.tfvars)"
 	@echo "  TERRAFORM_CLOUDS     Terraform clouds used by generic/CI checks (default: gcp)"
+	@echo "  PRE_COMMIT           pre-commit command (default: pre-commit)"
 	@echo ""
 	@echo "Tooling: make tool-versions and docs/TOOLING.md show required local versions."
 	@echo "Deployment: make deploy-gcp | make deploy-aws | make deploy-azure | make deploy"
-	@echo "Docker release: git tag v0.1.0 && make docker-release"
-	@echo "Release GCP: make release-operator-gcp VERSION=0.1.0  (build, push, rollout)"
+	@echo "Docker release: CI publishes changed component appVersions; use docker-buildx-<component> for manual pushes"
+	@echo "GCP images: make gcp-images-push OPERATOR_CLOUD_IMAGE_TAG=0.1.0 GATEWAY_CLOUD_IMAGE_TAG=0.1.0 API_SERVER_CLOUD_IMAGE_TAG=0.1.0"
 	@echo "See docs/DEPLOYMENT.md for full flow."
 
 # =============================================================================
@@ -405,6 +419,14 @@ lint-markdown: ## Run Markdown linter
 	@echo "Running Markdown lint..."
 	@$(NPM) run --silent lint:markdown
 	@echo "Markdown linting complete"
+
+.PHONY: pre-commit-install
+pre-commit-install: ## Install local pre-commit hooks
+	$(PRE_COMMIT) install
+
+.PHONY: pre-commit-run
+pre-commit-run: ## Run pre-commit hooks on all files
+	$(PRE_COMMIT) run --all-files
 
 .PHONY: lint-terraform
 lint-terraform: ## Run Terraform linter for configured clouds (tflint)
@@ -844,7 +866,7 @@ define docker_build
 		--build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
 		--build-arg APP_PACKAGE=$($(3)_PACKAGE) \
 		--build-arg APP_PORT=$($(3)_PORT) \
-		--build-arg VERSION=$(IMAGE_TAG) \
+		--build-arg VERSION=$($(3)_IMAGE_TAG) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		-t $($(2)) \
@@ -867,7 +889,7 @@ define docker_buildx
 		--build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
 		--build-arg APP_PACKAGE=$($(3)_PACKAGE) \
 		--build-arg APP_PORT=$($(3)_PORT) \
-		--build-arg VERSION=$(IMAGE_TAG) \
+		--build-arg VERSION=$($(3)_IMAGE_TAG) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		-t $($(2)) \
@@ -927,26 +949,12 @@ docker-buildx-gateway: docker-buildx-builder ## Build gateway Docker image with 
 docker-buildx-api-server: docker-buildx-builder ## Build API server Docker image with buildx
 	$(call docker_buildx,API server,API_SERVER_IMG,API_SERVER)
 
-.PHONY: require-release-tag
-require-release-tag:
-	@if [ -z "$(GIT_TAG)" ]; then \
-		echo "ERROR: release targets must run from an exact git tag."; \
-		echo "Create and check out a release tag, for example: git tag v$$(awk '/^version:/ {print $$2; exit}' $(UMBRELLA_HELM_CHART_PATH)/Chart.yaml | tr -d '\"')"; \
-		exit 1; \
-	fi
-	@tag_version="$(GIT_TAG)"; tag_version="$${tag_version#v}"; \
-	if [ "$(VERSION)" != "$$tag_version" ]; then \
-		echo "ERROR: VERSION ($(VERSION)) does not match git tag $(GIT_TAG) ($$tag_version)."; \
-		exit 1; \
-	fi
-	@if [ "$(IMAGE_TAG)" != "$(IMAGE_VERSION)" ]; then \
-		echo "ERROR: IMAGE_TAG ($(IMAGE_TAG)) must match IMAGE_VERSION ($(IMAGE_VERSION)) for release targets."; \
-		exit 1; \
-	fi
-
 .PHONY: docker-release
-docker-release: require-release-tag ## Build and push all Docker release images from the exact git tag
-	$(MAKE) docker-buildx
+docker-release: ## Refuse manual release publishing; CI publishes changed component images
+	@echo "ERROR: Docker release publishing is CI-owned and component-scoped."
+	@echo "Update the relevant component chart appVersion and merge through the release workflow."
+	@echo "For manual non-release pushes, use docker-buildx-operator, docker-buildx-gateway, or docker-buildx-api-server with explicit component image tags."
+	@exit 1
 
 # =============================================================================
 # Kubernetes Deployment Commands
@@ -975,47 +983,35 @@ GCP_API_SERVER_IMAGE ?= $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)/xtrinode-
 gcp-docker-login: ## Configure Docker auth for GCP Artifact Registry
 	$(GCLOUD) auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
 
+define gcp_image_push
+	@echo "Building and pushing GCP $(1) image with tag $($(2)_CLOUD_IMAGE_TAG)..."
+	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$($(2)_PACKAGE) --build-arg APP_PORT=$($(2)_PORT) --build-arg VERSION=$($(2)_CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $($(3)):$($(2)_CLOUD_IMAGE_TAG) -f $($(2)_DOCKERFILE) $(OPERATOR_DIR)
+	$(DOCKER) push $($(3)):$($(2)_CLOUD_IMAGE_TAG)
+	@echo "GCP $(1) image pushed."
+endef
+
 .PHONY: gcp-images-push
 gcp-images-push: gcp-docker-login ## Build and push all XTrinode images to GCP Artifact Registry
-	@echo "Building and pushing GCP images with tag $(CLOUD_IMAGE_TAG)..."
-	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(OPERATOR_PACKAGE) --build-arg APP_PORT=$(OPERATOR_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG) -f $(OPERATOR_DOCKERFILE) $(OPERATOR_DIR)
-	$(DOCKER) push $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG)
-	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(GATEWAY_PACKAGE) --build-arg APP_PORT=$(GATEWAY_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_GATEWAY_IMAGE):$(CLOUD_IMAGE_TAG) -f $(GATEWAY_DOCKERFILE) $(OPERATOR_DIR)
-	$(DOCKER) push $(GCP_GATEWAY_IMAGE):$(CLOUD_IMAGE_TAG)
-	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(API_SERVER_PACKAGE) --build-arg APP_PORT=$(API_SERVER_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_API_SERVER_IMAGE):$(CLOUD_IMAGE_TAG) -f $(API_SERVER_DOCKERFILE) $(OPERATOR_DIR)
-	$(DOCKER) push $(GCP_API_SERVER_IMAGE):$(CLOUD_IMAGE_TAG)
+	@echo "Building and pushing GCP images:"
+	@echo "  operator:   $(OPERATOR_CLOUD_IMAGE_TAG)"
+	@echo "  gateway:    $(GATEWAY_CLOUD_IMAGE_TAG)"
+	@echo "  api-server: $(API_SERVER_CLOUD_IMAGE_TAG)"
+	$(call gcp_image_push,operator,OPERATOR,GCP_OPERATOR_IMAGE)
+	$(call gcp_image_push,gateway,GATEWAY,GCP_GATEWAY_IMAGE)
+	$(call gcp_image_push,API server,API_SERVER,GCP_API_SERVER_IMAGE)
 	@echo "GCP images pushed."
 
 .PHONY: gcp-operator-image-push
 gcp-operator-image-push: gcp-docker-login ## Build and push only the XTrinode operator image to GCP Artifact Registry
-	@echo "Building and pushing GCP operator image with tag $(CLOUD_IMAGE_TAG)..."
-	$(DOCKER) build --build-arg GO_VERSION=$(GO_VERSION) --build-arg ALPINE_VERSION=$(ALPINE_VERSION) --build-arg APP_PACKAGE=$(OPERATOR_PACKAGE) --build-arg APP_PORT=$(OPERATOR_PORT) --build-arg VERSION=$(CLOUD_IMAGE_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) -t $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG) -f $(OPERATOR_DOCKERFILE) $(OPERATOR_DIR)
-	$(DOCKER) push $(GCP_OPERATOR_IMAGE):$(CLOUD_IMAGE_TAG)
-	@echo "GCP operator image pushed."
+	$(call gcp_image_push,operator,OPERATOR,GCP_OPERATOR_IMAGE)
 
-.PHONY: release-operator-gcp
-release-operator-gcp: ## Build operator, push to GCP Artifact Registry, helm upgrade, rollout restart. Set CLOUD_IMAGE_TAG for tag (default: appVersion for cloud publishes).
-	@echo "=== Release operator to GCP ==="
-	@echo "Tag: $(CLOUD_IMAGE_TAG)"
-	$(MAKE) docker-build-operator IMAGE_TAG=$(CLOUD_IMAGE_TAG) IMG=$(REGISTRY)/$(OPERATOR_IMAGE_NAME):$(CLOUD_IMAGE_TAG)
-	$(DOCKER) tag $(REGISTRY)/$(OPERATOR_IMAGE_NAME):$(CLOUD_IMAGE_TAG) $(GCP_REGISTRY):$(CLOUD_IMAGE_TAG)
-	$(DOCKER) push $(GCP_REGISTRY):$(CLOUD_IMAGE_TAG)
-	@echo "Configuring kubectl for GKE..."
-	$(GCLOUD) container clusters get-credentials $(GCP_CLUSTER_NAME) --zone $(GCP_ZONE) --project $(GCP_PROJECT_ID)
-	@echo "Generating and applying CRDs..."
-	$(MAKE) manifests
-	$(KUBECTL) apply -f $(HELM_CHART_PATH)/crds
-	@echo "Upgrading Helm release..."
-	$(HELM) upgrade --install xtrinode-operator $(HELM_CHART_PATH) \
-		-n $(GCP_OPERATOR_NAMESPACE) \
-		--set image.repository=$(GCP_REGISTRY) \
-		--set image.tag=$(CLOUD_IMAGE_TAG) \
-		--set image.pullPolicy=Always \
-		--reuse-values
-	@echo "Restarting operator deployment..."
-	$(KUBECTL) rollout restart deployment xtrinode-operator -n $(GCP_OPERATOR_NAMESPACE)
-	$(KUBECTL) rollout status deployment xtrinode-operator -n $(GCP_OPERATOR_NAMESPACE) --timeout=120s
-	@echo "=== Release complete ==="
+.PHONY: gcp-gateway-image-push
+gcp-gateway-image-push: gcp-docker-login ## Build and push only the XTrinode gateway image to GCP Artifact Registry
+	$(call gcp_image_push,gateway,GATEWAY,GCP_GATEWAY_IMAGE)
+
+.PHONY: gcp-api-server-image-push
+gcp-api-server-image-push: gcp-docker-login ## Build and push only the XTrinode API server image to GCP Artifact Registry
+	$(call gcp_image_push,API server,API_SERVER,GCP_API_SERVER_IMAGE)
 
 .PHONY: deploy-aws
 deploy-aws: helm-repo-setup ## Experimental AWS provider-validation deploy: terraform + build + push + helm.
@@ -1032,7 +1028,7 @@ deploy-operator: manifests helm-deps ## Deploy operator (includes KEDA subchart 
 		-n $(OPERATOR_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(REGISTRY)/$(OPERATOR_IMAGE_NAME) \
-		--set image.tag=$(IMAGE_TAG) \
+		--set image.tag=$(OPERATOR_IMAGE_TAG) \
 		--wait
 	@echo "Operator deployment complete"
 
@@ -1043,7 +1039,7 @@ deploy-api-server: ## Deploy API server to xtrinode-system namespace via Helm
 		-n $(API_SERVER_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(REGISTRY)/$(API_SERVER_IMAGE_NAME) \
-		--set image.tag=$(IMAGE_TAG) \
+		--set image.tag=$(API_SERVER_IMAGE_TAG) \
 		--wait
 	@echo "API server deployment complete"
 
@@ -1054,7 +1050,7 @@ deploy-gateway: ## Deploy gateway to xtrinode-gateway namespace via Helm
 		-n $(GATEWAY_NAMESPACE) \
 		--create-namespace \
 		--set image.repository=$(REGISTRY)/$(GATEWAY_IMAGE_NAME) \
-		--set image.tag=$(IMAGE_TAG) \
+		--set image.tag=$(GATEWAY_IMAGE_TAG) \
 		--wait
 	@echo "Gateway deployment complete"
 
@@ -1105,7 +1101,7 @@ upgrade-operator: ## Upgrade operator deployment
 	$(HELM) upgrade $(RELEASE_NAME) $(HELM_CHART_PATH) \
 		-n $(OPERATOR_NAMESPACE) \
 		--set image.repository=$(REGISTRY)/$(OPERATOR_IMAGE_NAME) \
-		--set image.tag=$(IMAGE_TAG) \
+		--set image.tag=$(OPERATOR_IMAGE_TAG) \
 		--wait
 	@echo "Operator upgrade complete"
 
@@ -1115,7 +1111,7 @@ upgrade-api-server: ## Upgrade API server deployment
 	$(HELM) upgrade xtrinode-api-server $(API_SERVER_HELM_CHART_PATH) \
 		-n $(API_SERVER_NAMESPACE) \
 		--set image.repository=$(REGISTRY)/$(API_SERVER_IMAGE_NAME) \
-		--set image.tag=$(IMAGE_TAG) \
+		--set image.tag=$(API_SERVER_IMAGE_TAG) \
 		--wait
 	@echo "API server upgrade complete"
 
@@ -1125,7 +1121,7 @@ upgrade-gateway: ## Upgrade gateway deployment
 	$(HELM) upgrade xtrinode-gateway $(GATEWAY_HELM_CHART_PATH) \
 		-n $(GATEWAY_NAMESPACE) \
 		--set image.repository=$(REGISTRY)/$(GATEWAY_IMAGE_NAME) \
-		--set image.tag=$(IMAGE_TAG) \
+		--set image.tag=$(GATEWAY_IMAGE_TAG) \
 		--wait
 	@echo "Gateway upgrade complete"
 
@@ -1417,7 +1413,7 @@ gcp-observability-up: gcp-configure-kubectl install-observability ## Install Pro
 .PHONY: gcp-control-plane-deploy
 gcp-control-plane-deploy: gcp-configure-kubectl ## Deploy XTrinode operator, API server, and gateway to the management cluster
 	@echo "Deploying XTrinode control plane to GCP management cluster..."
-	GCP_PROJECT_ID=$(GCP_PROJECT_ID) GCP_REGION=$(GCP_REGION) GCP_ZONE=$(GCP_ZONE) GCP_CLUSTER_NAME=$(GCP_CLUSTER_NAME) OPERATOR_NAMESPACE=$(GCP_OPERATOR_NAMESPACE) VERSION=$(VERSION) GATEWAY_REPLICA_COUNT=$(GATEWAY_REPLICA_COUNT) GATEWAY_REDIS_ENABLED=$(GATEWAY_REDIS_ENABLED) PROMETHEUS_ENABLED=$(PROMETHEUS_ENABLED) PROMETHEUS_STORAGE_CLASS=$(PROMETHEUS_STORAGE_CLASS) VECTOR_ENABLED=$(VECTOR_ENABLED) VECTOR_NAMESPACE=$(VECTOR_NAMESPACE) VECTOR_LOG_LEVEL=$(VECTOR_LOG_LEVEL) WEBHOOK_ENABLED=$(WEBHOOK_ENABLED) HELM="$(HELM)" KUBECTL="$(KUBECTL)" GCLOUD="$(GCLOUD)" OPENSSL="$(OPENSSL)" bash scripts/deploy-gcp.sh
+	GCP_PROJECT_ID=$(GCP_PROJECT_ID) GCP_REGION=$(GCP_REGION) GCP_ZONE=$(GCP_ZONE) GCP_CLUSTER_NAME=$(GCP_CLUSTER_NAME) OPERATOR_NAMESPACE=$(GCP_OPERATOR_NAMESPACE) OPERATOR_IMAGE_TAG=$(OPERATOR_CLOUD_IMAGE_TAG) API_SERVER_IMAGE_TAG=$(API_SERVER_CLOUD_IMAGE_TAG) GATEWAY_IMAGE_TAG=$(GATEWAY_CLOUD_IMAGE_TAG) GATEWAY_REPLICA_COUNT=$(GATEWAY_REPLICA_COUNT) GATEWAY_REDIS_ENABLED=$(GATEWAY_REDIS_ENABLED) PROMETHEUS_ENABLED=$(PROMETHEUS_ENABLED) PROMETHEUS_STORAGE_CLASS=$(PROMETHEUS_STORAGE_CLASS) VECTOR_ENABLED=$(VECTOR_ENABLED) VECTOR_NAMESPACE=$(VECTOR_NAMESPACE) VECTOR_LOG_LEVEL=$(VECTOR_LOG_LEVEL) WEBHOOK_ENABLED=$(WEBHOOK_ENABLED) HELM="$(HELM)" KUBECTL="$(KUBECTL)" GCLOUD="$(GCLOUD)" OPENSSL="$(OPENSSL)" bash scripts/deploy-gcp.sh
 
 .PHONY: gcp-gateway-redis-up
 gcp-gateway-redis-up: ## Redeploy gateway with in-chart Redis enabled
@@ -1572,13 +1568,9 @@ godeps-vendor: ## Vendor dependencies
 # =============================================================================
 
 .PHONY: release
-release: require-release-tag ci-lint ci-test ci-verify-manifests ci-terraform-validate-all ci-security docker-build ## Validate release locally from an exact git tag
-	@echo "Validating release $(VERSION)..."
-	@if [ "$(VERSION)" = "dev" ]; then \
-		echo "ERROR: VERSION is 'dev'. Set VERSION to the release version."; \
-		exit 1; \
-	fi
-	@echo "Release $(VERSION) validated from tag $(GIT_TAG). A CODEOWNER must open and merge the release PR."
+release: ci-lint ci-test ci-verify-manifests ci-terraform-validate-all ci-security docker-build ## Validate release readiness locally without publishing
+	@bash -c 'source scripts/ci/release-lib.sh; validate_release_version_metadata'
+	@echo "Release readiness validated locally. Merge a CODEOWNER-owned release PR to publish."
 
 .PHONY: release-notes
 release-notes: ## Generate release notes from git commits
@@ -1666,18 +1658,19 @@ ci-tool-versions-output: ## Write CI tool versions to GITHUB_OUTPUT
 	@printf 'clusterctl=%s\n' "$(CLUSTERCTL_VERSION)" >> "$$GITHUB_OUTPUT"
 	@printf 'capg=%s\n' "$(CAPG_VERSION)" >> "$$GITHUB_OUTPUT"
 
-.PHONY: ci-image-matrix-output
-ci-image-matrix-output: ## Write the Docker image matrix to GITHUB_OUTPUT
-	@: "$${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-	@printf 'matrix={"include":[{"component":"operator","image":"%s","package":"%s","port":"%s"},{"component":"gateway","image":"%s","package":"%s","port":"%s"},{"component":"api-server","image":"%s","package":"%s","port":"%s"}]}\n' \
-		"$(OPERATOR_IMAGE_NAME)" "$(OPERATOR_PACKAGE)" "$(OPERATOR_PORT)" \
-		"$(GATEWAY_IMAGE_NAME)" "$(GATEWAY_PACKAGE)" "$(GATEWAY_PORT)" \
-		"$(API_SERVER_IMAGE_NAME)" "$(API_SERVER_PACKAGE)" "$(API_SERVER_PORT)" >> "$$GITHUB_OUTPUT"
-
 .PHONY: ci-build-date-output
-ci-build-date-output: ## Write an RFC3339 UTC build timestamp to GITHUB_OUTPUT
+ci-build-date-output: ## Write the release commit timestamp to GITHUB_OUTPUT
 	@: "$${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-	@printf 'value=%s\n' "$$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$$GITHUB_OUTPUT"
+	@timestamp="$$(git show -s --format=%ct HEAD 2>/dev/null || true)"; \
+	if [ -n "$$timestamp" ]; then \
+		printf 'value=%s\n' "$$(date -u -d "@$$timestamp" +'%Y-%m-%dT%H:%M:%SZ')" >> "$$GITHUB_OUTPUT"; \
+	else \
+		printf 'value=%s\n' "$$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$$GITHUB_OUTPUT"; \
+	fi
+
+.PHONY: ci-release-image-preflight
+ci-release-image-preflight: ## Refuse conflicting exact image tags before release image publishing
+	scripts/ci/release-image-preflight.sh
 
 .PHONY: ci-release-pr-policy
 ci-release-pr-policy: ## Validate CODEOWNER release PR policy
@@ -1702,11 +1695,15 @@ ci-package-helm-release: ## Package all release Helm charts (usage: RELEASE_VERS
 		echo "ERROR: RELEASE_VERSION is required"; \
 		exit 1; \
 	fi
+	@if [ "$$(awk '/^version:/ {print $$2; exit}' "$(UMBRELLA_HELM_CHART_PATH)/Chart.yaml" | tr -d '\"')" != "$(RELEASE_VERSION)" ]; then \
+		echo "ERROR: RELEASE_VERSION ($(RELEASE_VERSION)) must match umbrella chart version"; \
+		exit 1; \
+	fi
 	mkdir -p dist
-	$(HELM) package "$(UMBRELLA_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
-	$(HELM) package "$(HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
-	$(HELM) package "$(API_SERVER_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
-	$(HELM) package "$(GATEWAY_HELM_CHART_PATH)" --version "$(RELEASE_VERSION)" --app-version "$(IMAGE_VERSION)" --destination dist/
+	$(HELM) package "$(UMBRELLA_HELM_CHART_PATH)" --destination dist/
+	$(HELM) package "$(HELM_CHART_PATH)" --destination dist/
+	$(HELM) package "$(API_SERVER_HELM_CHART_PATH)" --destination dist/
+	$(HELM) package "$(GATEWAY_HELM_CHART_PATH)" --destination dist/
 
 .PHONY: ci-release-notes
 ci-release-notes: ## Write release notes to GITHUB_OUTPUT

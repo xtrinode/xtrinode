@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy XTrinode operator to GCP GKE cluster
+# Deploy the XTrinode control plane to a GCP GKE cluster
 # Prerequisites: see docs/TOOLING.md for versions.
 #   - gcloud auth, gke-gcloud-auth-plugin, Helm, kubectl, and openssl
 
@@ -12,17 +12,27 @@ KUBECTL="${KUBECTL:-kubectl}"
 MAKE="${MAKE:-make}"
 GCLOUD="${GCLOUD:-gcloud}"
 OPENSSL="${OPENSSL:-openssl}"
-DEFAULT_IMAGE_VERSION="$(
-  awk '/^appVersion:/ {print $2; exit}' "${ROOT_DIR}/helm/xtrinode/Chart.yaml" 2>/dev/null |
-    tr -d '"' || true
-)"
+
+chart_app_version() {
+  local chart="$1"
+  local version
+
+  version="$(awk '/^appVersion:/ {print $2; exit}' "$chart" 2>/dev/null | tr -d '"' || true)"
+  if [ -z "$version" ]; then
+    echo "ERROR: Could not read appVersion from $chart" >&2
+    exit 1
+  fi
+  printf '%s\n' "$version"
+}
 
 PROJECT_ID="${GCP_PROJECT_ID:-project-40642592-0c4f-4ce1-9d6}"
 CLUSTER_NAME="${GCP_CLUSTER_NAME:-xtrinode-gke-test}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 REGION="${GCP_REGION:-us-central1}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}"
-VERSION="${VERSION:-${DEFAULT_IMAGE_VERSION:-0.1.0}}"
+OPERATOR_IMAGE_TAG="${OPERATOR_IMAGE_TAG:-$(chart_app_version "${ROOT_DIR}/helm/xtrinode-operator/Chart.yaml")}"
+API_SERVER_IMAGE_TAG="${API_SERVER_IMAGE_TAG:-$(chart_app_version "${ROOT_DIR}/helm/xtrinode-api-server/Chart.yaml")}"
+GATEWAY_IMAGE_TAG="${GATEWAY_IMAGE_TAG:-$(chart_app_version "${ROOT_DIR}/helm/xtrinode-gateway/Chart.yaml")}"
 NAMESPACE="${OPERATOR_NAMESPACE:-xtrinode-system}"
 GATEWAY_REPLICA_COUNT="${GATEWAY_REPLICA_COUNT:-1}"
 GATEWAY_REDIS_ENABLED="${GATEWAY_REDIS_ENABLED:-false}"
@@ -48,7 +58,10 @@ PROMETHEUS_URL="http://prometheus-operated.${OBSERVABILITY_NAMESPACE}.svc.cluste
 
 echo "=== Deploying XTrinode to GCP ==="
 echo "Project: $PROJECT_ID, Cluster: $CLUSTER_NAME"
-echo "XTrinode image tag: $VERSION"
+echo "Image tags:"
+echo "  operator:   $OPERATOR_IMAGE_TAG"
+echo "  api-server: $API_SERVER_IMAGE_TAG"
+echo "  gateway:    $GATEWAY_IMAGE_TAG"
 echo "Gateway replicas: $GATEWAY_REPLICA_COUNT, Redis enabled: $GATEWAY_REDIS_ENABLED"
 echo "Gateway auth enabled: $GATEWAY_AUTH_ENABLED"
 echo "Prometheus enabled: $PROMETHEUS_ENABLED, Vector enabled: $VECTOR_ENABLED"
@@ -160,7 +173,7 @@ echo "Deploying XTrinode operator..."
   --take-ownership \
   --namespace "$NAMESPACE" \
   --set image.repository="${REGISTRY}/xtrinode-operator/xtrinode-operator" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$OPERATOR_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set keda.enabled=true \
   --set webhook.enabled="$WEBHOOK_ENABLED" \
@@ -177,7 +190,7 @@ echo "Deploying XTrinode API server..."
   --namespace "$NAMESPACE" \
   --create-namespace \
   --set image.repository="${REGISTRY}/xtrinode-api-server/xtrinode-api-server" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$API_SERVER_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set apiServer.auth.enabled=true \
   --set apiServer.auth.existingSecret="$API_SERVER_AUTH_SECRET" \
@@ -195,7 +208,7 @@ echo "Deploying XTrinode gateway..."
   --namespace xtrinode-gateway \
   --create-namespace \
   --set image.repository="${REGISTRY}/xtrinode-gateway/xtrinode-gateway" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$GATEWAY_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set replicaCount="$GATEWAY_REPLICA_COUNT" \
   --set gateway.redis.enabled="$GATEWAY_REDIS_ENABLED" \

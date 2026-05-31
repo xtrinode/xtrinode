@@ -33,14 +33,24 @@ AWS="${AWS:-aws}"
 CURL="${CURL:-curl}"
 OPENSSL="${OPENSSL:-openssl}"
 
+chart_app_version() {
+  local chart="$1"
+  local version
+
+  version="$(awk '/^appVersion:/ {print $2; exit}' "$chart" 2>/dev/null | tr -d '"' || true)"
+  if [ -z "$version" ]; then
+    echo "ERROR: Could not read appVersion from $chart" >&2
+    exit 1
+  fi
+  printf '%s\n' "$version"
+}
+
 # Overridable via environment
 AWS_PROFILE="${AWS_PROFILE:-default}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-DEFAULT_IMAGE_VERSION="$(
-  awk '/^appVersion:/ {print $2; exit}' "$ROOT_DIR/helm/xtrinode/Chart.yaml" 2>/dev/null |
-    tr -d '"' || true
-)"
-VERSION="${VERSION:-${DEFAULT_IMAGE_VERSION:-0.1.0}}"
+OPERATOR_IMAGE_TAG="${OPERATOR_IMAGE_TAG:-$(chart_app_version "$ROOT_DIR/helm/xtrinode-operator/Chart.yaml")}"
+API_SERVER_IMAGE_TAG="${API_SERVER_IMAGE_TAG:-$(chart_app_version "$ROOT_DIR/helm/xtrinode-api-server/Chart.yaml")}"
+GATEWAY_IMAGE_TAG="${GATEWAY_IMAGE_TAG:-$(chart_app_version "$ROOT_DIR/helm/xtrinode-gateway/Chart.yaml")}"
 CLUSTER_NAME="${CLUSTER_NAME:-xtrinode-eks-test}"
 ENVIRONMENT="${ENVIRONMENT:-testing}"
 POSTGRES_PASSWORD="${TF_VAR_postgres_admin_password:-}"
@@ -108,12 +118,21 @@ postgres_enabled() {
     grep -Eq '^[[:space:]]*postgres_enabled[[:space:]]*=[[:space:]]*true([[:space:]#]|$)' "$TF_DIR/terraform.tfvars"
 }
 
+component_image_tag() {
+  case "$1" in
+    operator) printf '%s\n' "$OPERATOR_IMAGE_TAG" ;;
+    api-server) printf '%s\n' "$API_SERVER_IMAGE_TAG" ;;
+    gateway) printf '%s\n' "$GATEWAY_IMAGE_TAG" ;;
+    *) fail "Unknown component: $1" ;;
+  esac
+}
+
 # Verify AWS credentials
 AWS_ACCOUNT_ID=$("$AWS" sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text 2>/dev/null) \
   || fail "AWS credentials not configured. Run: aws configure --profile $AWS_PROFILE"
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 ok "AWS Account: $AWS_ACCOUNT_ID  Region: $AWS_REGION  Registry: $ECR_REGISTRY"
-ok "XTrinode image tag: $VERSION"
+ok "Image tags: operator=$OPERATOR_IMAGE_TAG api-server=$API_SERVER_IMAGE_TAG gateway=$GATEWAY_IMAGE_TAG"
 
 if [ -z "$API_SERVER_AUTH_TOKEN" ]; then
   API_SERVER_AUTH_TOKEN="$(random_token)"
@@ -210,12 +229,13 @@ if [ "$SKIP_BUILD" = false ]; then
   for comp in "${COMPONENTS[@]}"; do
     IFS=':' read -r name app_package app_port <<< "$comp"
     image_name="xtrinode-${name}"
-    tag="${ECR_REGISTRY}/${image_name}:${VERSION}"
+    image_tag="$(component_image_tag "$name")"
+    tag="${ECR_REGISTRY}/${image_name}:${image_tag}"
     info "  Building ${image_name}..."
     "$DOCKER" build \
       --build-arg APP_PACKAGE="$app_package" \
       --build-arg APP_PORT="$app_port" \
-      --build-arg VERSION="$VERSION" \
+      --build-arg VERSION="$image_tag" \
       --build-arg GIT_COMMIT="$GIT_COMMIT" \
       --build-arg BUILD_DATE="$BUILD_DATE" \
       -t "$tag" \
@@ -232,9 +252,10 @@ if [ "$SKIP_BUILD" = false ]; then
   for comp in "${COMPONENTS[@]}"; do
     IFS=':' read -r name _ <<< "$comp"
     image_name="xtrinode-${name}"
+    image_tag="$(component_image_tag "$name")"
     info "  Pushing ${image_name}..."
-    "$DOCKER" push "${ECR_REGISTRY}/${image_name}:${VERSION}"
-    ok "  Pushed: ${ECR_REGISTRY}/${image_name}:${VERSION}"
+    "$DOCKER" push "${ECR_REGISTRY}/${image_name}:${image_tag}"
+    ok "  Pushed: ${ECR_REGISTRY}/${image_name}:${image_tag}"
   done
 else
   info "Step 3/5: Skipping Docker build (--skip-build)"
@@ -337,7 +358,7 @@ info "  Deploying xtrinode-operator..."
   --take-ownership \
   --namespace "$OPERATOR_NAMESPACE" \
   --set image.repository="${ECR_REGISTRY}/xtrinode-operator" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$OPERATOR_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set keda.enabled=true \
   --set webhook.enabled="$WEBHOOK_ENABLED" \
@@ -353,7 +374,7 @@ info "  Deploying xtrinode-api-server..."
   --take-ownership \
   --namespace "$OPERATOR_NAMESPACE" \
   --set image.repository="${ECR_REGISTRY}/xtrinode-api-server" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$API_SERVER_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set apiServer.auth.enabled=true \
   --set apiServer.auth.existingSecret="$API_SERVER_AUTH_SECRET" \
@@ -369,7 +390,7 @@ info "  Deploying xtrinode-gateway..."
   --force \
   --namespace "$GATEWAY_NAMESPACE" \
   --set image.repository="${ECR_REGISTRY}/xtrinode-gateway" \
-  --set image.tag="$VERSION" \
+  --set image.tag="$GATEWAY_IMAGE_TAG" \
   --set image.pullPolicy=Always \
   --set replicaCount="$GATEWAY_REPLICA_COUNT" \
   --set gateway.redis.enabled="$GATEWAY_REDIS_ENABLED" \
@@ -395,7 +416,10 @@ echo ""
 echo "  Cluster:    $CLUSTER_NAME"
 echo "  Region:     $AWS_REGION"
 echo "  Registry:   $ECR_REGISTRY"
-echo "  Image tag:  $VERSION"
+echo "  Image tags:"
+echo "    operator:   $OPERATOR_IMAGE_TAG"
+echo "    api-server: $API_SERVER_IMAGE_TAG"
+echo "    gateway:    $GATEWAY_IMAGE_TAG"
 echo ""
 echo "  Namespaces:"
 echo "    Operator + API Server:  $OPERATOR_NAMESPACE"

@@ -26,7 +26,14 @@ jobs:
       pr_author: ${{ steps.prepare.outputs.pr_author }}
       pr_head_owner: ${{ steps.prepare.outputs.pr_head_owner }}
       pr_number: ${{ steps.prepare.outputs.pr_number }}
-      image_version: ${{ steps.prepare.outputs.image_version }}
+      api_server_image_version: ${{ steps.prepare.outputs.api_server_image_version }}
+      api_server_chart_version: ${{ steps.prepare.outputs.api_server_chart_version }}
+      app_version: ${{ steps.prepare.outputs.app_version }}
+      gateway_chart_version: ${{ steps.prepare.outputs.gateway_chart_version }}
+      gateway_image_version: ${{ steps.prepare.outputs.gateway_image_version }}
+      image_matrix: ${{ steps.prepare.outputs.image_matrix }}
+      operator_chart_version: ${{ steps.prepare.outputs.operator_chart_version }}
+      operator_image_version: ${{ steps.prepare.outputs.operator_image_version }}
       should_release: ${{ steps.prepare.outputs.should_release }}
       should_publish_images: ${{ steps.prepare.outputs.should_publish_images }}
       tag: ${{ steps.prepare.outputs.tag }}
@@ -73,40 +80,23 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
         run: make ci-create-release-tag
 
-  image-matrix:
-    name: Image Matrix
-    runs-on: ubuntu-latest
-    needs: [prepare-release]
-    if: needs.prepare-release.outputs.should_release == 'true' && needs.prepare-release.outputs.should_publish_images == 'true'
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-    steps:
-      - name: Checkout release commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ needs.prepare-release.outputs.target_sha }}
-
-      - name: Generate image matrix
-        id: matrix
-        run: make ci-image-matrix-output
-
   release-images:
     name: Release Image (${{ matrix.component }})
     runs-on: ubuntu-latest
-    needs: [prepare-release, create-tag, image-matrix]
-    if: needs.prepare-release.outputs.should_release == 'true' && needs.prepare-release.outputs.should_publish_images == 'true'
+    needs: [prepare-release, ci, create-tag]
+    if: ${{ always() && needs.prepare-release.outputs.should_publish_images == 'true' && needs.ci.result == 'success' && (needs.prepare-release.outputs.should_release != 'true' || needs.create-tag.result == 'success') }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: true
-      matrix: ${{ fromJSON(needs.image-matrix.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.prepare-release.outputs.image_matrix) }}
     steps:
-      - name: Checkout release tag
+      - name: Checkout release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          ref: ${{ needs.prepare-release.outputs.tag }}
+          ref: ${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Read CI tool versions
         id: tool-versions
@@ -131,16 +121,26 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
-            type=semver,pattern={{version}},value=v${{ needs.prepare-release.outputs.image_version }}
-            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.prepare-release.outputs.image_version }}
-            type=semver,pattern={{major}},value=v${{ needs.prepare-release.outputs.image_version }}
-            type=raw,value=latest,enable=${{ !contains(needs.prepare-release.outputs.image_version, '-') }}
+            type=semver,pattern={{version}},value=v${{ matrix.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ matrix.version }},enable=${{ !contains(matrix.version, '-') }}
+            type=semver,pattern={{major}},value=v${{ matrix.version }},enable=${{ !contains(matrix.version, '-') }}
+            type=raw,value=latest,enable=${{ !contains(matrix.version, '-') }}
+
+      - name: Check exact image tag immutability
+        id: image-preflight
+        env:
+          RELEASE_IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          RELEASE_IMAGE_VERSION: ${{ matrix.version }}
+          TARGET_SHA: ${{ needs.prepare-release.outputs.target_sha }}
+        run: make ci-release-image-preflight
 
       - name: Compute build timestamp
         id: build-date
+        if: steps.image-preflight.outputs.should_push == 'true'
         run: make ci-build-date-output
 
       - name: Build image for scan
+        if: steps.image-preflight.outputs.should_push == 'true'
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: xtrinode
@@ -149,21 +149,27 @@ jobs:
           load: true
           push: false
           tags: local/${{ matrix.image }}:scan-${{ needs.prepare-release.outputs.target_sha }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.version=${{ matrix.version }}
+            org.opencontainers.image.revision=${{ needs.prepare-release.outputs.target_sha }}
+            org.opencontainers.image.created=${{ steps.build-date.outputs.value }}
           cache-from: type=gha
           build-args: |
             GO_VERSION=${{ steps.tool-versions.outputs.go }}
             ALPINE_VERSION=${{ steps.tool-versions.outputs.alpine }}
             APP_PACKAGE=${{ matrix.package }}
             APP_PORT=${{ matrix.port }}
-            VERSION=${{ needs.prepare-release.outputs.image_version }}
+            VERSION=${{ matrix.version }}
             GIT_COMMIT=${{ needs.prepare-release.outputs.target_sha }}
             BUILD_DATE=${{ steps.build-date.outputs.value }}
 
       - name: Scan image
+        if: steps.image-preflight.outputs.should_push == 'true'
         run: make ci-scan-image IMAGE=local/${{ matrix.image }}:scan-${{ needs.prepare-release.outputs.target_sha }}
 
       - name: Build and push image
+        if: steps.image-preflight.outputs.should_push == 'true'
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: xtrinode
@@ -171,7 +177,11 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.version=${{ matrix.version }}
+            org.opencontainers.image.revision=${{ needs.prepare-release.outputs.target_sha }}
+            org.opencontainers.image.created=${{ steps.build-date.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
@@ -179,7 +189,7 @@ jobs:
             ALPINE_VERSION=${{ steps.tool-versions.outputs.alpine }}
             APP_PACKAGE=${{ matrix.package }}
             APP_PORT=${{ matrix.port }}
-            VERSION=${{ needs.prepare-release.outputs.image_version }}
+            VERSION=${{ matrix.version }}
             GIT_COMMIT=${{ needs.prepare-release.outputs.target_sha }}
             BUILD_DATE=${{ steps.build-date.outputs.value }}
 
@@ -230,21 +240,23 @@ jobs:
 
             ${{ steps.release-notes.outputs.notes }}
 
-            ## Docker Images
+            ## Chart Default Image Tags
+
+            Component images are published independently when their chart `appVersion` changes.
 
             ```
-            ghcr.io/xtrinode/xtrinode-operator:${{ needs.prepare-release.outputs.image_version }}
-            ghcr.io/xtrinode/xtrinode-gateway:${{ needs.prepare-release.outputs.image_version }}
-            ghcr.io/xtrinode/xtrinode-api-server:${{ needs.prepare-release.outputs.image_version }}
+            ghcr.io/xtrinode/xtrinode-operator:${{ needs.prepare-release.outputs.operator_image_version }}
+            ghcr.io/xtrinode/xtrinode-gateway:${{ needs.prepare-release.outputs.gateway_image_version }}
+            ghcr.io/xtrinode/xtrinode-api-server:${{ needs.prepare-release.outputs.api_server_image_version }}
             ```
 
             ## Helm Charts
 
             ```bash
             helm install xtrinode ./xtrinode-${{ needs.prepare-release.outputs.version }}.tgz
-            helm install xtrinode-operator ./xtrinode-operator-${{ needs.prepare-release.outputs.version }}.tgz
-            helm install xtrinode-api-server ./xtrinode-api-server-${{ needs.prepare-release.outputs.version }}.tgz
-            helm install xtrinode-gateway ./xtrinode-gateway-${{ needs.prepare-release.outputs.version }}.tgz
+            helm install xtrinode-operator ./xtrinode-operator-${{ needs.prepare-release.outputs.operator_chart_version }}.tgz
+            helm install xtrinode-api-server ./xtrinode-api-server-${{ needs.prepare-release.outputs.api_server_chart_version }}.tgz
+            helm install xtrinode-gateway ./xtrinode-gateway-${{ needs.prepare-release.outputs.gateway_chart_version }}.tgz
             ```
           draft: false
           prerelease: ${{ contains(needs.prepare-release.outputs.version, '-') }}

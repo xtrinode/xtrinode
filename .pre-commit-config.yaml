@@ -1,0 +1,33 @@
+repos:
+  - repo: local
+    hooks:
+      - id: git-diff-check
+        name: Check staged whitespace
+        entry: git diff --check --cached
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: shell-syntax
+        name: Check Bash script syntax
+        entry: make lint-shell
+        language: system
+        pass_filenames: false
+        types: [shell]
+      - id: yaml-syntax
+        name: Check YAML syntax
+        entry: make lint-yaml
+        language: system
+        pass_filenames: false
+        types: [yaml]
+      - id: markdown-lint
+        name: Lint Markdown
+        entry: make lint-markdown
+        language: system
+        pass_filenames: false
+        types: [markdown]
+      - id: release-version-metadata
+        name: Validate release version metadata
+        entry: bash -c 'source scripts/ci/release-lib.sh; validate_release_version_metadata'
+        language: system
+        pass_filenames: false
+        files: '^helm/(xtrinode|xtrinode-(operator|api-server|gateway))/(Chart\.yaml|Chart\.lock)$'

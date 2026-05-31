@@ -27,6 +27,7 @@ make tool-versions
 | Node.js | `>=22` | Markdown tooling | `.nvmrc`, `package.json`, `NODE_VERSION` |
 | npm | `10.9.7` | Local JavaScript tool install and scripts | `package.json` `packageManager` |
 | markdownlint-cli | `0.48.0` | `make lint-markdown` | `package.json`, `package-lock.json`, `MARKDOWNLINT_CLI_VERSION` |
+| pre-commit | Current stable | Local Git hooks for fast Make-backed checks | `.pre-commit-config.yaml`, `PRE_COMMIT` |
 | Docker with Buildx | Current stable | Image builds, k3d, local registry workflows | Local install |
 | Helm | `v3.20.0` | Helm dependency, lint, template, deploy targets | `HELM_VERSION` |
 | kubectl | `v1.34.8` | Cluster and deploy targets | `KUBECTL_VERSION` |
@@ -66,8 +67,8 @@ Override `GOLANGCI_LINT`, `CONTROLLER_GEN`, `SETUP_ENVTEST`, or `GODOC` when usi
 | controller-runtime | `v0.22.4` | `xtrinode/go.mod` replace directives |
 | KEDA API types | `github.com/kedacore/keda/v2 v2.19.0` | `xtrinode/go.mod` |
 | KEDA Helm chart | `2.19.0` | `helm/xtrinode-operator/Chart.yaml` |
-| XTrinode Helm chart version | `0.1.0` | `helm/xtrinode*/Chart.yaml` `version` fields and umbrella dependencies |
-| XTrinode component image version | `0.1.0` | `helm/xtrinode*/Chart.yaml` `appVersion` fields |
+| XTrinode umbrella chart version | `0.1.0` | `helm/xtrinode/Chart.yaml` `version` field |
+| XTrinode component image versions | `0.1.0` | Operator, API server, and gateway chart `appVersion` fields |
 | Default Trino runtime image tag | `480` | `TRINO_IMAGE_TAG`, `internal/config` |
 | Trino runtime compatibility target | `trino-1.42.2` / app `480` | Upstream Trino chart reference and runtime image pin |
 
@@ -93,9 +94,11 @@ e2e run covering both metrics-api and Prometheus-backed scaling.
 - For KEDA 2.19.0, keep the main module's Go `replace` directives aligned with KEDA's Kubernetes `v0.34.3` and
   controller-runtime `v0.22.4` pins. Dependency module `replace` directives do not propagate into this module.
 - Revisit the KEDA-aligned `replace` directives only when the imported KEDA Go API no longer needs those pins.
-- Keep all XTrinode chart `version` fields and umbrella dependency versions aligned with the XTrinode release version.
-- Keep all XTrinode chart `appVersion` fields aligned with the same XTrinode release version. Do not use the Trino
-  runtime tag or upstream Trino chart version as the operator, API server, or gateway image or chart version.
+- Keep the umbrella chart dependency versions aligned with the corresponding component chart `version` fields.
+- Component chart `version` fields may move independently from the umbrella chart version.
+- Operator, API server, and gateway chart `appVersion` fields are independent Docker image versions and may move
+  independently from each other and from chart versions. Do not use the Trino runtime tag or upstream Trino chart version
+  as the operator, API server, or gateway image or chart version.
 - Treat Trino runtime image/chart drift as an explicit compatibility decision. Catalog property names and metrics exposed
   by Trino can change across Trino releases.
 - Update this file in the same patch as version bumps.
@@ -112,6 +115,24 @@ npm ci
 
 `make lint-markdown` delegates to `npm run lint:markdown`. It does not use a globally installed `markdownlint`, `npx`,
 or a Docker image. If `npm ci` has not been run, the target should fail instead of downloading a fallback linter.
+
+## Local Git Hooks
+
+The repository uses `pre-commit` for fast local checks. Install `pre-commit` with your system or Python tooling, then
+install the hook:
+
+```bash
+make pre-commit-install
+```
+
+Run the same hooks across the repository with:
+
+```bash
+make pre-commit-run
+```
+
+The hooks delegate to existing Make targets for shell syntax, YAML parsing, Markdown lint, and release metadata checks.
+They do not install missing tools or replace the broader CI targets.
 
 ## Local Stack Binaries
 
@@ -139,7 +160,7 @@ make dev-up K3D=/opt/bin/k3d TILT=/opt/bin/tilt UV=/opt/bin/uv HELM=/opt/bin/hel
 
 Supported command variables include `GO`, `GOFMT`, `GO_TOOL_BIN`, `GOLANGCI_LINT`, `CONTROLLER_GEN`, `SETUP_ENVTEST`,
 `RUBY`, `NPM`, `HELM`, `KUBECTL`, `TERRAFORM`, `TFLINT`, `K3D`, `TILT`, `UV`, `DOCKER`, `AWS`, `AZ`, `GCLOUD`,
-`CURL`, `OPENSSL`, `CLUSTERCTL`, `TRIVY`, `MAKE_CMD`, `GODOC`, and `OPEN`.
+`CURL`, `OPENSSL`, `CLUSTERCTL`, `TRIVY`, `MAKE_CMD`, `GODOC`, `OPEN`, and `PRE_COMMIT`.
 
 ## CI Setup
 
