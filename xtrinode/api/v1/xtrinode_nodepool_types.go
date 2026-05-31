@@ -93,9 +93,10 @@ type NodePoolSpec struct {
 	// +optional
 	ErrorRequeueInterval *metav1.Duration `json:"errorRequeueInterval,omitempty"`
 
-	// MinRequiredReplicasWhenMinNodesZero is the minimum number of ready replicas required when minNodes=0
-	// This ensures at least one node is available for Cluster Autoscaler to work
-	// If not specified, uses operator default (1)
+	// MinRequiredReplicasWhenMinNodesZero is the minimum number of ready replicas required when minNodes=0.
+	// If not specified, uses operator default (0) so scale-to-zero pools can continue to runtime
+	// resource creation and let pending Trino pods trigger autoscaler scale-up. Set a positive value
+	// to pre-warm nodes before runtime resources are reconciled.
 	// +optional
 	MinRequiredReplicasWhenMinNodesZero *int32 `json:"minRequiredReplicasWhenMinNodesZero,omitempty"`
 

@@ -81,9 +81,10 @@ func (r *XTrinodeReconciler) reconcileNodePoolBlocking(ctx context.Context, xtri
 		return result, nil
 	}
 
-	// Nodes are ready - record success event
-	log.Info("Node pool nodes are ready", "xtrinode", xtrinode.Name)
-	r.EventRecorder.Normalf(xtrinode, events.ReasonNodePoolReady, "Node pool nodes are ready for provider %s", nodePool.Provider)
+	// Node-pool readiness requirement is satisfied; for scale-to-zero pools this
+	// can mean the node-pool resource exists before any node has been created.
+	log.Info("Node pool readiness requirement is satisfied", "xtrinode", xtrinode.Name)
+	r.EventRecorder.Normalf(xtrinode, events.ReasonNodePoolReady, "Node pool readiness requirement is satisfied for provider %s", nodePool.Provider)
 	return ctrl.Result{}, nil
 }
 
@@ -170,7 +171,7 @@ func nodePoolSpecFromObservedStatus(observed *analyticsv1.ObservedRuntimeNodePoo
 	}, nil
 }
 
-// waitForNodePoolReady checks if node pool nodes are ready
+// waitForNodePoolReady checks whether the node-pool readiness requirement is satisfied.
 // Returns: (ready bool, result ctrl.Result, error)
 func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode *analyticsv1.XTrinode, log logr.Logger) (ready bool, result ctrl.Result, err error) {
 	nodePool := xtrinode.Spec.NodePool
@@ -214,7 +215,18 @@ func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode 
 		return false, ctrl.Result{RequeueAfter: getNodePoolErrorRequeueInterval(nodePool)}, nil
 	}
 
-	// Check status.readyReplicas
+	// For minNodes > 0, wait for at least minNodes to be ready. For minNodes == 0,
+	// the configurable required replica count defaults to 0 so scale-to-zero pools
+	// do not block Trino resource creation before pending pods can trigger scale-up.
+	requiredReplicas := requiredReadyReplicasForNodePool(xtrinode)
+	if requiredReplicas == 0 {
+		log.Info("Node pool readiness satisfied without ready replicas",
+			"xtrinode", xtrinode.Name,
+			"requiredReplicas", requiredReplicas)
+		return true, ctrl.Result{}, nil
+	}
+
+	// Check status.readyReplicas only when at least one ready replica is required.
 	st, found, _ := unstructured.NestedMap(res.Object, "status") //nolint:errcheck // best-effort status check; errors are non-critical
 	if !found {
 		requeueAfter := getNodePoolStatusNotAvailableRequeueInterval(nodePool)
@@ -224,18 +236,6 @@ func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode 
 
 	readyReplicas, _, _ := unstructured.NestedInt64(st, "readyReplicas") //nolint:errcheck // best-effort status field extraction; defaults to 0 on error
 	replicas, _, _ := unstructured.NestedInt64(st, "replicas")           //nolint:errcheck // best-effort status field extraction; defaults to 0 on error
-
-	// For minNodes > 0, wait for at least minNodes to be ready
-	// For minNodes == 0, wait for at least configured minimum (default: 1) ready replica
-	minNodes := int64(0)
-	if nodePool.MinNodes != nil {
-		minNodes = int64(*nodePool.MinNodes)
-	}
-
-	requiredReplicas := minNodes
-	if requiredReplicas == 0 {
-		requiredReplicas = getNodePoolMinRequiredReplicasWhenMinNodesZero(nodePool)
-	}
 
 	if readyReplicas >= requiredReplicas {
 		log.Info("Node pool nodes are ready",

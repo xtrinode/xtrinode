@@ -81,10 +81,11 @@ func newManagedInfrastructurePool(provider, poolName, namespace, clusterName str
 // Priority: Per-XTrinode spec → Operator-level defaults → Code defaults
 func getNodePoolDefaults(nodePool *analyticsv1.NodePoolSpec, xtrinode *analyticsv1.XTrinode) NodePoolDefaults {
 	// Start with code defaults (lowest priority)
+	codeDefaults := config.NodePoolDefaultValuesFromEnv()
 	defaults := NodePoolDefaults{
-		MinNodes:   config.NodePoolDefaultMinNodes,
-		MaxNodes:   config.NodePoolDefaultMaxNodes,
-		DiskSizeGB: config.NodePoolDefaultDiskSizeGB,
+		MinNodes:   int64(codeDefaults.MinNodes),
+		MaxNodes:   int64(codeDefaults.MaxNodes),
+		DiskSizeGB: int64(codeDefaults.DiskSizeGB),
 	}
 
 	// Apply operator-level defaults (middle priority)

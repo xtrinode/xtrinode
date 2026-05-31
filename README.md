@@ -265,6 +265,16 @@ make test-e2e-local-smoke
 make dev-down
 ```
 
+Focused local e2e suites cover these regression paths:
+
+- `make test-e2e-local-contracts` includes live admission contracts and a
+  fake-CAPI node-pool contract for operator node-pool defaults and readiness
+  gating.
+- `make test-e2e-local-lifecycle-cleanup` exercises interrupted cleanup and
+  query-aware drain behavior, including non-terminal Trino query states.
+- `make test-e2e-local-integration` includes gateway process contracts, including
+  backend load balancing when a statement reports a non-terminal state.
+
 Common CI-style checks:
 
 ```bash

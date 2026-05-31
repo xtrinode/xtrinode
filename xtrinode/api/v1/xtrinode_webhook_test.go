@@ -23,6 +23,22 @@ func valuesOverlayFromMap(m map[string]interface{}) *apiextensionsv1.JSON {
 	return &apiextensionsv1.JSON{Raw: data}
 }
 
+func clearNodePoolPolicyEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		config.NodePoolEnvDefaultMinNodes,
+		config.NodePoolEnvDefaultMaxNodes,
+		config.NodePoolEnvDefaultOSDiskGB,
+		config.NodePoolEnvValidationMinNodesMin,
+		config.NodePoolEnvValidationMaxNodesMin,
+		config.NodePoolEnvValidationMaxNodesMax,
+		config.NodePoolEnvValidationOSDiskGBMin,
+		config.NodePoolEnvValidationOSDiskGBMax,
+	} {
+		t.Setenv(name, "")
+	}
+}
+
 func TestXTrinode_Default(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -74,25 +90,7 @@ func TestXTrinode_Default(t *testing.T) {
 			},
 		},
 		{
-			name: "sets default nodePool minNodes to 0",
-			xtrinode: &XTrinode{
-				Spec: XTrinodeSpec{
-					Size: "s",
-					NodePool: &NodePoolSpec{
-						Provider: "azure",
-						Azure: &AzureNodePoolSpec{
-							VMSize: "Standard_D8as_v5",
-						},
-					},
-				},
-			},
-			expected: func(tr *XTrinode) {
-				assert.NotNil(t, tr.Spec.NodePool.MinNodes)
-				assert.Equal(t, int32(0), *tr.Spec.NodePool.MinNodes)
-			},
-		},
-		{
-			name: "sets default nodePool maxNodes based on maxWorkers",
+			name: "leaves nodePool sizing unset for reconciler defaults",
 			xtrinode: &XTrinode{
 				Spec: XTrinodeSpec{
 					Size:       "s",
@@ -106,26 +104,9 @@ func TestXTrinode_Default(t *testing.T) {
 				},
 			},
 			expected: func(tr *XTrinode) {
-				assert.NotNil(t, tr.Spec.NodePool.MaxNodes)
-				assert.Equal(t, int32(24), *tr.Spec.NodePool.MaxNodes)
-			},
-		},
-		{
-			name: "sets default nodePool osDiskGB to 128",
-			xtrinode: &XTrinode{
-				Spec: XTrinodeSpec{
-					Size: "s",
-					NodePool: &NodePoolSpec{
-						Provider: "azure",
-						Azure: &AzureNodePoolSpec{
-							VMSize: "Standard_D8as_v5",
-						},
-					},
-				},
-			},
-			expected: func(tr *XTrinode) {
-				assert.NotNil(t, tr.Spec.NodePool.OSDiskGB)
-				assert.Equal(t, int32(128), *tr.Spec.NodePool.OSDiskGB)
+				assert.Nil(t, tr.Spec.NodePool.MinNodes)
+				assert.Nil(t, tr.Spec.NodePool.MaxNodes)
+				assert.Nil(t, tr.Spec.NodePool.OSDiskGB)
 			},
 		},
 	}
@@ -696,10 +677,13 @@ func TestXTrinode_ValidateDelete(t *testing.T) {
 }
 
 func TestValidateNodePool(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
 	tests := []struct {
-		name     string
-		nodePool *NodePoolSpec
-		wantErr  bool
+		name                     string
+		nodePool                 *NodePoolSpec
+		operatorNodePoolDefaults *OperatorNodePoolDefaultsSpec
+		wantErr                  bool
 	}{
 		{
 			name: "valid Azure nodePool",
@@ -787,6 +771,31 @@ func TestValidateNodePool(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "minNodes greater than default maxNodes",
+			nodePool: &NodePoolSpec{
+				Provider: "azure",
+				Azure: &AzureNodePoolSpec{
+					VMSize: "Standard_D8as_v5",
+				},
+				MinNodes: int32Ptr(20),
+			},
+			wantErr: true,
+		},
+		{
+			name: "operator default minNodes greater than explicit maxNodes",
+			nodePool: &NodePoolSpec{
+				Provider: "azure",
+				Azure: &AzureNodePoolSpec{
+					VMSize: "Standard_D8as_v5",
+				},
+				MaxNodes: int32Ptr(5),
+			},
+			operatorNodePoolDefaults: &OperatorNodePoolDefaultsSpec{
+				DefaultMinNodes: int32Ptr(10),
+			},
+			wantErr: true,
+		},
+		{
 			name: "osDiskGB too small",
 			nodePool: &NodePoolSpec{
 				Provider: "azure",
@@ -858,8 +867,9 @@ func TestValidateNodePool(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			xtrinode := &XTrinode{
 				Spec: XTrinodeSpec{
-					Size:     "s",
-					NodePool: tt.nodePool,
+					Size:                     "s",
+					NodePool:                 tt.nodePool,
+					OperatorNodePoolDefaults: tt.operatorNodePoolDefaults,
 				},
 			}
 			errs := xtrinode.validateNodePool(field.NewPath("spec.nodePool"))
@@ -870,6 +880,149 @@ func TestValidateNodePool(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateOperatorNodePoolDefaults(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	tests := []struct {
+		name        string
+		defaults    *OperatorNodePoolDefaultsSpec
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "valid lower bounds",
+			defaults: &OperatorNodePoolDefaultsSpec{
+				DefaultMinNodes: int32Ptr(0),
+				DefaultMaxNodes: int32Ptr(1),
+				DefaultOSDiskGB: int32Ptr(30),
+			},
+		},
+		{
+			name: "valid upper bounds",
+			defaults: &OperatorNodePoolDefaultsSpec{
+				DefaultMinNodes: int32Ptr(1000),
+				DefaultMaxNodes: int32Ptr(1000),
+				DefaultOSDiskGB: int32Ptr(2048),
+			},
+		},
+		{
+			name: "defaultMinNodes negative",
+			defaults: &OperatorNodePoolDefaultsSpec{
+				DefaultMinNodes: int32Ptr(-1),
+			},
+			wantErr:     true,
+			errContains: "defaultMinNodes must be at least 0",
+		},
+		{
+			name: "defaultMaxNodes too small",
+			defaults: &OperatorNodePoolDefaultsSpec{
+				DefaultMaxNodes: int32Ptr(0),
+			},
+			wantErr:     true,
+			errContains: "defaultMaxNodes must be at least 1",
+		},
+		{
+			name: "defaultMaxNodes too large",
+			defaults: &OperatorNodePoolDefaultsSpec{
+				DefaultMaxNodes: int32Ptr(1001),
+			},
+			wantErr:     true,
+			errContains: "defaultMaxNodes must be at most 1000",
+		},
+		{
+			name: "defaultOSDiskGB too small",
+			defaults: &OperatorNodePoolDefaultsSpec{
+				DefaultOSDiskGB: int32Ptr(29),
+			},
+			wantErr:     true,
+			errContains: "defaultOSDiskGB must be at least 30",
+		},
+		{
+			name: "defaultOSDiskGB too large",
+			defaults: &OperatorNodePoolDefaultsSpec{
+				DefaultOSDiskGB: int32Ptr(2049),
+			},
+			wantErr:     true,
+			errContains: "defaultOSDiskGB must be at most 2048",
+		},
+		{
+			name: "defaultMinNodes above defaultMaxNodes",
+			defaults: &OperatorNodePoolDefaultsSpec{
+				DefaultMinNodes: int32Ptr(10),
+				DefaultMaxNodes: int32Ptr(5),
+			},
+			wantErr:     true,
+			errContains: "defaultMinNodes must be less than or equal to defaultMaxNodes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			xtrinode := &XTrinode{
+				Spec: XTrinodeSpec{
+					Size:                     "s",
+					OperatorNodePoolDefaults: tt.defaults,
+				},
+			}
+			errs := xtrinode.validateOperatorNodePoolDefaults(field.NewPath("spec.operatorNodePoolDefaults"))
+			if tt.wantErr {
+				assert.NotEmpty(t, errs)
+				assert.Contains(t, errs.ToAggregate().Error(), tt.errContains)
+			} else {
+				assert.Empty(t, errs)
+			}
+		})
+	}
+}
+
+func TestValidateOperatorNodePoolDefaultsUsesEnvBounds(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	t.Setenv(config.NodePoolEnvValidationMaxNodesMax, "20")
+	t.Setenv(config.NodePoolEnvValidationOSDiskGBMin, "64")
+
+	xtrinode := &XTrinode{
+		Spec: XTrinodeSpec{
+			Size: "s",
+			OperatorNodePoolDefaults: &OperatorNodePoolDefaultsSpec{
+				DefaultMaxNodes: int32Ptr(21),
+				DefaultOSDiskGB: int32Ptr(32),
+			},
+		},
+	}
+
+	errs := xtrinode.validateOperatorNodePoolDefaults(field.NewPath("spec.operatorNodePoolDefaults"))
+	assert.NotEmpty(t, errs)
+	assert.Contains(t, errs.ToAggregate().Error(), "defaultMaxNodes must be at most 20")
+	assert.Contains(t, errs.ToAggregate().Error(), "defaultOSDiskGB must be at least 64")
+}
+
+func TestValidateNodePoolUsesEnvBounds(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	t.Setenv(config.NodePoolEnvValidationMaxNodesMax, "20")
+	t.Setenv(config.NodePoolEnvValidationOSDiskGBMin, "64")
+
+	xtrinode := &XTrinode{
+		Spec: XTrinodeSpec{
+			Size: "s",
+			NodePool: &NodePoolSpec{
+				Provider: "gcp",
+				GCP: &GCPNodePoolSpec{
+					MachineType: "e2-standard-4",
+				},
+				MaxNodes: int32Ptr(21),
+				OSDiskGB: int32Ptr(32),
+			},
+		},
+	}
+
+	errs := xtrinode.validateNodePool(field.NewPath("spec.nodePool"))
+	assert.NotEmpty(t, errs)
+	assert.Contains(t, errs.ToAggregate().Error(), "maxNodes must be at most 20")
+	assert.Contains(t, errs.ToAggregate().Error(), "osDiskGB must be at least 64")
 }
 
 func TestXTrinode_ValidateUpdate_InvalidOldObject(t *testing.T) {

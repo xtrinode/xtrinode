@@ -265,6 +265,40 @@ make deploy                    # Uses xtrinode-system, xtrinode-gateway, ghcr.io
 make deploy-local              # Local images (dev tag) for Kind
 ```
 
+### Operator Policy Environment
+
+Operator-wide node-pool defaults and validation bounds can be set on the operator
+Deployment through the `xtrinode-operator` chart's `extraEnv` values. Runtime
+`spec.nodePool.*` and `spec.operatorNodePoolDefaults.*` still override default
+values; these variables control the operator fallback defaults and admission
+policy limits.
+
+Example:
+
+```yaml
+extraEnv:
+  - name: XTRINODE_NODEPOOL_VALIDATION_MAX_NODES_MAX
+    value: "200"
+  - name: XTRINODE_NODEPOOL_DEFAULT_MAX_NODES
+    value: "20"
+```
+
+CRD schema limits and semantic invariants remain part of the API contract. For
+example, `spec.maxWorkers` and rollout history limits are still bounded by the
+CRD schema; the environment variables below are the supported operator-level
+node-pool policy knobs.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `XTRINODE_NODEPOOL_DEFAULT_MIN_NODES` | `0` | Fallback managed node-pool minimum |
+| `XTRINODE_NODEPOOL_DEFAULT_MAX_NODES` | `10` | Fallback managed node-pool maximum |
+| `XTRINODE_NODEPOOL_DEFAULT_OS_DISK_GB` | `128` | Fallback managed node-pool OS disk size |
+| `XTRINODE_NODEPOOL_VALIDATION_MIN_NODES_MIN` | `0` | Lowest admitted `minNodes` / `defaultMinNodes` |
+| `XTRINODE_NODEPOOL_VALIDATION_MAX_NODES_MIN` | `1` | Lowest admitted `maxNodes` / `defaultMaxNodes` |
+| `XTRINODE_NODEPOOL_VALIDATION_MAX_NODES_MAX` | `1000` | Highest admitted `maxNodes` / `defaultMaxNodes` |
+| `XTRINODE_NODEPOOL_VALIDATION_OS_DISK_GB_MIN` | `30` | Lowest admitted `osDiskGB` / `defaultOSDiskGB` |
+| `XTRINODE_NODEPOOL_VALIDATION_OS_DISK_GB_MAX` | `2048` | Highest admitted `osDiskGB` / `defaultOSDiskGB` |
+
 ---
 
 ## Makefile Targets Summary

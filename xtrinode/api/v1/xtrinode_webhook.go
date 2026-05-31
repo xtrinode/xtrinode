@@ -261,29 +261,6 @@ func (t *XTrinode) Default() {
 		t.Spec.NodePool.Name = fmt.Sprintf("%s-pool", t.Name)
 	}
 
-	// Set default minNodes to 0 if not specified
-	if t.Spec.NodePool != nil && t.Spec.NodePool.MinNodes == nil {
-		defaultMinNodes := int32(0)
-		t.Spec.NodePool.MinNodes = &defaultMinNodes
-	}
-
-	// Set default maxNodes based on maxWorkers if not specified
-	if t.Spec.NodePool != nil && t.Spec.NodePool.MaxNodes == nil {
-		// Estimate: maxNodes = ceil(maxWorkers / workers_per_node)
-		// Assume 1 worker per node for safety
-		maxNodes := int32(10)
-		if t.Spec.MaxWorkers != nil {
-			maxNodes = *t.Spec.MaxWorkers
-		}
-		t.Spec.NodePool.MaxNodes = &maxNodes
-	}
-
-	// Set default OS disk size if not specified
-	if t.Spec.NodePool != nil && t.Spec.NodePool.OSDiskGB == nil {
-		defaultOSDisk := int32(128)
-		t.Spec.NodePool.OSDiskGB = &defaultOSDisk
-	}
-
 	// Keep deletion semantics explicit after defaulting.
 	if t.Spec.NodePool != nil && t.Spec.NodePool.DeletionPolicy == "" {
 		t.Spec.NodePool.DeletionPolicy = NodePoolDeletionPolicyDelete
@@ -1063,6 +1040,44 @@ func validateTrinoPropertyValue(fldPath *field.Path, value, message string) fiel
 func (t *XTrinode) validateOperatorNodePoolDefaults(fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	d := t.Spec.OperatorNodePoolDefaults
+	bounds := config.NodePoolValidationBoundsFromEnv()
+
+	if d.DefaultMinNodes != nil && *d.DefaultMinNodes < bounds.MinNodesMin {
+		allErrs = append(allErrs, field.Invalid(
+			fldPath.Child("defaultMinNodes"),
+			*d.DefaultMinNodes,
+			fmt.Sprintf("defaultMinNodes must be at least %d", bounds.MinNodesMin)))
+	}
+
+	if d.DefaultMaxNodes != nil {
+		if *d.DefaultMaxNodes < bounds.MaxNodesMin {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("defaultMaxNodes"),
+				*d.DefaultMaxNodes,
+				fmt.Sprintf("defaultMaxNodes must be at least %d", bounds.MaxNodesMin)))
+		}
+		if *d.DefaultMaxNodes > bounds.MaxNodesMax {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("defaultMaxNodes"),
+				*d.DefaultMaxNodes,
+				fmt.Sprintf("defaultMaxNodes must be at most %d", bounds.MaxNodesMax)))
+		}
+	}
+
+	if d.DefaultOSDiskGB != nil {
+		if *d.DefaultOSDiskGB < bounds.OSDiskGBMin {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("defaultOSDiskGB"),
+				*d.DefaultOSDiskGB,
+				fmt.Sprintf("defaultOSDiskGB must be at least %d", bounds.OSDiskGBMin)))
+		}
+		if *d.DefaultOSDiskGB > bounds.OSDiskGBMax {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("defaultOSDiskGB"),
+				*d.DefaultOSDiskGB,
+				fmt.Sprintf("defaultOSDiskGB must be at most %d", bounds.OSDiskGBMax)))
+		}
+	}
 
 	// Validate defaultMinNodes <= defaultMaxNodes
 	if d.DefaultMinNodes != nil && d.DefaultMaxNodes != nil {

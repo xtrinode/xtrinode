@@ -158,7 +158,8 @@ kubectl run trino-query-check -n <namespace> --rm -it --image=curlimages/curl --
 **Behavior**:
 
 - The operator marks the Gateway backend `DRAINING` so new queries are not selected.
-- Each reconcile checks the coordinator `/v1/query` endpoint. If no `QUEUED` or `RUNNING` queries
+- Each reconcile checks the coordinator `/v1/query` endpoint. Terminal query states (`FINISHED`,
+  `FAILED`, or canceled) are idle; any other state is treated as active. If no active queries
   remain, cleanup can start before the fallback window ends.
 - If the query endpoint is unavailable, the operator waits for the configured drain window
   (`xtrinode-operator.operator.lifecycle.drainDuration`, `5m` by default) and then uses that

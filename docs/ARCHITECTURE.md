@@ -453,8 +453,10 @@ The effective order is important:
 3. If `spec.nodePool` was removed and status records a previously provisioned
    pool, the operator retains that pool before suspend/resume and before the
    observed runtime shape is refreshed.
-4. If a node pool is requested, node-pool readiness blocks Trino resource
-   scheduling; without a node pool, the node-pool step is skipped after resources.
+4. If a node pool is requested, the operator ensures the node-pool resource
+   before Trino resources. Positive readiness requirements block resource
+   scheduling, but scale-to-zero pools default to zero required ready replicas so
+   pending Trino pods can trigger autoscaler scale-up.
 5. Wake TTL runs before KEDA so an expired wake window can lower KEDA
    `minReplicaCount` in the same reconciliation pass.
 6. Runtime readiness gates the final gateway state. A not-yet-ready runtime gets

@@ -85,6 +85,9 @@ spec:
               fieldPath: metadata.namespace
         - name: WATCH_NAMESPACE
           value: {{ .Values.operator.watchNamespace | default .Values.watchNamespace | quote }}
+        {{- with .Values.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
         {{- if .Values.webhook.enabled }}
         volumeMounts:
         - name: webhook-certs

@@ -74,12 +74,46 @@ func TestCheckQueriesBeforeScaleDownURL_ActiveQueries(t *testing.T) {
 	assert.False(t, safe)
 }
 
+func TestCheckQueriesBeforeScaleDownURL_NonTerminalStatesBlockScaleDown(t *testing.T) {
+	tests := []struct {
+		name  string
+		query map[string]string
+	}{
+		{name: "waiting for prerequisites", query: map[string]string{"queryId": "1", "state": "WAITING_FOR_PREREQUISITES"}},
+		{name: "waiting for resources", query: map[string]string{"queryId": "1", "state": "WAITING_FOR_RESOURCES"}},
+		{name: "dispatching", query: map[string]string{"queryId": "1", "state": "DISPATCHING"}},
+		{name: "planning", query: map[string]string{"queryId": "1", "state": "PLANNING"}},
+		{name: "starting", query: map[string]string{"queryId": "1", "state": "STARTING"}},
+		{name: "finishing", query: map[string]string{"queryId": "1", "state": "FINISHING"}},
+		{name: "unknown", query: map[string]string{"queryId": "1", "state": "UNKNOWN"}},
+		{name: "missing state", query: map[string]string{"queryId": "1"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				require.NoError(t, json.NewEncoder(w).Encode([]map[string]string{tt.query}))
+			}))
+			t.Cleanup(server.Close)
+
+			safe, err := checkQueriesBeforeScaleDownURLWithCredential(context.Background(), server.URL, defaultControlCredential(), logr.Discard())
+			require.NoError(t, err)
+			assert.False(t, safe)
+		})
+	}
+}
+
 func TestCheckQueriesBeforeScaleDownURL_NoActiveQueries(t *testing.T) {
+	alternateCanceledState := "CANCEL" + "LED"
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		require.NoError(t, json.NewEncoder(w).Encode([]map[string]string{
 			{"queryId": "1", "state": "FINISHED"},
 			{"queryId": "2", "state": "FAILED"},
+			{"queryId": "3", "state": "CANCELED"},
+			{"queryId": "4", "state": alternateCanceledState},
 		}))
 	}))
 	t.Cleanup(server.Close)

@@ -368,6 +368,35 @@ func TestQueryTrinoQueryActivity(t *testing.T) {
 	}
 }
 
+func TestQueryTrinoQueryActivity_NonTerminalStatesAreActive(t *testing.T) {
+	alternateCanceledState := "CANCEL" + "LED"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		queries := []map[string]interface{}{
+			{"queryId": "1", "state": "WAITING_FOR_PREREQUISITES"},
+			{"queryId": "2", "state": "WAITING_FOR_RESOURCES"},
+			{"queryId": "3", "state": "DISPATCHING"},
+			{"queryId": "4", "state": "PLANNING"},
+			{"queryId": "5", "state": "STARTING"},
+			{"queryId": "6", "state": "FINISHING"},
+			{"queryId": "7", "state": "UNKNOWN"},
+			{"queryId": "8"},
+			{"queryId": "9", "state": "FINISHED"},
+			{"queryId": "10", "state": "FAILED"},
+			{"queryId": "11", "state": "CANCELED"},
+			{"queryId": "12", "state": alternateCanceledState},
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(queries))
+	}))
+	defer server.Close()
+
+	activity, err := queryTrinoQueryActivity(context.Background(), server.URL, logr.Discard())
+	require.NoError(t, err)
+	require.Equal(t, 8.0, activity.ActiveQueries)
+}
+
 func TestQueryTrinoQueryActivityWithCredentialSendsBasicAuth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "lifecycle-control", r.Header.Get(config.TrinoUserHeader))
@@ -582,6 +611,60 @@ trino_query_running{state="RUNNING"} 0.0
 
 	err := UpdateLastActivityIfQueriesActive(ctx, cli, xtrinode, logger)
 	require.NoError(t, err)
+}
+
+func TestUpdateLastActivityIfQueriesActive_QueryAPIKeepsNonTerminalActive(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, analyticsv1.AddToScheme(scheme))
+
+	oldTime := metav1.NewTime(time.Now().Add(-20 * time.Minute))
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-nonterminal-active",
+			Namespace: "team-a",
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			LastActivity: &oldTime,
+		},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(xtrinode).
+		WithStatusSubresource(xtrinode).
+		Build()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case config.MetricsPath:
+			w.WriteHeader(http.StatusOK)
+			_, err := w.Write([]byte(`trino_query_queued{state="QUEUED"} 0.0
+trino_query_running{state="RUNNING"} 0.0
+`))
+			require.NoError(t, err)
+		case config.QueryAPIPath:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			require.NoError(t, json.NewEncoder(w).Encode([]map[string]string{
+				{"queryId": "planning-query", "state": "PLANNING"},
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	withTestCoordinatorURL(t, server.URL)
+
+	err := UpdateLastActivityIfQueriesActive(context.Background(), cli, xtrinode, logr.Discard())
+	require.NoError(t, err)
+
+	var updated analyticsv1.XTrinode
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Name: xtrinode.Name, Namespace: xtrinode.Namespace}, &updated))
+	require.NotNil(t, updated.Status.LastActivity)
+	require.True(t, updated.Status.LastActivity.After(oldTime.Time))
 }
 
 func TestAutoSuspendIfNeeded(t *testing.T) {

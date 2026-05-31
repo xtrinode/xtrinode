@@ -84,7 +84,7 @@ jobs:
       - name: Run tests with coverage
         run: make ci-test
         env:
-          CI_COVERAGE_THRESHOLD: 65
+          CI_COVERAGE_THRESHOLD: 70
 
       - name: Upload coverage to Codecov
         if: env.CODECOV_TOKEN != ''

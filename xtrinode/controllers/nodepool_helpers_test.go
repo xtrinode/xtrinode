@@ -45,7 +45,25 @@ func TestGetNodePoolName(t *testing.T) {
 	}
 }
 
+func clearNodePoolPolicyEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		config.NodePoolEnvDefaultMinNodes,
+		config.NodePoolEnvDefaultMaxNodes,
+		config.NodePoolEnvDefaultOSDiskGB,
+		config.NodePoolEnvValidationMinNodesMin,
+		config.NodePoolEnvValidationMaxNodesMin,
+		config.NodePoolEnvValidationMaxNodesMax,
+		config.NodePoolEnvValidationOSDiskGBMin,
+		config.NodePoolEnvValidationOSDiskGBMax,
+	} {
+		t.Setenv(name, "")
+	}
+}
+
 func TestGetNodePoolDefaults(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
 	tests := []struct {
 		name     string
 		nodePool *analyticsv1.NodePoolSpec
@@ -110,6 +128,45 @@ func TestGetNodePoolDefaults(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestGetNodePoolDefaultsAfterWebhookDefaulting(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{Name: "runtime"},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "s",
+			NodePool: &analyticsv1.NodePoolSpec{
+				Provider: "aws",
+				AWS:      &analyticsv1.AWSNodePoolSpec{InstanceType: "m5.xlarge"},
+			},
+			OperatorNodePoolDefaults: &analyticsv1.OperatorNodePoolDefaultsSpec{
+				DefaultMinNodes: func() *int32 { v := int32(2); return &v }(),
+				DefaultMaxNodes: func() *int32 { v := int32(20); return &v }(),
+				DefaultOSDiskGB: func() *int32 { v := int32(256); return &v }(),
+			},
+		},
+	}
+
+	xtrinode.Default()
+	defaults := getNodePoolDefaults(xtrinode.Spec.NodePool, xtrinode)
+
+	assert.Equal(t, NodePoolDefaults{MinNodes: 2, MaxNodes: 20, DiskSizeGB: 256}, defaults)
+}
+
+func TestGetNodePoolDefaultsUsesEnvBackedCodeDefaults(t *testing.T) {
+	clearNodePoolPolicyEnv(t)
+
+	t.Setenv(config.NodePoolEnvDefaultMinNodes, "3")
+	t.Setenv(config.NodePoolEnvDefaultMaxNodes, "9")
+	t.Setenv(config.NodePoolEnvDefaultOSDiskGB, "256")
+
+	defaults := getNodePoolDefaults(&analyticsv1.NodePoolSpec{}, &analyticsv1.XTrinode{
+		Spec: analyticsv1.XTrinodeSpec{},
+	})
+
+	assert.Equal(t, NodePoolDefaults{MinNodes: 3, MaxNodes: 9, DiskSizeGB: 256}, defaults)
 }
 
 func TestBuildCommonLabels(t *testing.T) {

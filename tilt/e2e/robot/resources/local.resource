@@ -159,6 +159,7 @@ Gateway Route Should Have Routing Group
 
 Start Local Port Forwards
     Stop Local Port Forwards
+    Stop Stale Local Port Forward Processes
     Start Process    kubectl    port-forward    -n    ${GATEWAY_NAMESPACE}    svc/${GATEWAY_SERVICE}    ${GATEWAY_PORT}:8080    stdout=/tmp/xtrinode-robot-gateway-port-forward.log    stderr=STDOUT    alias=xtrinode-gateway-port-forward
     Start Process    kubectl    port-forward    -n    ${API_SERVER_NAMESPACE}    svc/${API_SERVER_SERVICE}    ${API_SERVER_PORT}:8081    stdout=/tmp/xtrinode-robot-api-port-forward.log    stderr=STDOUT    alias=xtrinode-api-port-forward
     Wait Until Keyword Succeeds    90s    1s    HTTP Should Succeed    http://127.0.0.1:${GATEWAY_PORT}/health
@@ -171,6 +172,12 @@ Wait For Gateway Backend Ready
 Stop Local Port Forwards
     Run Keyword And Ignore Error    Terminate Process    xtrinode-gateway-port-forward    kill=True
     Run Keyword And Ignore Error    Terminate Process    xtrinode-api-port-forward    kill=True
+    Stop Stale Local Port Forward Processes
+
+Stop Stale Local Port Forward Processes
+    Run Command Allow Failure    pkill    -f    kubectl.*port-forward.*${GATEWAY_PORT}:8080
+    Run Command Allow Failure    pkill    -f    kubectl.*port-forward.*${API_SERVER_PORT}:8081
+    Sleep    1s
 
 HTTP Should Succeed
     [Arguments]    ${url}

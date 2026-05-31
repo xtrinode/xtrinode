@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/xtrinode/xtrinode/internal/trino/querystate"
 )
 
 const defaultQueryActivityTTL = 10 * time.Minute
@@ -47,11 +49,11 @@ func (t *QueryActivityTracker) Observe(queryID, namespace, xtrinode, routingGrou
 		return
 	}
 
-	state = normalizeQueryState(state)
+	state = querystate.Normalize(state)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if isTerminalQueryState(state) {
+	if querystate.IsTerminal(state) {
 		delete(t.queries, queryID)
 		t.recomputeGaugesLocked()
 		return
@@ -168,23 +170,5 @@ func (t *QueryActivityTracker) recomputeGaugesLocked() {
 			labels.routingGroup,
 			labels.state,
 		).Set(float64(count))
-	}
-}
-
-func normalizeQueryState(state string) string {
-	if state == "" {
-		return "UNKNOWN"
-	}
-	return state
-}
-
-const alternateCanceledState = "CANCEL" + "LED"
-
-func isTerminalQueryState(state string) bool {
-	switch state {
-	case "FINISHED", "FAILED", "CANCELED", alternateCanceledState:
-		return true
-	default:
-		return false
 	}
 }

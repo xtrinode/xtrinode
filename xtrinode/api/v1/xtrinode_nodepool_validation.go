@@ -169,13 +169,15 @@ func (t *XTrinode) validateNodePool(fldPath *field.Path) field.ErrorList {
 		}
 	}
 
+	bounds := config.NodePoolValidationBoundsFromEnv()
+
 	// Validate minNodes
 	if np.MinNodes != nil {
-		if *np.MinNodes < 0 {
+		if *np.MinNodes < bounds.MinNodesMin {
 			allErrs = append(allErrs, field.Invalid(
 				fldPath.Child("minNodes"),
 				*np.MinNodes,
-				"minNodes must be at least 0"))
+				fmt.Sprintf("minNodes must be at least %d", bounds.MinNodesMin)))
 		}
 		if np.MaxNodes != nil && *np.MinNodes > *np.MaxNodes {
 			allErrs = append(allErrs, field.Invalid(
@@ -187,34 +189,43 @@ func (t *XTrinode) validateNodePool(fldPath *field.Path) field.ErrorList {
 
 	// Validate maxNodes
 	if np.MaxNodes != nil {
-		if *np.MaxNodes < 1 {
+		if *np.MaxNodes < bounds.MaxNodesMin {
 			allErrs = append(allErrs, field.Invalid(
 				fldPath.Child("maxNodes"),
 				*np.MaxNodes,
-				"maxNodes must be at least 1"))
+				fmt.Sprintf("maxNodes must be at least %d", bounds.MaxNodesMin)))
 		}
-		if *np.MaxNodes > 1000 {
+		if *np.MaxNodes > bounds.MaxNodesMax {
 			allErrs = append(allErrs, field.Invalid(
 				fldPath.Child("maxNodes"),
 				*np.MaxNodes,
-				"maxNodes must be at most 1000"))
+				fmt.Sprintf("maxNodes must be at most %d", bounds.MaxNodesMax)))
 		}
 	}
 
 	// Validate OS disk size
 	if np.OSDiskGB != nil {
-		if *np.OSDiskGB < 30 {
+		if *np.OSDiskGB < bounds.OSDiskGBMin {
 			allErrs = append(allErrs, field.Invalid(
 				fldPath.Child("osDiskGB"),
 				*np.OSDiskGB,
-				"osDiskGB must be at least 30"))
+				fmt.Sprintf("osDiskGB must be at least %d", bounds.OSDiskGBMin)))
 		}
-		if *np.OSDiskGB > 2048 {
+		if *np.OSDiskGB > bounds.OSDiskGBMax {
 			allErrs = append(allErrs, field.Invalid(
 				fldPath.Child("osDiskGB"),
 				*np.OSDiskGB,
-				"osDiskGB must be at most 2048"))
+				fmt.Sprintf("osDiskGB must be at most %d", bounds.OSDiskGBMax)))
 		}
+	}
+
+	effectiveMinNodes, minNodesPath := t.effectiveNodePoolMinNodes(fldPath)
+	effectiveMaxNodes, _ := t.effectiveNodePoolMaxNodes(fldPath)
+	if effectiveMinNodes >= 0 && effectiveMaxNodes >= 1 && effectiveMinNodes > effectiveMaxNodes {
+		allErrs = append(allErrs, field.Invalid(
+			minNodesPath,
+			effectiveMinNodes,
+			fmt.Sprintf("effective minNodes must be less than or equal to effective maxNodes (%d)", effectiveMaxNodes)))
 	}
 
 	if np.SchedulePods {
@@ -233,6 +244,26 @@ func (t *XTrinode) validateNodePool(fldPath *field.Path) field.ErrorList {
 	}
 
 	return allErrs
+}
+
+func (t *XTrinode) effectiveNodePoolMinNodes(fldPath *field.Path) (int32, *field.Path) {
+	if t.Spec.NodePool != nil && t.Spec.NodePool.MinNodes != nil {
+		return *t.Spec.NodePool.MinNodes, fldPath.Child("minNodes")
+	}
+	if t.Spec.OperatorNodePoolDefaults != nil && t.Spec.OperatorNodePoolDefaults.DefaultMinNodes != nil {
+		return *t.Spec.OperatorNodePoolDefaults.DefaultMinNodes, field.NewPath("spec", "operatorNodePoolDefaults", "defaultMinNodes")
+	}
+	return config.NodePoolDefaultMinNodesValue(), fldPath.Child("minNodes")
+}
+
+func (t *XTrinode) effectiveNodePoolMaxNodes(fldPath *field.Path) (int32, *field.Path) {
+	if t.Spec.NodePool != nil && t.Spec.NodePool.MaxNodes != nil {
+		return *t.Spec.NodePool.MaxNodes, fldPath.Child("maxNodes")
+	}
+	if t.Spec.OperatorNodePoolDefaults != nil && t.Spec.OperatorNodePoolDefaults.DefaultMaxNodes != nil {
+		return *t.Spec.OperatorNodePoolDefaults.DefaultMaxNodes, field.NewPath("spec", "operatorNodePoolDefaults", "defaultMaxNodes")
+	}
+	return config.NodePoolDefaultMaxNodesValue(), fldPath.Child("maxNodes")
 }
 
 func (t *XTrinode) validateNodePoolProviderConfig(np *NodePoolSpec, fldPath *field.Path) field.ErrorList {
