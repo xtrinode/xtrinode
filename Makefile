@@ -202,6 +202,7 @@ MAKE_CMD ?= make
 GODOC ?= $(GO_TOOL_BIN)/godoc
 GODOC_VERSION ?= v0.1.0-deprecated
 OPEN ?= xdg-open
+PRE_COMMIT ?= pre-commit
 
 # Security tooling
 TRIVY ?= trivy
@@ -264,6 +265,7 @@ help: ## Display this help message
 	@echo "  TF_ENV               Terraform environment (default: dev)"
 	@echo "  TF_VAR_FILE          Terraform variables file (default: terraform.tfvars)"
 	@echo "  TERRAFORM_CLOUDS     Terraform clouds used by generic/CI checks (default: gcp)"
+	@echo "  PRE_COMMIT           pre-commit command (default: pre-commit)"
 	@echo ""
 	@echo "Tooling: make tool-versions and docs/TOOLING.md show required local versions."
 	@echo "Deployment: make deploy-gcp | make deploy-aws | make deploy-azure | make deploy"
@@ -417,6 +419,14 @@ lint-markdown: ## Run Markdown linter
 	@echo "Running Markdown lint..."
 	@$(NPM) run --silent lint:markdown
 	@echo "Markdown linting complete"
+
+.PHONY: pre-commit-install
+pre-commit-install: ## Install local pre-commit hooks
+	$(PRE_COMMIT) install
+
+.PHONY: pre-commit-run
+pre-commit-run: ## Run pre-commit hooks on all files
+	$(PRE_COMMIT) run --all-files
 
 .PHONY: lint-terraform
 lint-terraform: ## Run Terraform linter for configured clouds (tflint)

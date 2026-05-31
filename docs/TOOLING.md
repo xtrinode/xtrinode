@@ -27,6 +27,7 @@ make tool-versions
 | Node.js | `>=22` | Markdown tooling | `.nvmrc`, `package.json`, `NODE_VERSION` |
 | npm | `10.9.7` | Local JavaScript tool install and scripts | `package.json` `packageManager` |
 | markdownlint-cli | `0.48.0` | `make lint-markdown` | `package.json`, `package-lock.json`, `MARKDOWNLINT_CLI_VERSION` |
+| pre-commit | Current stable | Local Git hooks for fast Make-backed checks | `.pre-commit-config.yaml`, `PRE_COMMIT` |
 | Docker with Buildx | Current stable | Image builds, k3d, local registry workflows | Local install |
 | Helm | `v3.20.0` | Helm dependency, lint, template, deploy targets | `HELM_VERSION` |
 | kubectl | `v1.34.8` | Cluster and deploy targets | `KUBECTL_VERSION` |
@@ -115,6 +116,24 @@ npm ci
 `make lint-markdown` delegates to `npm run lint:markdown`. It does not use a globally installed `markdownlint`, `npx`,
 or a Docker image. If `npm ci` has not been run, the target should fail instead of downloading a fallback linter.
 
+## Local Git Hooks
+
+The repository uses `pre-commit` for fast local checks. Install `pre-commit` with your system or Python tooling, then
+install the hook:
+
+```bash
+make pre-commit-install
+```
+
+Run the same hooks across the repository with:
+
+```bash
+make pre-commit-run
+```
+
+The hooks delegate to existing Make targets for shell syntax, YAML parsing, Markdown lint, and release metadata checks.
+They do not install missing tools or replace the broader CI targets.
+
 ## Local Stack Binaries
 
 The local k3d/Tilt/e2e workflow defaults to repository-local binaries:
@@ -141,7 +160,7 @@ make dev-up K3D=/opt/bin/k3d TILT=/opt/bin/tilt UV=/opt/bin/uv HELM=/opt/bin/hel
 
 Supported command variables include `GO`, `GOFMT`, `GO_TOOL_BIN`, `GOLANGCI_LINT`, `CONTROLLER_GEN`, `SETUP_ENVTEST`,
 `RUBY`, `NPM`, `HELM`, `KUBECTL`, `TERRAFORM`, `TFLINT`, `K3D`, `TILT`, `UV`, `DOCKER`, `AWS`, `AZ`, `GCLOUD`,
-`CURL`, `OPENSSL`, `CLUSTERCTL`, `TRIVY`, `MAKE_CMD`, `GODOC`, and `OPEN`.
+`CURL`, `OPENSSL`, `CLUSTERCTL`, `TRIVY`, `MAKE_CMD`, `GODOC`, `OPEN`, and `PRE_COMMIT`.
 
 ## CI Setup
 

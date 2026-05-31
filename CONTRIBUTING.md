@@ -94,6 +94,7 @@ Useful first commands:
 make help
 make tool-versions
 nvm use && npm ci
+make pre-commit-install
 make helm-deps
 make build-all
 make lint-markdown
@@ -152,6 +153,7 @@ enough. For Go, Helm, Terraform, or deployment changes, run the relevant Make ta
 Common checks:
 
 ```bash
+make pre-commit-run
 make ci-lint
 make ci-test
 make ci-verify-manifests
