@@ -1557,5 +1557,3 @@ func splitTrinoAuthenticationTypes(authType string) []string {
 	}
 	return out
 }
-
-// Helper functions
