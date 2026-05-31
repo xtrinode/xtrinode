@@ -60,7 +60,6 @@ func (r *XTrinodeReconciler) reconcileNodePoolBlocking(ctx context.Context, xtri
 		requeueAfter := getNodePoolErrorRequeueInterval(xtrinode.Spec.NodePool)
 		return ctrl.Result{RequeueAfter: requeueAfter}, err
 	}
-	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionTrue, "NodePoolProvisioned", nodePoolProvisionedMessage(xtrinode))
 	setNodePoolFitCondition(xtrinode)
 	if isFirstProvision {
 		metrics.NodePoolProvisioned.WithLabelValues(xtrinode.Namespace, xtrinode.Name, nodePool.Provider).Inc()
@@ -84,6 +83,7 @@ func (r *XTrinodeReconciler) reconcileNodePoolBlocking(ctx context.Context, xtri
 	// Node-pool readiness requirement is satisfied; for scale-to-zero pools this
 	// can mean the node-pool resource exists before any node has been created.
 	log.Info("Node pool readiness requirement is satisfied", "xtrinode", xtrinode.Name)
+	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionTrue, events.ReasonNodePoolReady, nodePoolProvisionedMessage(xtrinode))
 	r.EventRecorder.Normalf(xtrinode, events.ReasonNodePoolReady, "Node pool readiness requirement is satisfied for provider %s", nodePool.Provider)
 	return ctrl.Result{}, nil
 }
@@ -194,6 +194,7 @@ func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode 
 			// Resource not found yet, requeue
 			requeueAfter := getNodePoolResourceNotFoundRequeueInterval(nodePool)
 			log.Info("Node pool resource not found yet, requeuing", "name", nodePoolName, "requeueAfter", requeueAfter)
+			setNodePoolProvisioningCondition(xtrinode, fmt.Sprintf("Node pool resource %q is not available yet", nodePoolName))
 			return false, ctrl.Result{RequeueAfter: requeueAfter}, nil
 		}
 		return false, ctrl.Result{}, err
@@ -231,6 +232,7 @@ func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode 
 	if !found {
 		requeueAfter := getNodePoolStatusNotAvailableRequeueInterval(nodePool)
 		log.Info("Node pool status not available yet, requeuing", "name", nodePoolName, "requeueAfter", requeueAfter)
+		setNodePoolProvisioningCondition(xtrinode, fmt.Sprintf("Node pool status is not available yet; waiting for %d ready replicas", requiredReplicas))
 		return false, ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 
@@ -250,6 +252,7 @@ func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode 
 		"readyReplicas", readyReplicas,
 		"requiredReplicas", requiredReplicas,
 		"replicas", replicas)
+	setNodePoolProvisioningCondition(xtrinode, fmt.Sprintf("Node pool has %d ready replicas; waiting for %d required ready replicas", readyReplicas, requiredReplicas))
 
 	// Requeue with configurable intervals based on readiness
 	var requeueAfter time.Duration
@@ -260,4 +263,8 @@ func (r *XTrinodeReconciler) waitForNodePoolReady(ctx context.Context, xtrinode 
 	}
 
 	return false, ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+func setNodePoolProvisioningCondition(xtrinode *analyticsv1.XTrinode, message string) {
+	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionFalse, events.ReasonNodePoolProvisioning, message)
 }

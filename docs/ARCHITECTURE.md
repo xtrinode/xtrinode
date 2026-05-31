@@ -572,10 +572,14 @@ memory, ephemeral-storage, pod-slot pressure, and DaemonSet overhead. This
 diagnostic pass is bounded to status conditions; Kubernetes Events, pod status,
 and scheduler diagnostics remain the detailed source of truth. `NodePoolFitReady`
 records best-effort fit checks between resolved pod resources and known provider
-machine types. For configured node pools, `NodePoolReady` also correlates hard
-provisioning failures from Cluster API resources, provider managed-pool resources,
-child Machines, and Machine infrastructure refs when those resources expose
-failure fields or failed/error conditions.
+machine types. For configured node pools, `NodePoolReady=True` means the
+effective ready-replica requirement has passed, including operator node-pool
+defaults. `NodePoolReady=False` with `NodePoolProvisioning` means the node-pool
+resource exists or is being created but has not yet reported enough ready
+replicas. `NodePoolReady` also correlates hard provisioning failures from
+Cluster API resources, provider managed-pool resources, child Machines, and
+Machine infrastructure refs when those resources expose failure fields or
+failed/error conditions.
 
 ### Runtime Configuration Layers
 

@@ -24,6 +24,7 @@ import (
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	analyticsv1 "github.com/xtrinode/xtrinode/api/v1"
 	"github.com/xtrinode/xtrinode/internal/config"
+	"github.com/xtrinode/xtrinode/internal/events"
 	"github.com/xtrinode/xtrinode/internal/status"
 )
 
@@ -693,6 +694,74 @@ func TestXTrinodeReconciler_reconcileSuspend_ProvisionsNodePoolWithoutTrinoRunti
 	assert.True(t, k8serrors.IsNotFound(err), "suspended node-pool provisioning must not create Trino coordinator deployments")
 }
 
+func TestXTrinodeReconciler_Reconcile_PersistsActiveNodePoolProvisioningStatus(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = analyticsv1.AddToScheme(scheme)
+	_ = kedav1alpha1.AddToScheme(scheme)
+
+	minNodes := int32(2)
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "active-capg",
+			Namespace:  "team-a",
+			Generation: 7,
+			Finalizers: []string{FinalizerName},
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size: "xs",
+			NodePool: &analyticsv1.NodePoolSpec{
+				Name:              "np-active-capg",
+				Provider:          "gcp",
+				ProviderMode:      "managed",
+				ClusterName:       "capg-workload",
+				KubernetesVersion: "v1.35.3",
+				MinNodes:          &minNodes,
+				GCP: &analyticsv1.GCPNodePoolSpec{
+					MachineType: "e2-medium",
+				},
+			},
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			Phase:              string(status.PhaseReady),
+			ObservedGeneration: 6,
+		},
+	}
+
+	machinePool := &unstructured.Unstructured{}
+	machinePool.SetGroupVersionKind(getMachineResourceGVK(true))
+	machinePool.SetName("np-active-capg")
+	machinePool.SetNamespace("team-a")
+
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(xtrinode).
+		WithObjects(xtrinode, machinePool).
+		Build()
+	reconciler := newTestReconciler(cli, scheme)
+	reconciler.NamespaceGuardrailMode = NamespaceGuardrailModeDisabled
+	reconciler.NodePoolAdapter = &recordingNodePoolAdapter{}
+
+	result, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "active-capg", Namespace: "team-a"},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, config.NodePoolStatusNotAvailableRequeueInterval, result.RequeueAfter)
+
+	stored := &analyticsv1.XTrinode{}
+	err = cli.Get(context.Background(), types.NamespacedName{Name: "active-capg", Namespace: "team-a"}, stored)
+	assert.NoError(t, err)
+	assert.Equal(t, "Reconciling", stored.Status.Phase)
+
+	condition := status.GetCondition(stored, status.ConditionTypeNodePoolReady)
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, events.ReasonNodePoolProvisioning, condition.Reason)
+		assert.Contains(t, condition.Message, "waiting for 2 ready replicas")
+		assert.Equal(t, int64(7), condition.ObservedGeneration)
+	}
+}
+
 func TestXTrinodeReconciler_reconcileSuspend_ProvisionsNodePoolAfterFreshSuspend(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
@@ -778,7 +847,7 @@ func TestXTrinodeReconciler_reconcileSuspendedNodePool_SkipsCurrentReadyNodePool
 			Phase: string(status.PhaseSuspended),
 		},
 	}
-	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionTrue, "NodePoolProvisioned", "node pool already current")
+	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionTrue, events.ReasonNodePoolReady, "node pool already current")
 
 	machinePool := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -806,6 +875,83 @@ func TestXTrinodeReconciler_reconcileSuspendedNodePool_SkipsCurrentReadyNodePool
 	assert.NoError(t, err)
 	assert.Equal(t, time.Duration(0), result.RequeueAfter)
 	assert.Empty(t, nodePoolAdapter.ensurePhases)
+}
+
+func TestXTrinodeReconciler_reconcileSuspendedNodePool_DoesNotPersistReadyBeforeRequiredReplicas(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = analyticsv1.AddToScheme(scheme)
+
+	keepNodePoolWarm := false
+	xtrinode := &analyticsv1.XTrinode{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "waiting-suspended-capg",
+			Namespace:  "team-a",
+			Generation: 9,
+		},
+		Spec: analyticsv1.XTrinodeSpec{
+			Size:      "xs",
+			Suspended: true,
+			OperatorNodePoolDefaults: &analyticsv1.OperatorNodePoolDefaultsSpec{
+				DefaultMinNodes: int32Ptr(2),
+			},
+			NodePool: &analyticsv1.NodePoolSpec{
+				Name:               "np-waiting-suspended",
+				Provider:           "gcp",
+				ProviderMode:       "managed",
+				ClusterName:        "capg-workload",
+				KubernetesVersion:  "v1.35.3",
+				ScaleDownOnSuspend: &keepNodePoolWarm,
+				GCP: &analyticsv1.GCPNodePoolSpec{
+					MachineType: "e2-medium",
+				},
+			},
+		},
+		Status: analyticsv1.XTrinodeStatus{
+			Phase: string(status.PhaseSuspended),
+		},
+	}
+
+	machinePool := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"spec": map[string]interface{}{
+				"template": map[string]interface{}{
+					"spec": map[string]interface{}{},
+				},
+			},
+		},
+	}
+	machinePool.SetGroupVersionKind(getMachineResourceGVK(true))
+	machinePool.SetName("np-waiting-suspended")
+	machinePool.SetNamespace("team-a")
+
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(xtrinode).
+		WithObjects(xtrinode, machinePool).
+		Build()
+	reconciler := newTestReconciler(cli, scheme)
+	nodePoolAdapter := &recordingNodePoolAdapter{}
+	reconciler.NodePoolAdapter = nodePoolAdapter
+
+	result, err := reconciler.reconcileSuspendedNodePool(context.Background(), xtrinode, newTestLogger())
+	assert.NoError(t, err)
+	assert.Equal(t, config.NodePoolStatusNotAvailableRequeueInterval, result.RequeueAfter)
+	assert.Equal(t, []string{string(status.PhaseSuspended)}, nodePoolAdapter.ensurePhases)
+
+	stored := &analyticsv1.XTrinode{}
+	assert.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: xtrinode.Name, Namespace: xtrinode.Namespace}, stored))
+	condition := status.GetCondition(stored, status.ConditionTypeNodePoolReady)
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, events.ReasonNodePoolProvisioning, condition.Reason)
+		assert.Equal(t, int64(9), condition.ObservedGeneration)
+	}
+
+	result, err = reconciler.reconcileSuspendedNodePool(context.Background(), stored, newTestLogger())
+	assert.NoError(t, err)
+	assert.Equal(t, config.NodePoolStatusNotAvailableRequeueInterval, result.RequeueAfter)
+	assert.Equal(t, []string{string(status.PhaseSuspended), string(status.PhaseSuspended)}, nodePoolAdapter.ensurePhases)
 }
 
 func TestXTrinodeReconciler_reconcileSuspendedNodePool_RepairsBareGKEVersion(t *testing.T) {
@@ -839,7 +985,7 @@ func TestXTrinodeReconciler_reconcileSuspendedNodePool_RepairsBareGKEVersion(t *
 			Phase: string(status.PhaseSuspended),
 		},
 	}
-	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionTrue, "NodePoolProvisioned", "node pool already current")
+	status.SetCondition(xtrinode, status.ConditionTypeNodePoolReady, metav1.ConditionTrue, events.ReasonNodePoolReady, "node pool already current")
 
 	machinePool := &unstructured.Unstructured{
 		Object: map[string]interface{}{

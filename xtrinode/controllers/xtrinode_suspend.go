@@ -191,6 +191,7 @@ func suspendedNodePoolProvisioningCurrent(xtrinode *analyticsv1.XTrinode) bool {
 	condition := status.GetCondition(xtrinode, status.ConditionTypeNodePoolReady)
 	return condition != nil &&
 		condition.Status == metav1.ConditionTrue &&
+		condition.Reason == events.ReasonNodePoolReady &&
 		condition.ObservedGeneration == xtrinode.Generation
 }
 
