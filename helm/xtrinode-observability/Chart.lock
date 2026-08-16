@@ -1,9 +1,9 @@
 dependencies:
 - name: kube-prometheus-stack
   repository: https://prometheus-community.github.io/helm-charts
-  version: 86.1.0
+  version: 88.3.0
 - name: xtrinode-vector
   repository: file://../xtrinode-vector
   version: 0.1.0
-digest: sha256:a8fa55076f49a7cc2fa634d1fcf6d7f2d3c3817a6f955e6ae7d87eaad7edce79
-generated: "2026-05-31T08:52:43.899764492Z"
+digest: sha256:2dbe726e133fac475cfc3dc5dfdc8fa791efb599d34785f3c7c50dbdf5fadcdf
+generated: "2026-08-16T08:53:01.082271649Z"
